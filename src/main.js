@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { CLASSES, SKILLS, ITEMS, MOBS, SHOP, GRADES, SLOTS, SETS, xpToNext, MAX_LEVEL } from './data.js';
-import { calcStats, enchValue, equipFromBag, unequipSlot, wearError, migrate, MAX_ENCH, SAFE_ENCH, ENCH_CHANCE } from './stats.js';
+import { calcStats, enchValue, wearError, migrate, SAFE_ENCH, ENCH_CHANCE } from './stats.js';
 import { buildWorld, heightAt, zoneAt, obstacles, TOWNS, TELEPORTS, CRYPT, DUNGEON, ZONES, MAP } from './world.js';
 import { buildMob, buildHero, buildNpc } from './models.js';
 import { TEX } from './tex.js';
@@ -37,50 +37,24 @@ addEventListener('resize', () => { renderer.setSize(innerWidth, innerHeight); ca
 
 const { ground, npcs: npcDefs, spawns } = buildWorld(scene);
 
-// ================= Сохранение =================
-const SAVE_KEY = 'l2w-save1';
-const loadSave = () => { try { return JSON.parse(localStorage.getItem(SAVE_KEY)); } catch { return null; } };
+// ================= Профиль =================
+// Профиль целиком ведёт сервер: клиент только зеркалит authok/you и ничего не хранит локально.
 let P = null; // персонаж
-function newChar(name, clsId) {
-  const cls = CLASSES[clsId];
-  const t = TOWNS[0];
-  return {
-    name, cls: clsId, lvl: 1, xp: 0, coins: 150, hp: cls.base.hp, mp: cls.base.mp,
-    inv: [{ id: 'potion_hp', n: 5 }, { id: 'scroll_escape', n: 1 }],
-    equip: { ...Object.fromEntries(SLOTS.map((s) => [s.id, null])), weapon: clsId === 'mage' ? 'staff_novice' : 'sword_novice', armor: 'armor_cloth', legs: 'legs_cloth' },
-    enc: {}, pvp: 0,
-    x: t.x + 5, z: t.z + 30, home: t.id, kills: 0,
-  };
+function applyProfile(np) {
+  const first = !P;
+  P = migrate(np);
+  if (first) return;
+  refreshGear(); renderSkills();
+  if (!$('shop').hidden) renderShop();
+  // во время перетаскивания сетку не трогаем — иначе ячейка исчезнет из-под курсора
+  if (drag) pendingInv = true; else renderInv();
 }
-let saveTimer = 0, lastNetSave = 0;
-function save() {
-  if (!P) return;
-  P.x = hero.position.x; P.z = hero.position.z;
-  try { localStorage.setItem(SAVE_KEY, JSON.stringify(P)); } catch { /* */ }
-  const wait = lastNetSave + 3000 - Date.now();
-  if (wait <= 0) { lastNetSave = Date.now(); netSend({ t: 'save', p: P }); }
-  else if (!saveTimer) saveTimer = setTimeout(() => { saveTimer = 0; save(); }, wait);
-}
-setInterval(save, 10000);
-addEventListener('beforeunload', () => { lastNetSave = 0; save(); });
+let pendingInv = false;
 
 // ================= Характеристики =================
 const buffs = []; // { stat, mul, until }
 const stats = () => calcStats(P, buffs, performance.now());
 const invCount = (id) => P.inv.find((i) => i.id === id)?.n || 0;
-function addItem(id, n = 1, ench = 0) {
-  const it = ITEMS[id];
-  const e = it.stack && P.inv.find((i) => i.id === id);
-  if (e) e.n += n; else for (let k = 0; k < (it.stack ? 1 : n); k++) P.inv.push(ench ? { id, n: 1, e: ench } : { id, n: it.stack ? n : 1 });
-}
-function takeItem(id, n = 1) {
-  let idx = P.inv.findIndex((i) => i.id === id && !i.e); if (idx < 0) idx = P.inv.findIndex((i) => i.id === id);
-  if (idx < 0) return false;
-  const e = P.inv[idx]; if (e.n < n) return false;
-  e.n -= n; if (e.n <= 0) P.inv.splice(idx, 1);
-  return true;
-}
-
 // ================= Персонаж =================
 let hero = null;
 const heroSt = { moving: false, attackT: 0, casting: false };
@@ -114,26 +88,21 @@ function applyLook(obj, L) {
   obj.userData.setBody(L.body ?? CLASSES[L.cls].color, L.robe, L.mat);
   obj.userData.setGear({ head: u(L.gear?.head), legs: u(L.gear?.legs), gloves: u(L.gear?.gloves), feet: u(L.gear?.feet), shield: u(L.gear?.shield), helmKind: L.gear?.helmKind, shieldKind: L.gear?.shieldKind, legKind: L.gear?.legKind });
 }
-function refreshGear() {
-  applyLook(hero, lookOf());
-  sendLook();
-}
+function refreshGear() { applyLook(hero, lookOf()); }
 
 // ================= Мобы =================
-const mobs = [];
+// Мобов считает сервер: клиент строит модель по виду из «mobs» и двигает её по снапшотам.
+const mobs = new Map(); // id → { id, def, obj, buf, ... }
 const MOB_LABEL_MAX = 20;
-for (const sp of spawns) {
-  const def = MOBS[sp.mob];
-  const m = { def, id: sp.mob, home: new THREE.Vector3(sp.x, 0, sp.z), hp: def.hp, state: 'idle', target: null, atkCd: 0, wanderT: rand(1, 6), dest: null, dead: false, respawnAt: 0, st: { moving: false, attackT: 0 }, label: null };
-  m.obj = buildMob(def);
-  m.obj.position.set(sp.x, heightAt(sp.x, sp.z), sp.z);
-  m.obj.rotation.y = rand(0, 6.28);
-  m.obj.traverse((o) => { o.userData.mob = m; });
-  m.radius = (def.size || 1) * 0.9;
-  scene.add(m.obj);
-  mobs.push(m);
+function mobSeen(id, kind) {
+  const have = mobs.get(id); if (have) return have;
+  const def = MOBS[kind]; if (!def) return null;
+  const obj = buildMob(def); obj.visible = false; scene.add(obj);
+  const m = { id, def, obj, isMob: true, radius: (def.size || 1) * 0.9, hp: 100, dead: false, buf: [], a: 0, seen: 0, flash: 0, flashOn: false, dieT: null, st: { moving: false, attackT: 0, hitT: 0 } };
+  obj.traverse((o) => { o.userData.mob = m; });
+  mobs.set(id, m);
+  return m;
 }
-function mobDmg(m) { return m.def.patk; }
 
 // ================= NPC =================
 const GUARD_LOOK = { cls: 'warrior', lvl: 60, w: 0xd0d8e0, staff: false, ench: 7, body: 0x8090a0, robe: false, mat: 'chain', gear: { head: 0x8090a0, legs: 0x707e8e, gloves: 0x8090a0, feet: 0x606c7a, shield: 0x9098a8, helmKind: 'chain', shieldKind: 'plate', legKind: 'chain' } };
@@ -278,13 +247,8 @@ function updateGuards(dt, t) {
       o.x += dir.x * 20 * dt; o.z += dir.z * 20 * dt; o.y = heightAt(o.x, o.z);
       g.obj.rotation.y = Math.atan2(dir.x, dir.z); g.st.moving = true;
     } else if (chase && g.cd <= 0) {
-      g.cd = 1.3; g.st.attackT = 1; faceGuard(g);
-      if (dHero < 3) {
-        const d = Math.round(stats().maxHp * PVP.guardHit);
-        P.hp -= d; heroSt.hitT = 1; floatText(hero.position, String(d), '#ff6060'); slashFx(hero.position, true);
-        if (g.cd && !g.warned) { g.warned = true; log('Страж: «Убийца! Взять его!»', 'bad'); }
-        if (P.hp <= 0) die({ name: 'Страж', guard: true });
-      }
+      g.cd = 1.3; g.st.attackT = 1; faceGuard(g); // урон засчитывает сервер
+      if (dHero < 3 && !g.warned) { g.warned = true; log('Страж: «Убийца! Взять его!»', 'bad'); }
     }
     if (dHero < 120) g.obj.userData.anim(t, g.st);
   }
@@ -334,168 +298,54 @@ function banner(text) { $('banner').textContent = text; $('banner').style.opacit
 let target = null;       // моб или NPC
 let attacking = false;   // автоатака цели
 let dest = null;         // точка движения
-let atkTimer = 0;
 const cds = {};          // кулдауны умений
 let cast = null;         // { skill, t, target }
 let dead = false;
 
-function calcDmg(atk, def, mul = 1, crit = 0) {
-  let d = atk * mul * (70 / (70 + def)) * rand(0.9, 1.1) * 3;
-  const isCrit = Math.random() < crit; if (isCrit) d *= 2;
-  return { d: Math.max(1, Math.round(d)), crit: isCrit };
-}
 function levelColor(lv) {
   const diff = lv - P.lvl;
   return diff >= 5 ? '#ff4040' : diff >= 3 ? '#ff9a40' : diff >= -2 ? '#ffffff' : diff >= -5 ? '#80c0ff' : '#80ff80';
 }
-function hitMob(m, dmg, crit, color) {
-  if (m.dead) return;
-  m.hp -= dmg;
-  m.flash = 0.12; m.st.hitT = 1;
-  emit('spark', m.obj.position, { n: crit ? 16 : 6, color: crit ? [0xffd040, 0xffffff] : [0xffffff, 0xffc080], speed: crit ? 8 : 5, up: 3, life: 0.4, size: crit ? 0.5 : 0.35, dy: 1.2 * (m.def.size || 1) });
-  floatText(m.obj.position, crit ? `${dmg}!` : String(dmg), color || (crit ? '#ffd040' : '#ffffff'), crit);
-  if (m.state !== 'chase') { m.state = 'chase'; m.target = 'hero'; }
-  if (m.hp <= 0) killMob(m);
+
+// Урон, опыт и добычу считает сервер. Клиент шлёт намерение и рисует то, что пришло в ответ.
+// цель нужна и серверу: он по ней считает и автоатаку, и умения
+function setTarget(t) {
+  target = t || null;
+  if (t && (t.isMob || t.isPlayer)) netSend({ t: 'atk', id: t.id, kind: t.isPlayer ? 'p' : 'm', hold: 1 });
+  else netSend({ t: 'atk', id: null });
 }
-function killMob(m) {
-  m.dead = true; m.hp = 0; m.state = 'dead';
-  m.respawnAt = performance.now() + (m.def.respawn || 25) * 1000;
-  m.dieT = 0;
-  emit('dust', m.obj.position, { n: 18, color: [0x8a8070, 0xb0a890], speed: 3, up: 1, life: 1, size: 0.6, grav: -1, dy: 0.5, spread: 1 });
-  // опыт — меньше за слабых
-  const diff = m.def.lvl - P.lvl;
-  const xp = Math.round(m.def.xp * (diff < -5 ? Math.max(0.1, 1 + (diff + 5) * 0.15) : 1));
-  gainXp(xp);
-  if (P.karma > 0) netSend({ t: 'mobkill', xp });
-  const coins = irand(...m.def.coins); P.coins += coins;
-  log(`${m.def.name} повержен. Опыт +${xp}, монеты +${coins}`, 'good');
-  for (const [id, ch] of Object.entries(m.def.drops || {})) if (Math.random() < ch) { addItem(id); log(`Получено: ${ITEMS[id].name}`, ITEMS[id].rare ? 'rare' : 'loot'); if (ITEMS[id].rare) banner(`Редкая добыча: ${ITEMS[id].name}!`); }
-  P.kills++;
-  if (m.def.boss) banner(`${m.def.name} повержен!`);
-  if (target === m) { attacking = false; }
-  setTimeout(() => { if (m.dead) m.obj.visible = false; if (target === m) target = null; }, 2500);
-  renderInv();
+function attackTarget(t) {
+  if (dead || !t) return;
+  target = t; attacking = true; pendingSkill = null;
+  netSend({ t: 'atk', id: t.id, kind: t.isPlayer ? 'p' : 'm' });
 }
-function gainXp(xp) {
-  if (P.lvl >= MAX_LEVEL) return;
-  P.xp += xp;
-  while (P.lvl < MAX_LEVEL && P.xp >= xpToNext(P.lvl)) {
-    P.xp -= xpToNext(P.lvl); P.lvl++;
-    const s = stats(); P.hp = s.maxHp; P.mp = s.maxMp;
-    banner(`Новый уровень: ${P.lvl}`); log(`Уровень повышен до ${P.lvl}!`, 'rare');
-    ringFx(hero.position, 4, 0xffe070); pillarFx(hero.position, 0xffe070, 14);
-    emit('spark', hero.position, { n: 60, color: [0xffe070, 0xffffff, 0xffb040], speed: 2, up: 9, life: 1.4, size: 0.4, grav: -2, spread: 1.4, swirl: 3, dy: 0.2, h: 1 });
-    for (const id of CLASSES[P.cls].skills) if (SKILLS[id].lvl === P.lvl) log(`Изучено умение: ${SKILLS[id].name}`, 'good');
-    renderSkills(); sendLook();
-  }
-  save();
+function stopAttack() {
+  if (!attacking) return;
+  attacking = false; pendingSkill = null; netSend({ t: 'atk', id: null });
 }
-function heroHit(m) {
-  if (dead) return;
-  const s = stats();
-  if (Math.random() < THREE.MathUtils.clamp(0.05 + (s.eva - (m.def.lvl + 33)) * 0.01, 0.02, 0.3)) return floatText(hero.position, 'Уклонение', '#a0c0ff');
-  const { d } = calcDmg(mobDmg(m), s.pdef, 1, 0.05);
-  P.hp -= d;
-  heroSt.hitT = 1;
-  emit('spark', hero.position, { n: 5, color: [0xff4040, 0xffa0a0], speed: 4, up: 2, life: 0.35 });
-  floatText(hero.position, String(d), '#ff6060');
-  if (P.hp <= 0) die(m);
-}
-function die(m) {
-  dead = true; P.hp = 0; attacking = false; cast = null; dest = null;
-  // PK теряет больше опыта и может уронить вещь
-  const loss = Math.round(xpToNext(P.lvl) * (P.karma > 0 ? 0.12 : 0.04)); P.xp = Math.max(0, P.xp - loss);
-  log(`Вас убил ${m.def ? m.def.name : m.name}. Потеряно опыта: ${loss}`, 'bad');
-  if (m.isPlayer) netSend({ t: 'pdied', by: m.id });
-  if (m.guard && P.karma > 0) pkDrop(null);
+// сервер сообщил о смерти — показываем экран
+function die(byName, loss) {
+  dead = true; attacking = false; pendingSkill = null; cast = null; dest = null;
+  log(`Вас убил ${byName}. Потеряно опыта: ${loss}`, 'bad');
   heroSt.dieT = 0;
-  for (const mm of mobs) if (mm.target === 'hero') { mm.state = 'return'; mm.target = null; }
   $('death').hidden = false;
 }
-// PK умер: с шансом теряет вещь (из сумки или надетую); убийце-игроку она достаётся
-function pkDrop(to) {
-  if (Math.random() > PVP.dropChance) return;
-  const bag = P.inv.map((e, i) => ({ i, e })).filter(({ e }) => !ITEMS[e.id].loot || Math.random() < 0.3);
-  const worn = Object.entries(P.equip).filter(([, id]) => id && ITEMS[id].grade !== 'none');
-  let item = null;
-  if (worn.length && Math.random() < 0.35) {
-    const [sl, id] = worn[Math.floor(Math.random() * worn.length)];
-    item = { id, n: 1, e: P.enc[sl] || 0 }; P.equip[sl] = null; delete P.enc[sl]; refreshGear();
-  } else if (bag.length) {
-    const { i, e } = bag[Math.floor(Math.random() * bag.length)];
-    item = { ...e }; P.inv.splice(i, 1);
-  }
-  if (!item) return;
-  log(`Вы потеряли: ${ITEMS[item.id].name}${item.n > 1 ? ` ×${item.n}` : ''}`, 'bad');
-  if (to) netSend({ t: 'pkloot', to, item });
-  renderInv(); lastNetSave = 0; save();
-}
-function respawn() {
-  const t = TOWNS.find((x) => x.id === P.home) || TOWNS[0];
-  dead = false; hero.rotation.z = 0; heroSt.dieT = null;
-  const s = stats(); P.hp = Math.round(s.maxHp * 0.7); P.mp = Math.round(s.maxMp * 0.7);
-  teleportTo(t.x, t.z - 12);
-  $('death').hidden = true;
-}
+const respawn = () => netSend({ t: 'respawn' });
 
 function useSkill(id) {
-  if (dead || cast) return;
   const sk = SKILLS[id];
+  if (!sk || dead || cast) return;
   if (!CLASSES[P.cls].skills.includes(id)) return;
   if (P.lvl < sk.lvl) return log(`${sk.name}: нужен уровень ${sk.lvl}`, 'bad');
   if ((cds[id] || 0) > performance.now()) return;
-  if (P.mp < sk.mp) return log('Недостаточно маны', 'bad');
-  const s = stats();
   if (sk.kind === 'dmg') {
-    if (!target || target.dead || !(target.def || target.isPlayer)) return log('Нет цели', 'bad');
-    if (target.isPlayer && inTown()) return log('В городе сражаться нельзя', 'bad');
-    const dist = flatDist(hero.position, target.obj.position);
-    if (dist > sk.range + target.radius) { dest = null; attacking = true; pendingSkill = id; return; }
+    if (!target || target.dead || !(target.isMob || target.isPlayer)) return log('Нет цели', 'bad');
+    // до цели ещё надо дойти: подводим героя, команда уйдёт при сближении
+    if (flatDist(hero.position, target.obj.position) > sk.range + target.radius) { dest = null; attacking = true; pendingSkill = id; return; }
   }
-  if (inTown() && sk.kind !== 'heal' && sk.kind !== 'buff') return log('В городе сражаться нельзя', 'bad');
-  P.mp -= sk.mp; cds[id] = performance.now() + sk.cd * 1000;
-  if (sk.cast) { cast = { id, t: sk.cast / s.cast, total: sk.cast / s.cast, target }; heroSt.casting = true; dest = null; return; }
-  applySkill(id, target, s);
+  netSend({ t: 'skill', id });
 }
 let pendingSkill = null;
-function applySkill(id, tgt, s) {
-  const sk = SKILLS[id];
-  const face = tgt?.obj?.position; if (face) faceTo(face);
-  if (sk.kind === 'dmg') {
-    if (!tgt || tgt.dead) return;
-    const atk = sk.school === 'm' ? s.matk : s.patk, crit = Math.random() < s.crit + 0.05;
-    if (sk.school !== 'm') slashFx(tgt.obj.position, true);
-    const go = () => { hitAny(tgt, atk, sk.mul, sk.school, crit ? 1 : 0, '#ffb060'); flashFx(tgt.obj.position, sk.color); };
-    if (sk.school === 'm') boltFx(hero.position, tgt, sk.color, go);
-    else { heroSt.attackT = 1; go(); }
-    attacking = true;
-  } else if (sk.kind === 'heal') {
-    const amt = Math.round(s.maxHp * sk.amount); P.hp = Math.min(s.maxHp, P.hp + amt);
-    floatText(hero.position, `+${amt}`, '#60ff90'); ringFx(hero.position, 2.5, sk.color);
-    emit('plus', hero.position, { n: 24, color: [0x60ff90, 0xc0ffd0], speed: 1, up: 3, life: 1.2, size: 0.45, grav: 0.5, spread: 1.2, dy: 0.3, h: 1.5 });
-  } else if (sk.kind === 'buff') {
-    buffs.push({ stat: sk.stat, mul: sk.mul, until: performance.now() + sk.dur * 1000, name: sk.name });
-    ringFx(hero.position, 3, sk.color);
-    emit('spark', hero.position, { n: 30, color: [sk.color, 0xffd0a0], speed: 2, up: 5, life: 0.9, size: 0.35, grav: -3, spread: 1, swirl: 6, dy: 0.2 });
-    log(`${sk.name}: сила атаки +${Math.round((sk.mul - 1) * 100)}% на ${sk.dur} с`, 'good');
-  } else if (sk.kind === 'aoe') {
-    ringFx(hero.position, sk.radius, sk.color); heroSt.attackT = 1;
-    emit(sk.school === 'm' ? 'flake' : 'spark', hero.position, { n: 70, color: sk.school === 'm' ? [0x80d0ff, 0xffffff] : [0xffd060, 0xffffff], speed: sk.radius * 2.2, up: 1.5, life: 0.6, size: 0.45, grav: -2, drag: 2.5, ring: true, dy: 0.8, spread: 0.5 });
-    const atk = sk.school === 'm' ? s.matk : s.patk;
-    let n = 0;
-    for (const m of mobs) if (!m.dead && flatDist(m.obj.position, hero.position) < sk.radius + m.radius) { const r = calcDmg(atk, m.def.pdef, sk.mul, s.crit); hitMob(m, r.d, r.crit, '#ffe080'); n++; }
-    // по площади задеваем только флагнутых и PK (или того, кого бьём)
-    for (const r of remotes.values()) if (r.obj.visible && !r.dead && (r.k > 0 || r === target) && flatDist(r.obj.position, hero.position) < sk.radius + 0.6) { pvpSend(r, atk, sk.mul, sk.school, Math.random() < s.crit, sk.radius + 1); n++; }
-    if (!n) log(`${sk.name}: никого рядом`);
-  }
-}
-// удар по другому игроку: урон считает жертва (своя защита и уклонение), сервер проверяет правила
-const pvpSend = (r, atk, mul, school, crit, range) => netSend({ t: 'pvp', to: r.id, atk: Math.round(atk), mul, school, crit, range });
-function hitAny(tgt, atk, mul, school, crit, color) {
-  if (tgt.isPlayer) { pvpSend(tgt, atk, mul, school, crit, school === 'm' ? 24 : stats().range + 1); emit('spark', tgt.obj.position, { n: 5, color: 0xffffff, speed: 4, up: 2, life: 0.35 }); return; }
-  const r = calcDmg(atk, tgt.def.pdef * (school === 'm' ? 0.8 : 1), mul, crit);
-  hitMob(tgt, r.d, r.crit, color);
-}
 function faceTo(p) { hero.rotation.y = Math.atan2(p.x - hero.position.x, p.z - hero.position.z); }
 const flatDist = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
 const inTown = () => !!zoneAt(hero.position.x, hero.position.z).town;
@@ -505,68 +355,33 @@ function useItem(id) {
   if (it.slot) {
     let idx = P.inv.findIndex((e) => e.id === id && !e.e); if (idx < 0) idx = P.inv.findIndex((e) => e.id === id);
     if (idx >= 0) equipIdx(idx);
-  } else if (it.use && !dead) {
-    const s = stats();
-    if (it.use === 'hp') { if (!takeItem(id)) return; P.hp = Math.min(s.maxHp, P.hp + it.amount); floatText(hero.position, `+${it.amount}`, '#60ff90'); emit('plus', hero.position, { n: 10, color: 0xff6070, speed: 0.6, up: 2.5, life: 0.9, grav: 0, spread: 0.8, dy: 0.5, h: 1 }); }
-    if (it.use === 'mp') { if (!takeItem(id)) return; P.mp = Math.min(s.maxMp, P.mp + it.amount); floatText(hero.position, `+${it.amount}`, '#6090ff'); emit('plus', hero.position, { n: 10, color: 0x70a0ff, speed: 0.6, up: 2.5, life: 0.9, grav: 0, spread: 0.8, dy: 0.5, h: 1 }); }
-    if (it.use === 'escape') { if (!takeItem(id)) return; log('Свиток возврата: перенос через 3 с…'); cast = { id: 'escape', t: 3, total: 3 }; heroSt.casting = true; }
-    if (it.use === 'ench') { enchMode = id; sel = null; $('inv').hidden = false; log(`${it.name}: выберите ${it.ench === 'w' ? 'оружие' : 'броню или украшение'} в инвентаре`); }
-  }
-  renderInv();
+  } else if (it.use === 'ench') {
+    enchMode = id; sel = null; $('inv').hidden = false;
+    log(`${it.name}: выберите ${it.ench === 'w' ? 'оружие' : 'броню или украшение'} в инвентаре`);
+    renderInv();
+  } else if (it.use && !dead) netSend({ t: 'use', id });
 }
-function equipIdx(idx, want) {
-  const it = ITEMS[P.inv[idx]?.id];
-  const err = equipFromBag(P, idx, want);
-  if (err) return log(err, 'bad');
-  refreshGear(); log(`Экипировано: ${it.name}`, 'good'); sel = null;
-  renderInv(); save();
-}
-function unequip(sl) {
-  if (!P.equip[sl]) return;
-  const it = ITEMS[P.equip[sl]];
-  unequipSlot(P, sl); refreshGear(); log(`Снято: ${it.name}`); sel = null;
-  renderInv(); save();
-}
+const equipIdx = (idx, want) => netSend({ t: 'equip', idx, slot: want });
+const unequip = (sl) => netSend({ t: 'unequip', slot: sl });
 // усиление: ref = { bag: индекс } | { slot: id }
 let enchMode = null;
-function enchant(ref, force) {
-  const sc = ITEMS[enchMode]; if (!sc) return;
-  const entry = ref.slot ? null : P.inv[ref.bag];
-  const id = ref.slot ? P.equip[ref.slot] : entry?.id, it = ITEMS[id];
-  if (!it?.slot) return log('Выберите снаряжение', 'bad');
-  if ((sc.ench === 'w') !== (it.slot === 'weapon')) return log(`${sc.name} не подходит для «${it.name}»`, 'bad');
-  if (it.grade === 'none') return log('Вещь без грейда нельзя усилить', 'bad');
-  const cur = ref.slot ? P.enc[ref.slot] || 0 : entry.e || 0;
-  if (cur >= MAX_ENCH) return log('Максимальное усиление', 'bad');
-  if (!takeItem(enchMode)) { enchMode = null; return; }
-  const ok = force ?? (cur < SAFE_ENCH || Math.random() < ENCH_CHANCE);
-  if (ok) {
-    if (ref.slot) P.enc[ref.slot] = cur + 1; else entry.e = cur + 1;
-    log(`Усиление удалось: ${it.name} +${cur + 1}`, 'rare'); ringFx(hero.position, 2.2, sc.color); flashFx(hero.position, sc.color, 1.5);
-    emit('spark', hero.position, { n: 40, color: [sc.color, 0xffffff, 0xffe070], speed: 3, up: 6, life: 1, size: 0.4, grav: -4, spread: 0.6, swirl: 5 });
-    if (ref.slot) refreshGear();
-  } else {
-    if (ref.slot) { P.equip[ref.slot] = null; delete P.enc[ref.slot]; refreshGear(); } else P.inv.splice(P.inv.indexOf(entry), 1);
-    const n = { d: 2, c: 6, b: 15 }[it.grade] * (cur + 1); addItem('crystal', n);
-    log(`Усиление не удалось — ${it.name} +${cur} рассыпается. Получено кристаллов: ${n}`, 'bad'); flashFx(hero.position, 0x606060, 2);
-    emit('dust', hero.position, { n: 30, color: [0x707070, 0x90e0ff], speed: 4, up: 3, life: 1.2, size: 0.5, grav: -5 });
-  }
-  if (!P.inv.some((e) => e.id === enchMode)) enchMode = null;
-  renderInv(); save();
+function enchant(ref) {
+  if (!enchMode) return;
+  netSend({ t: 'ench', scroll: enchMode, ref });
+  if (invCount(enchMode) <= 1) enchMode = null;
+  sel = null; renderInv();
 }
 
 function teleportTo(x, z) {
   hero.position.set(x, heightAt(x, z), z);
   moveEntity(hero.position, tmp.set(0, 0, 0), 0, 0.6); // вытолкнуть из препятствий
-  dest = null; attacking = false; target = null;
-  for (const m of mobs) if (m.target === 'hero') { m.state = 'return'; m.target = null; }
+  dest = null; stopAttack(); target = null;
   const inCrypt = x > DUNGEON.x0 - 100;
   scene.background.copy(inCrypt ? CRYPT_SKY : SKY); scene.fog.color.copy(scene.background);
   scene.fog.near = inCrypt ? 20 : 150; scene.fog.far = inCrypt ? 110 : 620;
   hemi.intensity = inCrypt ? 0.35 : 1.3; sun.intensity = inCrypt ? 0.15 : 2.2;
   flashFx(hero.position, 0xa080ff, 1.5); pillarFx(hero.position, 0xa080ff, 8);
   emit('dot', hero.position, { n: 40, color: [0xa080ff, 0xffffff], speed: 1.5, up: 5, life: 1, size: 0.35, grav: -1, spread: 1.3, swirl: 8, dy: 0.1, h: 0.5 });
-  save();
 }
 
 
@@ -574,7 +389,6 @@ function teleportTo(x, z) {
 const net = { ws: null, ok: false, id: 0, online: 0, retry: 1000, lastSt: 0 };
 const WS_URL = new URLSearchParams(location.search).get('ws') || (import.meta.env.DEV ? `ws://${location.hostname}:8790` : `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
 const netSend = (m) => { if (net.ok && (net.authed || m.t === 'auth' || m.t === 'login' || m.t === 'register')) net.ws.send(JSON.stringify(m)); };
-function sendLook() { if (P) netSend({ t: 'look', look: lookOf() }); }
 const AUTH_KEY = 'l2w-auth';
 const loadAuth = () => { try { return JSON.parse(localStorage.getItem(AUTH_KEY)); } catch { return null; } };
 let authReq = null; // что отправить при подключении (вход/регистрация со стартового экрана)
@@ -607,8 +421,8 @@ function onNet(m) {
     const au = loadAuth();
     if (m.token) try { localStorage.setItem(AUTH_KEY, JSON.stringify({ name: m.name, token: m.token })); } catch { /* */ }
     else if (au && au.name !== m.name) try { localStorage.setItem(AUTH_KEY, JSON.stringify({ ...au, name: m.name })); } catch { /* */ }
-    if (!P) start(m.save);
-    else { sendLook(); lastNetSave = 0; save(); }
+    if (!P) start(m.p);
+    else applyProfile(m.p);
   }
   if (m.t === 'autherr') {
     if (P) { log(`Сервер: ${m.reason}`, 'bad'); return; }
@@ -616,7 +430,6 @@ function onNet(m) {
     startMsg(m.reason, true);
   }
   if (m.t === 'kicked') { net.kicked = true; log('Вход в этот аккаунт выполнен с другого устройства. Перезагрузите страницу, чтобы вернуться.', 'bad'); banner('Вход с другого устройства'); }
-  if (m.t === 'saveerr') log('Сервер не принял сохранение', 'bad');
   if (m.t === 'online') net.online = m.n;
   if (m.t === 'look') {
     let r = remotes.get(m.id);
@@ -636,20 +449,31 @@ function onNet(m) {
     // смещение часов сервера: берём минимальную задержку (самые быстрые пакеты), медленно отпускаем
     const d = Date.now() - (m.ts || Date.now());
     net.off = net.off == null ? d : d < net.off ? d : net.off + (d - net.off) * 0.02;
+    const ts = m.ts || Date.now();
     for (const [id, x, y, z, ry, a, hp, k] of m.o) {
       const r = remotes.get(id); if (!r) continue;
-      r.buf ??= [];
-      const last = r.buf[r.buf.length - 1];
-      // телепорт или первое появление — без интерполяции
-      if (!r.obj.visible || (last && Math.hypot(last.x - x, last.z - z) > 30)) { r.buf.length = 0; r.obj.position.set(x, y, z); r.obj.rotation.y = ry; }
-      r.buf.push({ t: m.ts || Date.now(), x, y, z, r: ry });
-      if (r.buf.length > 30) r.buf.shift();
-      r.to = true;
+      pushSnap(r, ts, x, y, z, ry);
       if (a & 2 && !(r.a & 2)) r.st.attackT = 1;
       r.a = a; r.hp = hp; r.k = k || 0; r.dead = !!(a & 8); r.seen = now; r.obj.visible = true;
     }
+    for (const [id, x, y, z, ry, a, hp] of m.m || []) {
+      const mb = mobs.get(id); if (!mb) continue;
+      pushSnap(mb, ts, x, y, z, ry);
+      if (a & 2 && !(mb.a & 2)) mb.st.attackT = 1;
+      mb.a = a; mb.hp = hp; mb.dead = !!(a & 8); mb.seen = now;
+      if (!mb.obj.visible && !mb.dead) mb.obj.visible = true;
+    }
+    if (m.me) {
+      P.hp = m.me.hp; P.mp = m.me.mp;
+      if (dead !== m.me.dead && !m.me.dead) { dead = false; heroSt.dieT = null; hero.rotation.z = 0; $('death').hidden = true; }
+    }
   }
-  if (m.t === 'leave') { const r = remotes.get(m.id); if (r) { scene.remove(r.obj); remotes.delete(m.id); if (target === r) { target = null; attacking = false; } } }
+  if (m.t === 'mobs') for (const [id, kind] of m.n) mobSeen(id, kind);
+  if (m.t === 'you') applyProfile(m.p);
+  if (m.t === 'ev') for (const e of m.e) onEvent(e);
+  // сервер не принял перемещение — возвращаемся туда, где он нас видит
+  if (m.t === 'fix') { hero.position.set(m.x, heightAt(m.x, m.z), m.z); dest = null; }
+  if (m.t === 'leave') { const r = remotes.get(m.id); if (r) { scene.remove(r.obj); remotes.delete(m.id); if (target === r) { target = null; stopAttack(); } } }
   if (m.t === 'me') {
     const was = P?.karma || 0;
     if (P) { P.karma = m.karma; P.pk = m.pk; P.pvp = m.pvp; }
@@ -657,13 +481,9 @@ function onNet(m) {
     if (P && m.karma > 0 && !was) { log(`Вы стали PK. Карма: ${m.karma}. Стражи городов атакуют вас, убийство мобов смывает карму.`, 'bad'); banner('Вы стали PK!'); }
     if (P && !m.karma && was) log('Карма очищена', 'good');
   }
-  if (m.t === 'phit') onPvpHit(m);
-  if (m.t === 'hurtres') { const r = remotes.get(m.id); if (r) floatText(r.obj.position, m.dmg ? (m.crit ? `${m.dmg}!` : String(m.dmg)) : 'Промах', m.dmg ? '#ffd0a0' : '#aaaaaa', m.crit); }
-  if (m.t === 'pvperr') { log(m.reason, 'bad'); attacking = false; }
-  if (m.t === 'pkdrop') pkDrop(m.to);
-  if (m.t === 'pkloot') { const it = ITEMS[m.item.id]; if (it) { addItem(m.item.id, it.stack ? m.item.n : 1, m.item.e || 0); log(`Вы подобрали с ${m.from}: ${it.name}`, 'rare'); renderInv(); save(); } }
+  if (m.t === 'pvperr') { log(m.reason, 'bad'); stopAttack(); }
   if (m.t === 'announce') { const el = document.createElement('div'); el.className = 'c-ann'; el.textContent = `[Объявление] ${m.text}`; logAppend(el); if (m.pk !== net.id) banner(m.text); }
-  if (m.t === 'washok') { P.coins -= m.cost; log(`Жрец очистил карму за ${m.cost} мон.`, 'good'); $('priest').hidden = true; save(); }
+  if (m.t === 'washok') { log(`Жрец очистил карму за ${m.cost} мон.`, 'good'); $('priest').hidden = true; }
   if (m.t === 'washerr') log(`Нужно ${m.cost} мон.`, 'bad');
   if (m.t === 'chat') chatAdd(m);
   if (m.t === 'pm') {
@@ -676,24 +496,128 @@ function onNet(m) {
   if (m.t === 'pmerr') log(`${m.to}: ${m.reason}`, 'bad');
   if (m.t === 'chatwait') log(`${CH_NAME[m.ch]}: можно писать через ${Math.ceil(m.wait / 1000)} с`, 'bad');
 }
+// ---- интерполяция сетевых существ: рисуем их на 150 мс в прошлом ----
+const netTime = () => Date.now() - (net.off || 0) - 150;
+function pushSnap(r, ts, x, y, z, ry) {
+  r.buf ??= [];
+  const last = r.buf[r.buf.length - 1];
+  // телепорт или первое появление — без интерполяции
+  if (!r.obj.visible || (last && Math.hypot(last.x - x, last.z - z) > 30)) { r.buf.length = 0; r.obj.position.set(x, y, z); r.obj.rotation.y = ry; }
+  r.buf.push({ t: ts, x, y, z, r: ry });
+  if (r.buf.length > 30) r.buf.shift();
+}
+function lerpEntity(r, rt, dt) {
+  const B = r.buf; if (!B?.length) return;
+  const o = r.obj;
+  while (B.length > 2 && B[1].t <= rt) B.shift();
+  const a = B[0], b = B[1];
+  let x, y, z, ang;
+  if (b && rt >= a.t) {
+    const span = Math.max(1, b.t - a.t), k = Math.min((rt - a.t) / span, 1 + 250 / span);
+    x = a.x + (b.x - a.x) * k; y = a.y + (b.y - a.y) * Math.min(k, 1); z = a.z + (b.z - a.z) * k;
+    let dr = b.r - a.r; dr = Math.atan2(Math.sin(dr), Math.cos(dr)); ang = a.r + dr * Math.min(k, 1);
+  } else { x = a.x; y = a.y; z = a.z; ang = a.r; }
+  if (!r.dead) o.position.set(x, y, z); else o.position.set(x, o.position.y, z);
+  let dr = ang - o.rotation.y; dr = Math.atan2(Math.sin(dr), Math.cos(dr)); o.rotation.y += dr * Math.min(1, dt * 15);
+}
+
+// ---- события боя: сервер сообщает, что произошло, клиент это рисует ----
+const objOf = (e) => (e.m != null ? mobs.get(e.m) : e.p != null ? remotes.get(e.p) : null);
+function onEvent(e) {
+  if (e.k === 'msg') return log(e.text, e.cls);
+  if (e.k === 'cd') { cds[e.id] = performance.now() + e.cd * 1000; return; }
+  if (e.k === 'hit' || e.k === 'miss') {
+    const t = objOf(e); if (!t) return;
+    const mine = !e.by;
+    if (mine) heroSt.attackT = 1;
+    if (e.k === 'miss') return floatText(t.obj.position, 'Промах', '#aaaaaa');
+    if (t.isMob) { t.flash = 0.12; t.st.hitT = 1; }
+    emit('spark', t.obj.position, { n: e.crit ? 16 : 6, color: e.crit ? [0xffd040, 0xffffff] : [0xffffff, 0xffc080], speed: e.crit ? 8 : 5, up: 3, life: 0.4, size: e.crit ? 0.5 : 0.35, dy: 1.2 * (t.def?.size || 1) });
+    floatText(t.obj.position, e.crit ? `${e.dmg}!` : String(e.dmg), mine ? (e.crit ? '#ffd040' : '#ffffff') : '#ffd0a0', e.crit);
+    if (mine && P.cls !== 'mage') slashFx(t.obj.position, e.crit);
+    return;
+  }
+  if (e.k === 'hurt') {
+    heroSt.hitT = 1;
+    if (e.dodge) return floatText(hero.position, 'Уклонение', '#a0c0ff');
+    emit('spark', hero.position, { n: 6, color: [0xff4040, 0xffa0a0], speed: 4, up: 2, life: 0.35 });
+    floatText(hero.position, String(e.dmg), '#ff6060', !!e.crit);
+    // отвечаем тому, кто бьёт, если стоим без цели
+    if (!target) setTarget(e.fromP != null ? remotes.get(e.fromP) : mobs.get(e.from));
+    return;
+  }
+  if (e.k === 'mdie') {
+    const t = mobs.get(e.m); if (!t) return;
+    t.dead = true; t.dieT = 0;
+    emit('dust', t.obj.position, { n: 18, color: [0x8a8070, 0xb0a890], speed: 3, up: 1, life: 1, size: 0.6, grav: -1, dy: 0.5, spread: 1 });
+    if (target === t) stopAttack();
+    return;
+  }
+  if (e.k === 'kill') {
+    log(`${e.name} повержен. Опыт +${e.xp}, монеты +${e.coins}`, 'good');
+    if (e.boss) banner(`${e.name} повержен!`);
+    return;
+  }
+  if (e.k === 'loot') {
+    const it = ITEMS[e.id]; if (!it) return;
+    log(`Получено: ${it.name}`, it.rare ? 'rare' : 'loot');
+    if (it.rare) banner(`Редкая добыча: ${it.name}!`);
+    return;
+  }
+  if (e.k === 'lvl') {
+    banner(`Новый уровень: ${e.lvl}`); log(`Уровень повышен до ${e.lvl}!`, 'rare');
+    ringFx(hero.position, 4, 0xffe070); pillarFx(hero.position, 0xffe070, 14);
+    emit('spark', hero.position, { n: 60, color: [0xffe070, 0xffffff, 0xffb040], speed: 2, up: 9, life: 1.4, size: 0.4, grav: -2, spread: 1.4, swirl: 3, dy: 0.2, h: 1 });
+    for (const id of CLASSES[P.cls].skills) if (SKILLS[id].lvl === e.lvl) log(`Изучено умение: ${SKILLS[id].name}`, 'good');
+    return;
+  }
+  if (e.k === 'heal') {
+    const col = e.kind === 'hp' ? '#60ff90' : '#6090ff';
+    floatText(hero.position, `+${e.amount}`, col);
+    emit('plus', hero.position, { n: e.skill ? 24 : 10, color: e.kind === 'hp' ? [0x60ff90, 0xc0ffd0] : [0x70a0ff, 0xc0d8ff], speed: 1, up: 3, life: 1.1, size: 0.45, grav: 0.5, spread: 1, dy: 0.3, h: 1.2 });
+    if (e.skill) ringFx(hero.position, 2.5, SKILLS[e.skill].color);
+    return;
+  }
+  if (e.k === 'cast') { cast = { id: e.id, t: e.t, total: e.t }; heroSt.casting = true; dest = null; return; }
+  if (e.k === 'buff') {
+    const sk = SKILLS[e.id];
+    buffs.push({ stat: sk.stat, mul: sk.mul, until: performance.now() + e.dur * 1000, name: sk.name });
+    ringFx(hero.position, 3, sk.color);
+    emit('spark', hero.position, { n: 30, color: [sk.color, 0xffd0a0], speed: 2, up: 5, life: 0.9, size: 0.35, grav: -3, spread: 1, swirl: 6, dy: 0.2 });
+    log(`${sk.name}: сила атаки +${Math.round((sk.mul - 1) * 100)}% на ${e.dur} с`, 'good');
+    return;
+  }
+  if (e.k === 'cast_fx') {
+    const sk = SKILLS[e.id], t = e.to ? objOf({ m: e.to.m, p: e.to.p }) : null;
+    if (sk.kind === 'aoe') {
+      const src = e.by != null ? remotes.get(e.by)?.obj.position : hero.position;
+      if (!src) return;
+      ringFx(src, sk.radius, sk.color);
+      emit(sk.school === 'm' ? 'flake' : 'spark', src, { n: 70, color: sk.school === 'm' ? [0x80d0ff, 0xffffff] : [0xffd060, 0xffffff], speed: sk.radius * 2.2, up: 1.5, life: 0.6, size: 0.45, grav: -2, drag: 2.5, ring: true, dy: 0.8, spread: 0.5 });
+    } else if (t) {
+      if (sk.school === 'm') { const src = e.by != null ? remotes.get(e.by)?.obj.position : hero.position; if (src) boltFx(src, t, sk.color, () => flashFx(t.obj.position, sk.color)); }
+      else flashFx(t.obj.position, sk.color);
+    }
+    return;
+  }
+  if (e.k === 'ench') {
+    if (e.ok) { ringFx(hero.position, 2.2, e.color); flashFx(hero.position, e.color, 1.5); emit('spark', hero.position, { n: 40, color: [e.color, 0xffffff, 0xffe070], speed: 3, up: 6, life: 1, size: 0.4, grav: -4, spread: 0.6, swirl: 5 }); }
+    else { flashFx(hero.position, 0x606060, 2); emit('dust', hero.position, { n: 30, color: [0x707070, 0x90e0ff], speed: 4, up: 3, life: 1.2, size: 0.5, grav: -5 }); }
+    return;
+  }
+  if (e.k === 'dead') return die(e.by, e.loss);
+  if (e.k === 'move') return teleportTo(e.x, e.z);
+}
+
 function updateRemotes(dt, t) {
   const now = performance.now();
   // интерполяция: рисуем чужих на 150 мс в прошлом между двумя снапшотами, при пропуске — по инерции до 250 мс
-  const rt = Date.now() - (net.off || 0) - 150;
+  const rt = netTime();
   for (const r of remotes.values()) {
     if (now - r.seen > 1500) r.obj.visible = false;
     if (!r.obj.visible || !r.buf?.length) continue;
-    const o = r.obj, B = r.buf;
-    while (B.length > 2 && B[1].t <= rt) B.shift();
-    let x, y, z, ang;
-    const a = B[0], b = B[1];
-    if (b && rt >= a.t) {
-      const span = Math.max(1, b.t - a.t), k = Math.min((rt - a.t) / span, 1 + 250 / span);
-      x = a.x + (b.x - a.x) * k; y = a.y + (b.y - a.y) * Math.min(k, 1); z = a.z + (b.z - a.z) * k;
-      let dr = b.r - a.r; dr = Math.atan2(Math.sin(dr), Math.cos(dr)); ang = a.r + dr * Math.min(k, 1);
-    } else { x = a.x; y = a.y; z = a.z; ang = a.r; }
-    o.position.set(x, y, z);
-    let dr = ang - o.rotation.y; dr = Math.atan2(Math.sin(dr), Math.cos(dr)); o.rotation.y += dr * Math.min(1, dt * 15);
+    const o = r.obj;
+    lerpEntity(r, rt, dt);
     r.st.moving = !!(r.a & 1); r.st.casting = !!(r.a & 4);
     r.st.attackT = Math.max(0, r.st.attackT - dt * 3);
     o.rotation.z += ((r.a & 8 ? Math.PI / 2 : 0) - o.rotation.z) * Math.min(1, dt * 8);
@@ -702,7 +626,7 @@ function updateRemotes(dt, t) {
   if (net.ok && t - net.lastSt > 0.1) {
     net.lastSt = t;
     const p = hero.position;
-    netSend({ t: 'st', x: +p.x.toFixed(2), y: +p.y.toFixed(2), z: +p.z.toFixed(2), r: +hero.rotation.y.toFixed(2), a: (heroSt.moving ? 1 : 0) | (heroSt.attackT > 0 ? 2 : 0) | (heroSt.casting ? 4 : 0) | (dead ? 8 : 0), hp: Math.round((P.hp / stats().maxHp) * 100) });
+    netSend({ t: 'st', x: +p.x.toFixed(2), y: +p.y.toFixed(2), z: +p.z.toFixed(2), r: +hero.rotation.y.toFixed(2), a: (heroSt.moving ? 1 : 0) | (heroSt.attackT > 0 ? 2 : 0) | (heroSt.casting ? 4 : 0) | (dead ? 8 : 0) });
   }
 }
 // чат: вкладки фильтруют окно; «+текст» — торговля, «/w Имя текст» или «"Имя текст» — личное, «/r текст» — ответ
@@ -799,23 +723,6 @@ function bubble(obj, text) {
   fx.push({ el, follow: obj, life: 5, max: 5 });
 }
 
-// по мне ударил игрок
-function onPvpHit(m) {
-  if (dead || !P) return;
-  const s = stats(), r = remotes.get(m.from);
-  if (Math.random() < THREE.MathUtils.clamp(0.05 + (s.eva - ((r?.look?.lvl || P.lvl) + 33)) * 0.01, 0.02, 0.3)) { netSend({ t: 'hurt', by: m.from, dmg: 0 }); return floatText(hero.position, 'Уклонение', '#a0c0ff'); }
-  const def = m.school === 'm' ? s.mdef : s.pdef;
-  let d = m.atk * m.mul * (70 / (70 + def)) * (0.9 + Math.random() * 0.2) * 3;
-  if (m.crit) d *= 2;
-  d = Math.max(1, Math.round(d));
-  P.hp -= d; heroSt.hitT = 1;
-  emit('spark', hero.position, { n: 6, color: [0xff4040, 0xffa0a0], speed: 4, up: 2, life: 0.35 });
-  floatText(hero.position, String(d), '#ff6060', !!m.crit);
-  netSend({ t: 'hurt', by: m.from, dmg: d, crit: m.crit });
-  // ответный удар, если стоим без цели
-  if (r && !target) target = r;
-  if (P.hp <= 0) die(r || { name: m.name, isPlayer: true, id: m.from });
-}
 const nameColor = (k) => ['#ffffff', '#d890ff', '#ff4a4a'][k || 0];
 const myStatus = () => (P?.karma > 0 ? 2 : net.flagUntil > performance.now() ? 1 : 0);
 
@@ -828,25 +735,25 @@ renderer.domElement.addEventListener('contextmenu', (e) => e.preventDefault());
 function pickAt(cx, cy) {
   ndc.set((cx / innerWidth) * 2 - 1, -(cy / innerHeight) * 2 + 1);
   ray.setFromCamera(ndc, camera);
-  const pickables = [...mobs.filter((m) => !m.dead && m.obj.visible && flatDist(m.obj.position, hero.position) < 120).map((m) => m.obj), ...npcs.map((n) => n.obj), ...[...remotes.values()].filter((r) => r.obj.visible).map((r) => r.obj)];
+  const pickables = [...[...mobs.values()].filter((m) => !m.dead && m.obj.visible && flatDist(m.obj.position, hero.position) < 120).map((m) => m.obj), ...npcs.map((n) => n.obj), ...[...remotes.values()].filter((r) => r.obj.visible).map((r) => r.obj)];
   let hit = ray.intersectObjects(pickables, true)[0];
   // на телефоне палец толще модели — ищем ближайшего к точке касания моба в радиусе 36 px
   if (!hit && MOBILE) {
     let best = null, bd = 36;
-    for (const m of mobs) if (!m.dead && m.obj.visible && flatDist(m.obj.position, hero.position) < 80) { const p = toScreen(_v.copy(m.obj.position).setY(m.obj.position.y + 1)); const d = Math.hypot(p.x - cx, p.y - cy); if (p.vis && d < bd) { bd = d; best = m; } }
+    for (const m of mobs.values()) if (!m.dead && m.obj.visible && flatDist(m.obj.position, hero.position) < 80) { const p = toScreen(_v.copy(m.obj.position).setY(m.obj.position.y + 1)); const d = Math.hypot(p.x - cx, p.y - cy); if (p.vis && d < bd) { bd = d; best = m; } }
     if (best) hit = { object: best.obj };
   }
   if (hit) {
     const m = hit.object.userData.mob || hit.object.userData.remote, n = hit.object.userData.npc;
-    if (m) { if (target === m) { attacking = true; dest = null; } else { target = m; attacking = false; } }
-    if (n) { target = npcs.find((x) => x.id === n.id); attacking = false; dest = null; talkTo = target; }
+    if (m) { if (target === m) { attackTarget(m); dest = null; } else setTarget(m); }
+    if (n) { setTarget(null); target = npcs.find((x) => x.id === n.id); dest = null; talkTo = target; }
     return;
   }
   const g = ray.intersectObject(ground)[0];
   let p = g?.point;
   // катакомбы: пол — плоскость y=0
   if (hero.position.x > DUNGEON.x0 - 100) { const t = -ray.ray.origin.y / ray.ray.direction.y; if (t > 0) p = ray.ray.at(t, new THREE.Vector3()); }
-  if (p) { dest = p.clone(); attacking = false; talkTo = null; pendingSkill = null; clickMark(p); }
+  if (p) { dest = p.clone(); stopAttack(); talkTo = null; clickMark(p); }
 }
 // касания: тап — выбор/ходьба, один палец — орбита, два — щипок-зум и орбита
 let orbDX = 0, orbDY = 0, zoomAcc = 0;
@@ -927,14 +834,14 @@ addEventListener('keydown', (e) => {
   if (e.code === 'KeyC') toggle('char');
   if (e.code === 'KeyM') toggle('bigmap');
   if (e.code === 'Tab') { e.preventDefault(); nextTarget(); }
-  if (e.code === 'KeyF' && target?.def) { attacking = true; dest = null; }
-  if (e.code === 'Escape') { for (const id of ['inv', 'char', 'shop', 'tp', 'bigmap', 'priest']) $(id).hidden = true; enchMode = null; target = null; attacking = false; }
+  if (e.code === 'KeyF' && target?.isMob) { attackTarget(target); dest = null; }
+  if (e.code === 'Escape') { for (const id of ['inv', 'char', 'shop', 'tp', 'bigmap', 'priest']) $(id).hidden = true; enchMode = null; setTarget(null); }
 });
 addEventListener('keyup', (e) => { keys[e.code] = false; });
 function nextTarget() {
-  const list = mobs.filter((m) => !m.dead && flatDist(m.obj.position, hero.position) < 40).sort((a, b) => flatDist(a.obj.position, hero.position) - flatDist(b.obj.position, hero.position));
+  const list = [...mobs.values()].filter((m) => !m.dead && m.obj.visible && flatDist(m.obj.position, hero.position) < 40).sort((a, b) => flatDist(a.obj.position, hero.position) - flatDist(b.obj.position, hero.position));
   if (!list.length) return;
-  const i = list.indexOf(target); target = list[(i + 1) % list.length]; attacking = false;
+  const i = list.indexOf(target); setTarget(list[(i + 1) % list.length]);
 }
 let talkTo = null;
 const marker = new THREE.Mesh(new THREE.RingGeometry(0.5, 0.8, 24).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0x80ffb0, transparent: true }));
@@ -956,13 +863,13 @@ if (MOBILE && STANDALONE) $('fsbtn').hidden = true;
 if (!import.meta.env.DEV) setInterval(async () => {
   try { const v = await (await fetch('version.json', { cache: 'no-store' })).json(); if (v.build !== __BUILD__) $('update').hidden = false; } catch { /* нет сети */ }
 }, 60000);
-$('update-go').onclick = () => { save(); location.reload(); };
+$('update-go').onclick = () => location.reload();
 
 // Кнопки меню (ПК и телефон)
 function menuClick(e) {
   const b = e.target.closest('[data-act]'); if (!b || !P) return;
   const a = b.dataset.act;
-  if (a === 'attack') { if (target?.def && !target.dead) { attacking = true; dest = null; } else nextTarget(); }
+  if (a === 'attack') { if (target?.isMob && !target.dead) { attackTarget(target); dest = null; } else nextTarget(); }
   if (a === 'next') nextTarget();
   if (a === 'inv') toggle('inv');
   if (a === 'char') toggle('char');
@@ -1009,25 +916,17 @@ function updateHero(dt) {
   heroSt.moving = false;
   heroSt.attackT = Math.max(0, heroSt.attackT - dt * 3);
   if (dead) return;
-  // регенерация (в городе быстрее)
-  const reg = inTown() ? 4 : 1;
-  P.hp = Math.min(s.maxHp, P.hp + s.maxHp * 0.006 * reg * s.regen * dt);
-  P.mp = Math.min(s.maxMp, P.mp + s.maxMp * 0.012 * reg * s.regen * dt);
-  // каст
+  // полоса каста: время отмеряет сервер, клиент только дорисовывает
   if (cast) {
     cast.t -= dt;
     if (Math.random() < dt * 30) { const col = cast.id === 'escape' ? 0xa080ff : SKILLS[cast.id].color; emit('dot', hero.position, { n: 1, color: [col, 0xffffff], speed: 0.4, up: 1.5, life: 0.6, size: 0.3, grav: 0, spread: 0.9, swirl: 5, dy: 0.4, h: 1.2 }); }
-    if (cast.t <= 0) {
-      const c = cast; cast = null; heroSt.casting = false;
-      if (c.id === 'escape') { const t = TOWNS.find((x) => x.id === P.home) || TOWNS[0]; teleportTo(t.x, t.z - 12); }
-      else applySkill(c.id, c.target, s);
-    }
+    if (cast.t <= 0) { cast = null; heroSt.casting = false; }
     return;
   }
   // WASD — прямое управление относительно камеры
   const kx = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0) + joy.x, kz = (keys.KeyS ? 1 : 0) - (keys.KeyW ? 1 : 0) + joy.y;
   if (Math.abs(kx) + Math.abs(kz) > 0.15) {
-    dest = null; attacking = false; talkTo = null;
+    dest = null; stopAttack(); talkTo = null;
     const f = new THREE.Vector3(Math.sin(cam.yaw + Math.PI), 0, Math.cos(cam.yaw + Math.PI)), r = new THREE.Vector3(-f.z, 0, f.x);
     const amt = Math.min(1, Math.hypot(kx, kz));
     const dir = f.multiplyScalar(-kz).add(r.multiplyScalar(kx)).normalize();
@@ -1039,41 +938,22 @@ function updateHero(dt) {
     if (d > 3.5) { stepTo(talkTo.obj.position, s.speed, dt); }
     else { faceTo(talkTo.obj.position); openNpc(talkTo); talkTo = null; }
   }
-  // атака цели
-  if (attacking && (target?.def || target?.isPlayer)) {
-    if (target.dead) { attacking = false; }
+  // атака: клиент подводит героя в радиус и держит цель, удары отбивает сервер
+  if (attacking && (target?.isMob || target?.isPlayer)) {
+    if (target.dead) stopAttack();
     else {
       const d = flatDist(hero.position, target.obj.position);
       const skillRange = pendingSkill ? SKILLS[pendingSkill].range : s.range;
-      if (d > skillRange + target.radius) stepTo(target.obj.position, s.speed, dt);
+      if (d > skillRange + target.radius - 0.6) stepTo(target.obj.position, s.speed, dt); // подходим чуть ближе, чем нужно серверу
       else {
         faceTo(target.obj.position);
         if (pendingSkill) { const id = pendingSkill; pendingSkill = null; useSkill(id); }
-        else if (inTown()) { attacking = false; log('В городе сражаться нельзя', 'bad'); }
-        else {
-          atkTimer -= dt;
-          if (atkTimer <= 0) {
-            atkTimer = 1 / s.aspd;
-            if (target.isPlayer) {
-              const tg = target, crit = Math.random() < s.crit ? 1 : 0;
-              heroSt.attackT = 1;
-              if (P.cls === 'mage') boltFx(hero.position, tg, 0x80a0ff, () => pvpSend(tg, s.matk * 0.6, 1, 'm', crit, 24));
-              else { pvpSend(tg, s.patk, 1, 'p', crit, s.range + 1); slashFx(tg.obj.position, crit); }
-            }
-            else if (P.cls === 'mage') { const r = calcDmg(s.matk * 0.6, target.def.pdef, 1, s.crit); const tg = target; boltFx(hero.position, tg, 0x80a0ff, () => hitMob(tg, r.d, r.crit)); heroSt.attackT = 1; }
-            else if (Math.random() < THREE.MathUtils.clamp(0.06 + (target.def.lvl + 33 - s.acc) * 0.01, 0.01, 0.3)) { heroSt.attackT = 1; floatText(target.obj.position, 'Промах', '#aaaaaa'); if (target.state !== 'chase') { target.state = 'chase'; target.target = 'hero'; } }
-            else { const r = calcDmg(s.patk, target.def.pdef, 1, s.crit); heroSt.attackT = 1; hitMob(target, r.d, r.crit); slashFx(target.obj.position, r.crit); }
-          }
-        }
       }
     }
   } else if (dest) {
     if (flatDist(hero.position, dest) < 0.6) dest = null;
     else stepTo(dest, s.speed, dt);
   }
-  // входы в катакомбы
-  if (flatDist(hero.position, cryptDoor) < 2.2) { teleportTo(dungeonExit.x + 6, dungeonExit.z + 6); log('Вы спустились в катакомбы. Здесь нежить нападает первой.', 'bad'); }
-  if (hero.position.x > DUNGEON.x0 - 100 && flatDist(hero.position, dungeonExit) < 2) { teleportTo(cryptDoor.x, cryptDoor.z + 5); log('Вы выбрались на поверхность.'); }
 }
 function stepTo(p, speed, dt) {
   const dir = tmp.set(p.x - hero.position.x, 0, p.z - hero.position.z);
@@ -1083,25 +963,13 @@ function stepTo(p, speed, dt) {
   hero.rotation.y = Math.atan2(dir.x, dir.z); heroSt.moving = true;
 }
 
+// мобы приходят снапшотами: интерполируем как других игроков
 function updateMobs(dt, t) {
-  const now = performance.now();
-  for (const m of mobs) {
-    const pos = m.obj.position;
-    const near = flatDist(pos, hero.position) < 160;
-    if (m.dead) {
-      if (now > m.respawnAt) {
-        m.dead = false; m.hp = m.def.hp; m.state = 'idle'; pos.set(m.home.x, heightAt(m.home.x, m.home.z), m.home.z); m.obj.rotation.z = 0; m.obj.visible = true; m.spawnT = 0;
-        if (flatDist(pos, hero.position) < 80) emit('dust', pos, { n: 14, color: 0x9a9080, speed: 2, up: 1, life: 0.8, size: 0.6, grav: -1, dy: 0.3, spread: 0.8 });
-      } else if (m.dieT != null && m.dieT < 3) {
-        // падение, затем уход в землю
-        m.dieT += dt;
-        const k = Math.min(1, m.dieT * 3.5);
-        m.obj.rotation.z = (Math.PI / 2) * k * k;
-        if (m.dieT > 1.3) pos.y -= dt * 1.2 * (m.def.size || 1);
-      }
-      continue;
-    }
-    if (m.spawnT != null && m.spawnT < 1) { m.spawnT += dt * 2; pos.y = heightAt(pos.x, pos.z) - (1 - Math.min(1, m.spawnT)) * 2 * (m.def.size || 1); }
+  const now = performance.now(), rt = netTime();
+  for (const [id, m] of mobs) {
+    if (now - m.seen > 8000) { scene.remove(m.obj); mobs.delete(id); if (target === m) { target = null; stopAttack(); } continue; }
+    if (!m.obj.visible) continue;
+    lerpEntity(m, rt, dt);
     // вспышка при попадании
     if (m.flash > 0 || m.flashOn) {
       m.flash -= dt;
@@ -1112,37 +980,19 @@ function updateMobs(dt, t) {
       }
     }
     m.st.hitT = Math.max(0, (m.st.hitT || 0) - dt * 5);
-    m.obj.visible = near || m.def.boss;
-    if (!near) continue; // далёких не симулируем
-    m.st.moving = false; m.st.attackT = Math.max(0, m.st.attackT - dt * 3);
-    const dHero = flatDist(pos, hero.position);
-    const speed = 12 * (m.def.boss ? 0.8 : 1);
-    if (m.state === 'idle' || m.state === 'wander') {
-      if (m.def.aggro && !dead && dHero < 14 && !inTown()) { m.state = 'chase'; m.target = 'hero'; }
-      m.wanderT -= dt;
-      if (m.wanderT <= 0) { m.wanderT = rand(4, 10); m.dest = m.home.clone().add(new THREE.Vector3(rand(-12, 12), 0, rand(-12, 12))); m.state = 'wander'; }
-      if (m.state === 'wander' && m.dest) {
-        const dir = tmp.set(m.dest.x - pos.x, 0, m.dest.z - pos.z); const L = dir.length();
-        if (L < 0.5) { m.state = 'idle'; m.dest = null; } else { dir.divideScalar(L); moveEntity(pos, dir, Math.min(L, speed * 0.35 * dt), m.radius); m.obj.rotation.y = Math.atan2(dir.x, dir.z); m.st.moving = true; }
+    m.st.moving = !!(m.a & 1);
+    m.st.attackT = Math.max(0, m.st.attackT - dt * 3);
+    // падение и уход в землю
+    if (m.dead) {
+      if (m.dieT == null) m.dieT = 0;
+      if (m.dieT < 3) {
+        m.dieT += dt;
+        const k = Math.min(1, m.dieT * 3.5);
+        m.obj.rotation.z = (Math.PI / 2) * k * k;
+        if (m.dieT > 1.3) m.obj.position.y -= dt * 1.2 * (m.def.size || 1);
+        if (m.dieT > 2.5) m.obj.visible = false;
       }
-    } else if (m.state === 'chase') {
-      if (dead || flatDist(pos, m.home) > 60 || inTown()) { m.state = 'return'; m.target = null; }
-      else {
-        const reach = 2 + m.radius;
-        if (dHero > reach) { const dir = tmp.set(hero.position.x - pos.x, 0, hero.position.z - pos.z).normalize(); moveEntity(pos, dir, speed * dt, m.radius); m.obj.rotation.y = Math.atan2(dir.x, dir.z); m.st.moving = true; }
-        else {
-          m.obj.rotation.y = Math.atan2(hero.position.x - pos.x, hero.position.z - pos.z);
-          m.atkCd -= dt;
-          if (m.atkCd <= 0) { m.atkCd = m.def.boss ? 1.4 : 1.8; m.st.attackT = 1; heroHit(m); }
-        }
-        // бой сам по себе делает героя «в бою»: если цели нет — берём атакующего
-        if (!target && !dead) target = m;
-      }
-    } else if (m.state === 'return') {
-      const dir = tmp.set(m.home.x - pos.x, 0, m.home.z - pos.z); const L = dir.length();
-      m.hp = Math.min(m.def.hp, m.hp + m.def.hp * 0.3 * dt);
-      if (L < 1) m.state = 'idle'; else { dir.divideScalar(L); moveEntity(pos, dir, speed * 1.4 * dt, m.radius); m.obj.rotation.y = Math.atan2(dir.x, dir.z); m.st.moving = true; }
-    }
+    } else if (m.dieT != null) { m.dieT = null; m.obj.rotation.z = 0; }
     m.obj.userData.anim(t, m.st);
   }
 }
@@ -1156,7 +1006,7 @@ function toScreen(p) {
 const labelPool = [];
 function updateLabels() {
   const list = [];
-  for (const m of mobs) if (!m.dead && m.obj.visible) { const d = flatDist(m.obj.position, hero.position); if (d < 45) list.push({ d, m }); }
+  for (const m of mobs.values()) if (!m.dead && m.obj.visible) { const d = flatDist(m.obj.position, hero.position); if (d < 45) list.push({ d, m }); }
   list.sort((a, b) => a.d - b.d);
   const shown = list.slice(0, MOB_LABEL_MAX).map((x) => ({ pos: x.m.obj.position, h: 2.6 * (x.m.def.size || 1) + 0.6, text: `${x.m.def.name} ${x.m.def.lvl}`, color: levelColor(x.m.def.lvl), sel: x.m === target }));
   for (const n of npcs) if (flatDist(n.obj.position, hero.position) < 45) shown.push({ pos: n.obj.position, h: 2.9, text: n.name, color: '#a0e0ff', sel: n === target });
@@ -1190,7 +1040,7 @@ function renderHud() {
   $('online').textContent = net.ok ? `Онлайн: ${net.online}` : 'Нет связи с сервером';
   if (target) {
     $('target').hidden = false;
-    if (target.def) { $('tname').textContent = `${target.def.name}`; $('tname').style.color = levelColor(target.def.lvl); $('tlvl').textContent = `ур. ${target.def.lvl}${target.def.aggro ? ' · агрессивный' : ''}`; bar('tbar', target.hp, target.def.hp, `${Math.round((target.hp / target.def.hp) * 100)}%`); $('tbar').hidden = false; }
+    if (target.isMob) { $('tname').textContent = `${target.def.name}`; $('tname').style.color = levelColor(target.def.lvl); $('tlvl').textContent = `ур. ${target.def.lvl}${target.def.aggro ? ' · агрессивный' : ''}`; bar('tbar', target.hp, 100, `${target.hp}%`); $('tbar').hidden = false; }
     else if (target.isPlayer) { $('tname').textContent = target.name; $('tname').style.color = nameColor(target.k); $('tlvl').textContent = `ур. ${target.look?.lvl || '?'} · ${['игрок', 'флаг PvP', 'PK'][target.k || 0]}`; bar('tbar', target.hp, 100, `${target.hp}%`); $('tbar').hidden = false; }
     else { $('tname').textContent = target.name; $('tname').style.color = '#a0e0ff'; $('tlvl').textContent = 'NPC'; $('tbar').hidden = true; }
   } else $('target').hidden = true;
@@ -1338,9 +1188,11 @@ function activate(ref) {
   if (it.slot) equipIdx(ref.bag); else if (it.use) useItem(e.id);
 }
 let drag = null;
+// перерисовка инвентаря, отложенная на время перетаскивания
 $('inv').addEventListener('pointerdown', (e) => {
   const cell = e.target.closest('.cell'); const ref = refOf(cell);
   if (!hasItem(ref) || enchMode) return;
+  e.preventDefault(); // иначе браузер начнёт своё перетаскивание иконки и оборвёт жест (pointercancel)
   drag = { ref, x: e.clientX, y: e.clientY, el: null, cell };
 });
 addEventListener('pointermove', (e) => {
@@ -1353,7 +1205,7 @@ addEventListener('pointermove', (e) => {
 addEventListener('pointerup', (e) => {
   if (!drag) return;
   const d = drag; drag = null;
-  if (!d.el) return;
+  if (!d.el) { if (pendingInv) { pendingInv = false; renderInv(); } return; }
   d.el.remove();
   const over = refOf(document.elementFromPoint(e.clientX, e.clientY)?.closest('.cell'));
   const onGrid = document.elementFromPoint(e.clientX, e.clientY)?.closest('#inv-grid');
@@ -1365,6 +1217,7 @@ addEventListener('pointerup', (e) => {
     renderInv();
   }
   d.cell.dataset.dragged = '1'; setTimeout(() => delete d.cell.dataset.dragged, 0);
+  if (pendingInv) { pendingInv = false; renderInv(); }
 });
 $('inv').addEventListener('click', (e) => {
   const cmd = e.target.closest('[data-cmd]')?.dataset.cmd;
@@ -1374,7 +1227,7 @@ $('inv').addEventListener('click', (e) => {
       if (cmd === 'off') unequip(sel.slot);
       if (cmd === 'on') equipIdx(sel.bag);
       if (cmd === 'use') useItem(P.inv[sel.bag].id);
-      if (cmd === 'drop') { const it = ITEMS[P.inv[sel.bag].id]; P.inv.splice(sel.bag, 1); log(`Выброшено: ${it.name}`); sel = null; save(); }
+      if (cmd === 'drop') { netSend({ t: 'sell', idx: sel.bag, n: 1 }); sel = null; }
     }
     return renderInv();
   }
@@ -1404,17 +1257,14 @@ function openNpc(n) {
   }
   if (n.role === 'guard') log(`${n.name}: «Проходи. PK в город не пускаем.»`);
   if (n.role === 'gatekeeper') {
-    P.home = n.town; // точка возрождения — последний посещённый город
     $('tp-list').innerHTML = TELEPORTS.map((t) => `<button data-tp="${t.id}" ${P.coins < t.cost ? 'disabled' : ''}><b>${t.name}</b><span>${t.cost ? `${t.cost} мон.` : 'бесплатно'}</span></button>`).join('');
     $('tp').hidden = false;
   }
 }
 $('tp').addEventListener('click', (e) => {
   const b = e.target.closest('[data-tp]'); if (!b) return;
-  const t = TELEPORTS.find((x) => x.id === b.dataset.tp);
-  if (P.coins < t.cost) return;
-  P.coins -= t.cost; $('tp').hidden = true;
-  teleportTo(t.x, t.z); log(`Телепорт: ${t.name}`);
+  if (P.coins < TELEPORTS.find((x) => x.id === b.dataset.tp).cost) return;
+  netSend({ t: 'tp', id: b.dataset.tp }); $('tp').hidden = true;
 });
 let shopTab = 'buy';
 function renderShop(tab = shopTab) {
@@ -1427,18 +1277,17 @@ function renderShop(tab = shopTab) {
 $('shop').addEventListener('click', (e) => {
   const t = e.target.closest('[data-tab]'); if (t) return renderShop(t.dataset.tab);
   const b = e.target.closest('[data-buy]');
-  if (b) { const it = ITEMS[b.dataset.buy]; if (P.coins >= it.price) { P.coins -= it.price; addItem(b.dataset.buy); log(`Куплено: ${it.name}`, 'good'); } }
+  if (b) netSend({ t: 'buy', id: b.dataset.buy, n: 1 });
   const s = e.target.closest('[data-sell],[data-sellall]');
   if (s) {
-    const id = s.dataset.sell || s.dataset.sellall, it = ITEMS[id], pr = Math.round((it.price || 4000) * (it.loot ? 1 : 0.4));
-    const n = s.dataset.sellall ? invCount(id) : 1;
-    if (takeItem(id, n)) { P.coins += pr * n; log(`Продано: ${it.name} ×${n} (+${pr * n})`); }
+    const id = s.dataset.sell || s.dataset.sellall;
+    const idx = P.inv.findIndex((e) => e.id === id);
+    if (idx >= 0) netSend({ t: 'sell', idx, n: s.dataset.sellall ? P.inv[idx].n : 1 });
   }
-  renderShop(); renderInv(); save();
 });
 setInterval(() => { if (P && !$('char').hidden) renderChar(); }, 500);
 $('respawn').onclick = respawn;
-$('priest').addEventListener('click', (e) => { if (e.target.id === 'wash') netSend({ t: 'wash', coins: P.coins }); });
+$('priest').addEventListener('click', (e) => { if (e.target.id === 'wash') netSend({ t: 'wash' }); });
 
 // ================= Карта =================
 function drawMap(cv, big) {
@@ -1448,7 +1297,7 @@ function drawMap(cv, big) {
   if (inCrypt) {
     const size = DUNGEON.cell * DUNGEON.n, k = W / size;
     x.fillStyle = '#2a2628'; x.fillRect(0, 0, W, H);
-    for (const m of mobs) if (!m.dead && m.home.x > DUNGEON.x0 - 100) { x.fillStyle = m.def.boss ? '#c060ff' : '#c04040'; x.fillRect((m.obj.position.x - DUNGEON.x0) * k - 2, (m.obj.position.z - DUNGEON.z0) * k - 2, 4, 4); }
+    for (const m of mobs.values()) if (!m.dead && m.obj.position.x > DUNGEON.x0 - 100) { x.fillStyle = m.def.boss ? '#c060ff' : '#c04040'; x.fillRect((m.obj.position.x - DUNGEON.x0) * k - 2, (m.obj.position.z - DUNGEON.z0) * k - 2, 4, 4); }
     x.fillStyle = '#9a70ff'; x.fillRect((dungeonExit.x - DUNGEON.x0) * k - 3, (dungeonExit.z - DUNGEON.z0) * k - 3, 6, 6);
     x.fillStyle = '#fff'; x.beginPath(); x.arc((hero.position.x - DUNGEON.x0) * k, (hero.position.z - DUNGEON.z0) * k, 4, 0, 7); x.fill();
     return;
@@ -1460,7 +1309,7 @@ function drawMap(cv, big) {
   for (const t of TOWNS) { const [a, b] = P2(t.x, t.z); x.fillStyle = '#d8cfb8'; x.beginPath(); x.arc(a, b, t.r * scale, 0, 7); x.fill(); if (big) { x.fillStyle = '#fff'; x.font = '12px sans-serif'; x.textAlign = 'center'; x.fillText(t.name, a, b - t.r * scale - 6); } }
   if (big) for (const z of ZONES) { const [a, b] = P2(z.x, z.z); x.fillStyle = '#fff'; x.font = '12px sans-serif'; x.textAlign = 'center'; x.fillText(`${z.name} (${z.lv})`, a, b); }
   { const [a, b] = P2(CRYPT.x, CRYPT.z); x.fillStyle = '#9a70ff'; x.fillRect(a - 3, b - 3, 6, 6); if (big) { x.fillStyle = '#c0a0ff'; x.fillText('Склеп', a, b - 8); } }
-  if (!big) for (const m of mobs) if (!m.dead && m.obj.visible) { const [a, b] = P2(m.obj.position.x, m.obj.position.z); x.fillStyle = m.def.aggro ? '#ff5050' : '#ffc060'; x.fillRect(a - 1.5, b - 1.5, 3, 3); }
+  if (!big) for (const m of mobs.values()) if (!m.dead && m.obj.visible) { const [a, b] = P2(m.obj.position.x, m.obj.position.z); x.fillStyle = m.def.aggro ? '#ff5050' : '#ffc060'; x.fillRect(a - 1.5, b - 1.5, 3, 3); }
   for (const n of npcs) { const [a, b] = P2(n.x, n.z); x.fillStyle = '#80d0ff'; x.fillRect(a - 2, b - 2, 4, 4); }
   const [a, b] = P2(hero.position.x, hero.position.z);
   x.save(); x.translate(a, b); x.rotate(-hero.rotation.y + Math.PI);
@@ -1486,8 +1335,8 @@ function loop() {
   updateFx(dt);
   updateParticles(dt);
   marker.material.opacity = Math.max(0, marker.material.opacity - dt * 1.5); marker.visible = marker.material.opacity > 0;
-  selRing.visible = !!target && (!target.def || !target.dead);
-  if (selRing.visible) { const o = target.obj.position; selRing.position.set(o.x, o.y + 0.15, o.z); selRing.scale.setScalar(target.radius || 1); selRing.material.color.set(target.def ? 0xff5050 : 0x60c0ff); }
+  selRing.visible = !!target && !target.dead;
+  if (selRing.visible) { const o = target.obj.position; selRing.position.set(o.x, o.y + 0.15, o.z); selRing.scale.setScalar(target.radius || 1); selRing.material.color.set(target.isMob ? 0xff5050 : 0x60c0ff); }
   if (bannerT > 0) { bannerT -= dt; if (bannerT <= 0) $('banner').style.opacity = '0'; }
   applyCamInput(dt);
   placeCamera(hero.position, cam.dist);
@@ -1512,17 +1361,15 @@ loop();
 // ================= Старт: вход и регистрация =================
 function start(p) {
   P = migrate(p);
+  net.started = true;
   $('start').remove();
   document.body.classList.add('ingame'); document.documentElement.classList.add('ingame-root');
   spawnHero();
   teleportTo(P.x, P.z);
   renderSkills(); renderInv(); setChatTab('all');
-  sendLook();
   log(`Добро пожаловать, ${P.name}! ЛКМ — идти/выбрать цель (второй клик — атака), ПКМ или два пальца — камера, щипок/колесо — зум, V — сброс камеры, 1–3 — умения, 4–5 — зелья, Tab — цель, I — инвентарь, C — персонаж, M — карта, Enter — чат.`);
   log('Поговорите с Хранителем врат, чтобы перенестись в зону охоты, и с Торговцем — за снаряжением.');
-  try { localStorage.setItem(SAVE_KEY, JSON.stringify(P)); } catch { /* */ }
 }
-const localChar = loadSave(); // персонаж из этого браузера (до аккаунтов) — переносится при регистрации
 function startMsg(text, bad) { const el = $('start-msg'); if (el) { el.textContent = text || ''; el.classList.toggle('bad', !!bad); } }
 function startBusy(on) { for (const id of ['start-new', 'start-login', 'start-cont']) if ($(id)) $(id).disabled = on || !net.ok; }
 function startReady() {
@@ -1542,17 +1389,8 @@ function sendAuth(m) {
 }
 let pickCls = 'warrior';
 for (const b of document.querySelectorAll('[data-cls]')) b.addEventListener('click', () => { pickCls = b.dataset.cls; for (const x of document.querySelectorAll('[data-cls]')) x.classList.toggle('on', x === b); });
-if (localChar) {
-  $('start-import').hidden = false;
-  $('start-import').querySelector('span').textContent = `Перенести персонажа из этого браузера: ${localChar.name} (${CLASSES[localChar.cls]?.name}, ${localChar.lvl} ур.)`;
-  $('cname').value = localChar.name;
-}
 const creds = () => ({ name: $('cname').value.trim(), pass: $('cpass').value });
-$('start-new').onclick = () => {
-  const c = creds();
-  const imp = localChar && $('start-import').querySelector('input').checked;
-  sendAuth({ t: 'register', ...c, save: imp ? { ...localChar, name: c.name } : newChar(c.name, pickCls) });
-};
+$('start-new').onclick = () => sendAuth({ t: 'register', ...creds(), cls: pickCls });
 $('start-login').onclick = () => sendAuth({ t: 'login', ...creds() });
 $('cpass').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('start-login').click(); });
 $('start-cont').onclick = () => sendAuth({ t: 'auth', token: loadAuth()?.token });
@@ -1565,4 +1403,4 @@ $('start-logout').onclick = () => {
 startReady();
 netConnect();
 // хук для автотестов: dev-сервер или ?test
-if (import.meta.env.DEV || location.search.includes('test')) window.__g = { get P() { return P; }, mobs, get hero() { return hero; }, cam, teleportTo, gainXp, useSkill, joy, useItem, openNpc, equipIdx, unequip, enchant, stats, get enchMode() { return enchMode; }, renderInv, remotes, net, npcs, respawn, get dead() { return dead; }, get target() { return target; }, set target(v) { target = v; }, attack() { attacking = true; } };
+if (import.meta.env.DEV || location.search.includes('test')) window.__g = { get P() { return P; }, mobs, get hero() { return hero; }, cam, teleportTo, dev: (o) => netSend({ t: 'dev', ...o }), goTo: (x, z) => netSend({ t: 'dev', x, z }), useSkill, joy, useItem, openNpc, equipIdx, unequip, enchant, stats, get enchMode() { return enchMode; }, renderInv, remotes, net, npcs, respawn, netSend, get dead() { return dead; }, get target() { return target; }, set target(v) { setTarget(v); }, attack() { attackTarget(target); } };

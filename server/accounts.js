@@ -28,26 +28,24 @@ export function openDb(file) {
   const issue = (key) => { const token = crypto.randomBytes(24).toString('hex'); q.tokAdd.run(sha(token), key, Date.now()); return token; };
   const parse = (row) => { try { return row.save ? JSON.parse(row.save) : null; } catch { return null; } };
 
-  // сохранение от клиента: имя и класс берём из аккаунта, размер ограничен
+  // сохранение пишет сервер по итогам своей симуляции: клиентский профиль сюда не попадает
   function cleanSave(row, save) {
     if (!save || typeof save !== 'object' || Array.isArray(save)) return null;
-    const old = parse(row);
-    const s = { ...save, name: row.name, cls: old?.cls || (save.cls === 'mage' ? 'mage' : 'warrior'), ts: Date.now() };
+    const s = { ...save, name: row.name, ts: Date.now() };
     const json = JSON.stringify(s);
     return json.length > SAVE_MAX ? null : json;
   }
 
   return {
-    register(name, pass, save) {
+    // при регистрации от клиента берётся только класс — персонажа создаёт сервер
+    register(name, pass, cls) {
       name = String(name || '').trim();
       if (!NAME_RE.test(name)) return { err: 'Имя: 3–16 букв или цифр' };
       if (String(pass || '').length < 4 || String(pass).length > 64) return { err: 'Пароль: от 4 до 64 символов' };
       const key = keyOf(name);
       if (q.get.get(key)) return { err: 'Это имя уже занято' };
       const salt = crypto.randomBytes(16);
-      const row = { key, name, save: null };
-      const json = cleanSave(row, save);
-      if (!json) return { err: 'Некорректный персонаж' };
+      const json = JSON.stringify({ cls: cls === 'mage' ? 'mage' : 'warrior' });
       q.add.run(key, name, salt, hashPass(pass, salt), Date.now(), json, Date.now());
       return { key, name, token: issue(key), save: JSON.parse(json) };
     },

@@ -1,4 +1,4 @@
-// Тесты сервера: аккаунты, сохранения, вытеснение второй сессии. npm run test:server
+// Тесты сервера: аккаунты, авторитетный профиль, отказ читерским командам, PvP. npm run test:server
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
@@ -10,7 +10,7 @@ import WebSocket from 'ws';
 const PORT = 8792, DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'realms-')), DB = path.join(DIR, 'test.db');
 let srv;
 before(async () => {
-  srv = spawn('node', ['--no-warnings', 'server/server.js'], { env: { ...process.env, PORT: String(PORT), DB }, stdio: 'pipe' });
+  srv = spawn('node', ['--no-warnings', 'server/server.js'], { env: { ...process.env, PORT: String(PORT), DB, DEV_CMD: '1', AUTH_TRIES: '1000' }, stdio: 'pipe' });
   await new Promise((r) => srv.stdout.once('data', r));
 });
 after(() => { srv.kill(); fs.rmSync(DIR, { recursive: true, force: true }); });
@@ -19,54 +19,188 @@ after(() => { srv.kill(); fs.rmSync(DIR, { recursive: true, force: true }); });
 function client() {
   const ws = new WebSocket(`ws://localhost:${PORT}`), inbox = [], waiters = [];
   ws.on('message', (d) => { const m = JSON.parse(d); const w = waiters.findIndex((x) => x.types.includes(m.t)); if (w >= 0) waiters.splice(w, 1)[0].res(m); else inbox.push(m); });
-  const c = {
+  return {
     ws, send: (m) => ws.send(JSON.stringify(m)),
     wait: (...types) => new Promise((res, rej) => {
       const i = inbox.findIndex((m) => types.includes(m.t)); if (i >= 0) return res(inbox.splice(i, 1)[0]);
-      waiters.push({ types, res }); setTimeout(() => rej(new Error('нет ответа ' + types)), 3000);
+      waiters.push({ types, res }); setTimeout(() => rej(new Error('нет ответа ' + types)), 5000);
     }),
     open: () => new Promise((r) => ws.once('open', r)),
     closed: () => new Promise((r) => (ws.readyState === 3 ? r() : ws.once('close', r))),
   };
-  return c;
 }
-const char = (name, cls = 'warrior') => ({ name, cls, lvl: 1, xp: 0, coins: 150, inv: [], equip: { weapon: 'sword_novice' }, x: 0, z: 0 });
+const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+// дождаться события с нужным текстом: в очереди могут лежать другие события
+async function untilEv(c, re, what = String(re)) {
+  for (let i = 0; i < 40; i++) { const m = await c.wait('ev'); if (re.test(JSON.stringify(m.e))) return m.e; }
+  throw new Error('не дождались события: ' + what);
+}
+// дождаться профиля, удовлетворяющего условию (сервер шлёт его сам при каждом изменении)
+async function untilP(c, cond, what = 'условие профиля') {
+  for (let i = 0; i < 40; i++) { const m = await c.wait('you', 'snap'); if (m.t === 'you' && cond(m.p)) return m.p; }
+  throw new Error('не дождались: ' + what);
+}
+// встать в точку и дать серверу её принять
+const at = async (c, x, z) => { c.send({ t: 'dev', x, z }); await pause(250); c.send({ t: 'st', x, y: 0, z, r: 0, a: 0 }); await pause(150); };
 
-test('регистрация, вход по паролю и по токену, сохранение', async () => {
+test('регистрация: персонажа создаёт сервер, класс — по выбору', async () => {
   const a = client(); await a.open();
-  a.send({ t: 'register', name: 'Тестер', pass: 'secret1', save: char('Другое', 'mage') });
+  a.send({ t: 'register', name: 'Тестер', pass: 'secret1', cls: 'mage' });
   const ok = await a.wait('authok', 'autherr');
-  assert.equal(ok.t, 'authok'); assert.equal(ok.save.name, 'Тестер'); assert.equal(ok.save.cls, 'mage'); assert.ok(ok.token);
-  // сохранение: имя и класс не подменить
-  a.send({ t: 'save', p: { ...char('Взлом', 'warrior'), lvl: 7 } });
-  await new Promise((r) => setTimeout(r, 200));
+  assert.equal(ok.t, 'authok');
+  assert.equal(ok.p.name, 'Тестер');
+  assert.equal(ok.p.cls, 'mage');
+  assert.equal(ok.p.lvl, 1);
+  assert.ok(ok.p.hp > 0 && ok.p.coins > 0, 'сервер не выдал стартовое состояние');
+  assert.ok(ok.token);
   a.ws.close(); await a.closed();
+});
+
+test('подложный профиль от клиента игнорируется', async () => {
+  const a = client(); await a.open();
+  a.send({ t: 'login', name: 'тестер', pass: 'secret1' });
+  const ok = await a.wait('authok');
+  const before = { lvl: ok.p.lvl, coins: ok.p.coins };
+  // старая команда сохранения больше не существует
+  a.send({ t: 'save', p: { lvl: 40, coins: 9999999, inv: [{ id: 'sword_crystal', n: 99, e: 16 }] } });
+  a.send({ t: 'you', p: { lvl: 40 } });
+  await pause(600);
+  a.send({ t: 'dev', coins: before.coins }); // любое изменение заставит сервер прислать свой профиль
+  const p = await untilP(a, () => true);
+  assert.equal(p.lvl, before.lvl, 'сервер принял чужой уровень');
+  assert.ok(p.coins <= before.coins, 'сервер принял чужие монеты');
+  assert.ok(!p.inv.some((e) => e.id === 'sword_crystal'), 'сервер принял чужие вещи');
+  a.ws.close(); await a.closed();
+});
+
+test('после перезахода профиль приходит из базы, а не от клиента', async () => {
+  const a = client(); await a.open();
+  a.send({ t: 'login', name: 'Тестер', pass: 'secret1' }); await a.wait('authok');
+  a.send({ t: 'dev', coins: 777, item: 'potion_hp', n: 2 });
+  await untilP(a, (p) => p.coins === 777, 'монеты не применились');
+  a.ws.close(); await a.closed();
+  await pause(300);
 
   const b = client(); await b.open();
-  b.send({ t: 'login', name: 'тестер', pass: 'secret1' });
-  const lg = await b.wait('authok', 'autherr');
-  assert.equal(lg.t, 'authok'); assert.equal(lg.save.lvl, 7); assert.equal(lg.save.name, 'Тестер'); assert.equal(lg.save.cls, 'mage');
+  b.send({ t: 'login', name: 'Тестер', pass: 'secret1' });
+  const ok = await b.wait('authok');
+  assert.equal(ok.p.coins, 777, 'прогресс не сохранился на сервере');
   b.ws.close(); await b.closed();
+});
 
-  const c = client(); await c.open();
-  c.send({ t: 'auth', token: ok.token });
-  assert.equal((await c.wait('authok', 'autherr')).name, 'Тестер');
-  c.ws.close(); await c.closed();
+test('покупка: без монет и вне досягаемости торговца — отказ', async () => {
+  const a = client(); await a.open();
+  a.send({ t: 'register', name: 'Купец', pass: 'secret1', cls: 'warrior' });
+  const ok = await a.wait('authok');
+  // далеко от города
+  await at(a, -260, 180);
+  a.send({ t: 'dev', coins: 100000 });
+  await untilP(a, (p) => p.coins === 100000);
+  a.send({ t: 'buy', id: 'sword_crystal', n: 1 });
+  await pause(500);
+  a.send({ t: 'dev', coins: 50 });
+  let p = await untilP(a, (x) => x.coins === 50);
+  assert.ok(!p.inv.some((e) => e.id === 'sword_crystal'), 'купил вдали от торговца');
+  // рядом с торговцем, но денег не хватает
+  await at(a, -442, 410);
+  a.send({ t: 'buy', id: 'sword_crystal', n: 1 });
+  await untilEv(a, /Недостаточно монет/);
+  // и настоящая покупка
+  a.send({ t: 'dev', coins: 1000 });
+  await untilP(a, (x) => x.coins === 1000);
+  a.send({ t: 'buy', id: 'potion_hp', n: 2 });
+  p = await untilP(a, (x) => x.coins < 1000, 'покупка не прошла');
+  assert.ok(p.inv.some((e) => e.id === 'potion_hp' && e.n >= 2), 'зелья не выданы');
+  assert.equal(p.coins, 1000 - 60, 'списано не по прайсу');
+  assert.ok(ok.p.name === 'Купец');
+  a.ws.close(); await a.closed();
+});
+
+test('вещь не по уровню не надевается, заточка без свитка не проходит', async () => {
+  const a = client(); await a.open();
+  a.send({ t: 'register', name: 'Новичок', pass: 'secret1', cls: 'warrior' });
+  await a.wait('authok');
+  a.send({ t: 'dev', item: 'sword_crystal' });
+  const p = await untilP(a, (x) => x.inv.some((e) => e.id === 'sword_crystal'));
+  const idx = p.inv.findIndex((e) => e.id === 'sword_crystal');
+  a.send({ t: 'equip', idx });
+  await untilEv(a, /нужен уровень/, 'надел вещь не по уровню');
+  // заточка без свитка в сумке
+  a.send({ t: 'ench', scroll: 'scroll_ench_w', ref: { bag: idx } });
+  await pause(400);
+  a.send({ t: 'dev', coins: 5 });
+  const p2 = await untilP(a, (x) => x.coins === 5);
+  assert.ok(!p2.inv[idx]?.e, 'заточил без свитка');
+  a.ws.close(); await a.closed();
+});
+
+test('рывок быстрее бега отклоняется', async () => {
+  const a = client(); await a.open();
+  a.send({ t: 'register', name: 'Бегун', pass: 'secret1', cls: 'warrior' });
+  await a.wait('authok');
+  await at(a, -260, 180);
+  await pause(2200); // после отладочного переноса сервер две секунды не придирается к скорости
+  a.send({ t: 'st', x: -260, y: 0, z: 180, r: 0, a: 1 });
+  await pause(150);
+  a.send({ t: 'st', x: 200, y: 0, z: 600, r: 0, a: 1 });
+  const fix = await a.wait('fix');
+  assert.ok(Math.hypot(fix.x + 260, fix.z - 180) < 5, `сервер увёл не туда: ${fix.x},${fix.z}`);
+  a.ws.close(); await a.closed();
+});
+
+test('атака несуществующего моба и моба за горизонтом ничего не даёт', async () => {
+  const a = client(); await a.open();
+  a.send({ t: 'register', name: 'Мазила', pass: 'secret1', cls: 'warrior' });
+  const ok = await a.wait('authok');
+  await at(a, -260, 180);
+  a.send({ t: 'atk', id: 999999, kind: 'm' });
+  await pause(800);
+  a.send({ t: 'dev', coins: 3 });
+  const p = await untilP(a, (x) => x.coins === 3);
+  assert.equal(p.xp, ok.p.xp, 'дали опыт за несуществующего моба');
+  assert.equal(p.kills, ok.p.kills || 0, 'засчитали убийство');
+  a.ws.close(); await a.closed();
+});
+
+test('мобы приходят с сервера и их можно убить', async () => {
+  const a = client(); await a.open();
+  a.send({ t: 'register', name: 'Охотник', pass: 'secret1', cls: 'warrior' });
+  await a.wait('authok');
+  a.send({ t: 'dev', lvl: 20, hp: 99999, x: -260, z: 180 });
+  await pause(400);
+  // ждём снапшот с мобами
+  let mob = null;
+  for (let i = 0; i < 40 && !mob; i++) {
+    const s = await a.wait('snap');
+    const alive = (s.m || []).filter((r) => !(r[5] & 8));
+    if (alive.length) mob = alive.sort((x, y) => Math.hypot(x[1] + 260, x[3] - 180) - Math.hypot(y[1] + 260, y[3] - 180))[0];
+    a.send({ t: 'st', x: -260, y: 0, z: 180, r: 0, a: 0 });
+  }
+  assert.ok(mob, 'сервер не прислал мобов');
+  // подходим вплотную и бьём
+  await at(a, mob[1] + 1, mob[3] + 1);
+  a.send({ t: 'atk', id: mob[0], kind: 'm' });
+  for (let i = 0; i < 80; i++) {
+    a.send({ t: 'st', x: mob[1] + 1, y: 0, z: mob[3] + 1, r: 0, a: 0 });
+    const m = await a.wait('ev', 'snap');
+    if (m.t === 'ev' && m.e.some((e) => e.k === 'kill')) { assert.ok(true); a.ws.close(); await a.closed(); return; }
+  }
+  throw new Error('моб не умер за отведённое время');
 });
 
 test('занятое имя, неверный пароль, плохой токен, слабые данные', async () => {
   const a = client(); await a.open();
-  a.send({ t: 'register', name: 'ТЕСТЕР', pass: 'xxxx', save: char('x') });
+  a.send({ t: 'register', name: 'ТЕСТЕР', pass: 'xxxx', cls: 'warrior' });
   assert.match((await a.wait('autherr')).reason, /занято/);
   a.send({ t: 'login', name: 'Тестер', pass: 'wrong' });
   assert.match((await a.wait('autherr')).reason, /Неверное/);
   a.send({ t: 'auth', token: 'deadbeef' });
   assert.match((await a.wait('autherr')).reason, /Сессия/);
-  a.send({ t: 'register', name: 'a b', pass: 'xxxx', save: char('x') });
+  a.send({ t: 'register', name: 'a b', pass: 'xxxx', cls: 'warrior' });
   assert.match((await a.wait('autherr')).reason, /Имя/);
-  a.send({ t: 'register', name: 'Норм', pass: '1', save: char('x') });
+  a.send({ t: 'register', name: 'Норм', pass: '1', cls: 'warrior' });
   assert.match((await a.wait('autherr')).reason, /Пароль/);
-  // без входа чат и сохранение игнорируются
+  // без входа чат игнорируется
   a.send({ t: 'chat', ch: 'all', text: 'спам' });
   a.ws.close(); await a.closed();
 });
@@ -85,42 +219,43 @@ test('личные сообщения: доставка, эхо отправит
   const a = client(); await a.open();
   a.send({ t: 'login', name: 'Тестер', pass: 'secret1' }); await a.wait('authok');
   const b = client(); await b.open();
-  b.send({ t: 'register', name: 'Друг', pass: 'secret2', save: char('x') }); await b.wait('authok');
+  b.send({ t: 'register', name: 'Друг', pass: 'secret2', cls: 'warrior' }); await b.wait('authok');
   a.send({ t: 'pm', to: 'друг', text: 'привет' });
   const got = await b.wait('pm'), echo = await a.wait('pm');
   assert.deepEqual([got.from, got.to, got.text], ['Тестер', 'Друг', 'привет']);
   assert.equal(echo.text, 'привет');
-  await new Promise((r) => setTimeout(r, 450));
+  await pause(450);
   a.send({ t: 'pm', to: 'Никто', text: 'эй' });
   assert.match((await a.wait('pmerr')).reason, /не в сети/);
   a.ws.close(); b.ws.close(); await a.closed(); await b.closed();
 });
 
-test('PvP: флаг за удар по белому, PK за убийство, карма смывается мобами, в городе нельзя', async () => {
-  const mk = async (name) => { const c = client(); await c.open(); c.send({ t: 'register', name, pass: 'pvp12345', save: { ...char(name), lvl: 20 } }); await c.wait('authok'); await c.wait('me'); return c; };
-  const a = await mk('Убийца'), b = await mk('Жертва');
-  const at = (c, x, z) => c.send({ t: 'st', x, y: 0, z, r: 0, a: 0, hp: 100 });
-  // в городе (Светлая Гавань -430,400) — отказ
-  at(a, -430, 400); at(b, -428, 400); await new Promise((r) => setTimeout(r, 50));
-  a.send({ t: 'pvp', to: 0, atk: 50, mul: 1, school: 'p', range: 3 });
-  const ids = await new Promise((res) => { const s = (m) => m.t === 'snap' && m.o.length && res(m.o[0][0]); a.ws.on('message', (d) => s(JSON.parse(d))); });
-  a.send({ t: 'pvp', to: ids, atk: 50, mul: 1, school: 'p', range: 3 });
-  assert.match((await a.wait('pvperr')).reason, /городе/);
-  // на лугу — удар доходит, атакующий флагнут, атака срезана потолком
-  at(a, -260, 180); at(b, -258, 180); await new Promise((r) => setTimeout(r, 300));
-  a.send({ t: 'pvp', to: ids, atk: 999999, mul: 1, school: 'p', range: 3 });
-  const hit = await b.wait('phit');
-  assert.ok(hit.atk <= 40 + 20 * 12, `атака не срезана: ${hit.atk}`);
-  const me1 = await a.wait('me'); assert.ok(me1.flag > 0 && me1.karma === 0);
-  // жертва умерла — убийца PK, объявление на сервер
-  b.send({ t: 'pdied', by: a.ws.__id ?? hit.from });
-  const me2 = await a.wait('me'); assert.equal(me2.pk, 1); assert.ok(me2.karma > 0);
-  assert.match((await b.wait('announce')).text, /стал PK/);
-  // убийство мобов смывает карму
-  a.send({ t: 'mobkill', xp: 400 });
-  const me3 = await a.wait('me'); assert.ok(me3.karma < me2.karma);
-  // отмыв за деньги
-  a.send({ t: 'wash', coins: 1 }); assert.ok((await a.wait('washerr')).cost > 1);
-  a.send({ t: 'wash', coins: 1e6 }); await a.wait('washok'); assert.equal((await a.wait('me')).karma, 0);
-  a.ws.close(); b.ws.close(); await a.closed(); await b.closed();
+test('PvP: урон считает сервер, в городе нельзя, за убийство белого — PK', async () => {
+  const mk = async (name) => {
+    const c = client(); await c.open();
+    c.send({ t: 'register', name, pass: 'pvp12345', cls: 'warrior' });
+    const ok = await c.wait('authok'); await c.wait('me');
+    c.send({ t: 'dev', lvl: 20 });
+    await untilP(c, (p) => p.lvl === 20);
+    return { c, id: ok.id };
+  };
+  const A = await mk('Убийца'), B = await mk('Жертва');
+  // в городе — отказ
+  await at(A.c, -430, 400); await at(B.c, -428, 400);
+  A.c.send({ t: 'atk', id: B.id, kind: 'p' });
+  await untilEv(A.c, /городе/, 'в городе разрешили бой');
+  // на лугу — удар доходит, атакующий флагнут
+  await at(A.c, -260, 180); await at(B.c, -258.5, 180);
+  A.c.send({ t: 'atk', id: B.id, kind: 'p' });
+  const keep = setInterval(() => { A.c.send({ t: 'st', x: -260, y: 0, z: 180, r: 0, a: 0 }); B.c.send({ t: 'st', x: -258.5, y: 0, z: 180, r: 0, a: 0 }); }, 100);
+  const hurt = await (async () => { for (let i = 0; i < 60; i++) { const m = await B.c.wait('ev'); const h = m.e.find((e) => e.k === 'hurt' && e.fromP === A.id); if (h) return h; } throw new Error('урон не дошёл'); })();
+  assert.ok(hurt.dmg > 0 && hurt.dmg < 1e6, `странный урон: ${hurt.dmg}`);
+  const me1 = await A.c.wait('me');
+  assert.ok(me1.flag > 0 && me1.karma === 0, 'нет флага за удар по белому');
+  // добиваем: жертва должна умереть, убийца стать PK
+  B.c.send({ t: 'dev', hp: 1 });
+  const me2 = await (async () => { for (let i = 0; i < 40; i++) { const m = await A.c.wait('me'); if (m.pk === 1) return m; } throw new Error('убийца не стал PK'); })();
+  assert.ok(me2.karma > 0, 'карма не начислена');
+  clearInterval(keep);
+  A.c.ws.close(); B.c.ws.close(); await A.c.closed(); await B.c.closed();
 });

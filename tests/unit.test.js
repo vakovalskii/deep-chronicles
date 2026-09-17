@@ -2,6 +2,7 @@
 import { test } from 'node:test';
 import { sliceGeometry, pivotOf, RIG } from '../src/glb.js';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import * as THREE from 'three';
 import { CLASSES, SKILLS, ITEMS, MOBS, SHOP, xpToNext, MAX_LEVEL } from '../src/data.js';
 import { buildWorld, heightAt, zoneAt, obstacles, TOWNS, TELEPORTS, ZONES, DUNGEON, dungeonCells, dungeonWalls, CRYPT } from '../src/world.js';
@@ -183,4 +184,104 @@ test('пивоты частей совпадают с суставами про�
   assert.deepEqual(pivotOf('head', RIG), [0, RIG.neck, 0]);
   assert.deepEqual(pivotOf('armR', RIG), [RIG.armX, RIG.shoulder, 0]);
   assert.deepEqual(pivotOf('torso', RIG), [0, 0, 0]);
+});
+
+// ===== правила симуляции (общие для сервера и клиента) =====
+import { calcDmg, missChance, evaChance, xpForKill, rollDrops, rollCoins, sellPrice, crystalsFor, enchSucceeds, mobStep, newMob, moveEntity, flatDist } from '../src/sim.js';
+import { SAFE_ENCH, MAX_ENCH } from '../src/stats.js';
+
+// генератор с фиксированным зерном — чтобы тесты не зависели от удачи
+const seeded = (seed) => () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+
+test('урон: растёт с атакой, падает от защиты, крит удваивает', () => {
+  const r = () => 0.5; // середина разброса, без крита
+  const a = calcDmg(100, 0, 1, 0, r).d, b = calcDmg(200, 0, 1, 0, r).d;
+  assert.ok(b > a * 1.9 && b < a * 2.1, `удвоение атаки: ${a} → ${b}`);
+  assert.ok(calcDmg(100, 200, 1, 0, r).d < a, 'защита не снижает урон');
+  const crit = calcDmg(100, 0, 1, 1, () => 0.5);
+  assert.ok(crit.crit && crit.d === a * 2, `крит: ${crit.d} вместо ${a * 2}`);
+  assert.ok(calcDmg(0.0001, 9999, 1, 0, r).d >= 1, 'урон должен быть хотя бы 1');
+});
+
+test('промах и уклонение: в пределах разумного и зависят от уровня', () => {
+  for (const lv of [1, 20, 40]) {
+    assert.ok(missChance(lv, 30) >= 0.01 && missChance(lv, 30) <= 0.3, 'промах вне границ');
+    assert.ok(evaChance(lv, 30) >= 0.02 && evaChance(lv, 30) <= 0.3, 'уклонение вне границ');
+  }
+  assert.ok(missChance(40, 30) > missChance(1, 30), 'по сильному мобу промахов не больше');
+  assert.ok(evaChance(1, 90) > evaChance(40, 30), 'уклонение не растёт от ловкости');
+});
+
+test('опыт за моба режется, если моб сильно ниже игрока', () => {
+  const mob = MOBS.rabbit;
+  assert.equal(xpForKill(mob, mob.lvl), mob.xp, 'за ровню опыт полный');
+  assert.equal(xpForKill(mob, mob.lvl - 10), mob.xp, 'за моба выше себя опыт полный');
+  const low = xpForKill(mob, mob.lvl + 20);
+  assert.ok(low < mob.xp && low >= Math.round(mob.xp * 0.1), `срез опыта: ${low}`);
+});
+
+test('добыча и монеты — в границах таблицы моба', () => {
+  const mob = MOBS.wolf;
+  for (let i = 1; i < 30; i++) {
+    const c = rollCoins(mob, seeded(i));
+    assert.ok(c >= mob.coins[0] && c <= mob.coins[1], `монеты вне диапазона: ${c}`);
+    for (const id of rollDrops(mob, seeded(i))) assert.ok(mob.drops[id], `выпало не из таблицы: ${id}`);
+  }
+  assert.deepEqual(rollDrops(mob, () => 0.999), [], 'при неудачном броске ничего не падает');
+});
+
+test('цены продажи и кристаллы за неудачную заточку', () => {
+  assert.equal(sellPrice(ITEMS.potion_hp), Math.round(ITEMS.potion_hp.price * 0.4), 'товар продаётся за 40%');
+  assert.ok(sellPrice(ITEMS.pelt) === ITEMS.pelt.price, 'добыча продаётся по полной цене');
+  assert.ok(crystalsFor('b', 5) > crystalsFor('d', 5), 'за грейд B кристаллов больше');
+  assert.ok(crystalsFor('c', 9) > crystalsFor('c', 1), 'чем выше заточка, тем больше кристаллов');
+});
+
+test('заточка: до безопасного уровня всегда удаётся, дальше — бросок', () => {
+  for (let e = 0; e < SAFE_ENCH; e++) assert.ok(enchSucceeds(e, () => 0.999), `+${e} должен пройти без риска`);
+  assert.ok(!enchSucceeds(SAFE_ENCH, () => 0.999), 'выше безопасной заточки провал возможен');
+  assert.ok(enchSucceeds(MAX_ENCH - 1, () => 0.01), 'удачный бросок должен срабатывать');
+});
+
+test('ИИ моба: агрится на игрока рядом, возвращается домой и лечится', () => {
+  const m = newMob(1, { mob: 'orc', x: 0, z: 0 }, seeded(3)); // орк агрессивный
+  const hit = [];
+  const ctx = { now: Date.now(), onHit: (mb, p) => hit.push(p.id), players: [{ id: 7, x: 5, z: 0, dead: false, inTown: false }] };
+  mobStep(m, ctx, 0.1);
+  assert.equal(m.state, 'chase', 'моб не заметил игрока в 5 м');
+  for (let i = 0; i < 60; i++) mobStep(m, ctx, 0.1);
+  assert.ok(hit.includes(7), 'моб догнал, но не ударил');
+  // игрок ушёл в город — моб возвращается и восстанавливает здоровье
+  m.hp = 1;
+  ctx.players[0].inTown = true;
+  let cameHome = 0;
+  for (let i = 0; i < 200 && !cameHome; i++) { mobStep(m, ctx, 0.1); if (m.state !== 'return' && m.state !== 'chase') cameHome = flatDist(m, m.home); }
+  assert.ok(cameHome && cameHome < 2, `моб не дошёл до дома: ${cameHome}`);
+  assert.ok(m.hp > 1, 'моб не полечился на обратном пути');
+});
+
+test('мирного моба не агрит близкий игрок', () => {
+  const m = newMob(2, { mob: 'rabbit', x: 0, z: 0 }, seeded(5));
+  assert.ok(!MOBS.rabbit.aggro, 'кролик вдруг стал агрессивным — тест устарел');
+  const ctx = { now: Date.now(), onHit: () => assert.fail('мирный моб ударил первым'), players: [{ id: 1, x: 1, z: 1, dead: false, inTown: false }] };
+  for (let i = 0; i < 50; i++) mobStep(m, ctx, 0.1);
+  assert.notEqual(m.state, 'chase', 'мирный моб погнался за игроком');
+});
+
+test('шаг движения не проходит сквозь препятствия', () => {
+  const o = obstacles.find((x) => x.r > 2 && x.x < 2000);
+  const pos = { x: o.x - o.r - 3, y: 0, z: o.z };
+  moveEntity(pos, 1, 0, 20, 0.6); // бежим прямо в центр препятствия
+  assert.ok(Math.hypot(pos.x - o.x, pos.z - o.z) >= o.r + 0.5, 'персонаж прошёл сквозь препятствие');
+});
+
+test('ядро мира не тянет за собой three.js', async () => {
+  const src = fs.readFileSync(new URL('../src/world-core.js', import.meta.url), 'utf8');
+  assert.ok(!/from\s+'three/.test(src), 'world-core.js импортирует three');
+  const simSrc = fs.readFileSync(new URL('../src/sim.js', import.meta.url), 'utf8');
+  assert.ok(!/from\s+'three/.test(simSrc), 'sim.js импортирует three');
+  for (const f of ['sim/player.js', 'sim/mobs.js', 'server.js', 'accounts.js']) {
+    const s = fs.readFileSync(new URL('../server/' + f, import.meta.url), 'utf8');
+    assert.ok(!/from\s+'three/.test(s) && !/world\.js'/.test(s), `server/${f} тянет рендер`);
+  }
 });

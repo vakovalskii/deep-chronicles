@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 const DBDIR = fs.mkdtempSync(path.join(os.tmpdir(), 'realms-e2e-'));
-const wsServer = spawn('node', ['--no-warnings', 'server/server.js'], { stdio: 'pipe', env: { ...process.env, PORT: String(WS), DB: path.join(DBDIR, 'e2e.db') } });
+const wsServer = spawn('node', ['--no-warnings', 'server/server.js'], { stdio: 'pipe', env: { ...process.env, PORT: String(WS), DB: path.join(DBDIR, 'e2e.db'), DEV_CMD: '1' } });
 wsServer.stderr.on('data', (d) => process.stderr.write('[ws] ' + d));
 const results = [];
 let failed = 0;
@@ -18,6 +18,8 @@ async function step(name, fn) {
   catch (e) { failed++; results.push(`  ✗ ${name}: ${e.message}`); }
 }
 const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
+// профиль ведёт сервер: изменения приходят ответом, поэтому всегда ждём подтверждения
+const untilP = (pg, fn, arg, ms = 8000) => pg.waitForFunction(fn, arg, { timeout: ms });
 
 try {
   for (let i = 0; i < 50; i++) { try { if ((await fetch(URL)).ok) break; } catch { /* ждём */ } await new Promise((r) => setTimeout(r, 200)); }
@@ -69,51 +71,107 @@ try {
     await page.keyboard.press('KeyV');
   });
 
-  await step('торговец: покупка зелья', async () => {
-    await G(() => { const g = window.__g; g.P.coins = 500; g.openNpc(g.npcs.find((n) => n.role === 'merchant')); });
+  await step('торговец: покупку проводит сервер', async () => {
+    await G(() => { const g = window.__g, n = g.npcs.find((x) => x.role === 'merchant'); g.dev({ coins: 500, x: n.x + 2, z: n.z + 2 }); });
+    await untilP(page, () => window.__g.P.coins === 500);
+    await G(() => window.__g.openNpc(window.__g.npcs.find((n) => n.role === 'merchant')));
     expect(await page.isVisible('#shop'), 'окно торговца не открылось');
     const n0 = await G(() => window.__g.P.inv.find((i) => i.id === 'potion_hp')?.n || 0);
     await page.click('[data-buy=potion_hp]');
-    const n1 = await G(() => window.__g.P.inv.find((i) => i.id === 'potion_hp')?.n || 0);
-    expect(n1 === n0 + 1, `зелий ${n0} → ${n1}`);
+    await untilP(page, (n) => (window.__g.P.inv.find((i) => i.id === 'potion_hp')?.n || 0) === n + 1, n0);
     expect((await G(() => window.__g.P.coins)) === 470, 'монеты не списались');
     await page.click('#shop [data-close]');
   });
 
+  await step('торговец: без монет покупка не проходит', async () => {
+    await G(() => window.__g.dev({ coins: 0 }));
+    await untilP(page, () => window.__g.P.coins === 0);
+    const n0 = await G(() => window.__g.P.inv.find((i) => i.id === 'potion_hp')?.n || 0);
+    await G(() => window.__g.netSend({ t: 'buy', id: 'sword_crystal', n: 1 }));
+    await wait(800);
+    expect((await G(() => window.__g.P.coins)) === 0, 'монеты ушли в минус');
+    expect(!(await G(() => window.__g.P.inv.some((i) => i.id === 'sword_crystal'))), 'вещь выдана без оплаты');
+    expect((await G(() => window.__g.P.inv.find((i) => i.id === 'potion_hp')?.n || 0)) === n0, 'сумка изменилась');
+    await G(() => window.__g.dev({ coins: 470 }));
+    await untilP(page, () => window.__g.P.coins === 470);
+  });
+
   await step('хранитель врат: телепорт на луга', async () => {
+    await G(() => { const g = window.__g, n = g.npcs.find((x) => x.role === 'gatekeeper'); g.dev({ x: n.x + 2, z: n.z + 2 }); });
+    await wait(500);
     await G(() => { const g = window.__g; g.openNpc(g.npcs.find((n) => n.role === 'gatekeeper')); });
     await page.click('[data-tp=meadow]');
     expect(await zoneHas('Солнечные луга'), `зона: ${await page.textContent('#zone')}`);
-    expect((await G(() => window.__g.P.coins)) === 390, 'телепорт не списал оплату');
+    await untilP(page, () => window.__g.P.coins === 390);
   });
 
+  // ближайший живой моб нужного вида — мобов присылает сервер, поэтому сперва ждём их
+  const nearMob = (pg, kind) => pg.evaluate((k) => {
+    const g = window.__g, h = g.hero.position;
+    const m = [...g.mobs.values()].filter((x) => !x.dead && x.obj.visible && (!k || x.def === window.__MOBS?.[k] || x.def.name === k))
+      .sort((a, b) => a.obj.position.distanceTo(h) - b.obj.position.distanceTo(h))[0];
+    return m ? { id: m.id, x: m.obj.position.x, z: m.obj.position.z, name: m.def.name } : null;
+  }, kind);
+
   await step('бой: убийство моба даёт опыт и монеты', async () => {
+    await page.waitForFunction(() => [...window.__g.mobs.values()].some((m) => !m.dead && m.obj.visible), null, { timeout: 15000 });
     const before = await G(() => ({ xp: window.__g.P.xp, coins: window.__g.P.coins, kills: window.__g.P.kills }));
-    await G(() => { const g = window.__g; const m = g.mobs.find((x) => x.id === 'rabbit' && !x.dead); g.teleportTo(m.obj.position.x + 6, m.obj.position.z); g.target = m; g.attack(); });
-    await page.waitForFunction((k) => window.__g.P.kills > k, before.kills, { timeout: 20000 });
+    await G(() => window.__g.dev({ lvl: 20, hp: 99999 }));
+    await untilP(page, () => window.__g.P.lvl === 20);
+    const m = await nearMob(page);
+    await G((t) => window.__g.dev({ x: t.x + 1, z: t.z + 1 }), m);
+    await wait(700);
+    await G((t) => { const g = window.__g; g.target = g.mobs.get(t.id); g.attack(); }, m);
+    await page.waitForFunction((k) => window.__g.P.kills > k, before.kills, { timeout: 30000 });
     const after = await G(() => ({ xp: window.__g.P.xp, coins: window.__g.P.coins }));
     expect(after.xp > before.xp && after.coins > before.coins, JSON.stringify({ before, after }));
   });
 
+  await step('читер: подмена профиля в консоли не доходит до сервера', async () => {
+    const real = await G(() => { window.__g.P.coins = 1234567; window.__g.P.lvl = 40; return true; });
+    expect(real, 'не удалось подменить');
+    await G(() => window.__g.netSend({ t: 'save', p: { coins: 1234567, lvl: 40 } }));
+    await wait(1200);
+    // сервер присылает свой профиль и затирает подмену
+    // любое действие заставляет сервер прислать свой профиль и затереть подмену
+    await G(() => window.__g.dev({ coins: 321 }));
+    await untilP(page, () => window.__g.P.coins === 321);
+    expect((await G(() => window.__g.P.lvl)) !== 40, 'сервер принял накрученный уровень');
+  });
+
+  await step('читер: рывок через полкарты отклоняется', async () => {
+    const p0 = await G(() => ({ x: window.__g.hero.position.x, z: window.__g.hero.position.z }));
+    await G((p) => { window.__g.hero.position.set(p.x + 400, window.__g.hero.position.y, p.z + 400); }, p0);
+    await wait(1200);
+    const p1 = await G(() => ({ x: window.__g.hero.position.x, z: window.__g.hero.position.z }));
+    expect(Math.hypot(p1.x - p0.x, p1.z - p0.z) < 60, `сервер пустил рывок: ${JSON.stringify(p1)}`);
+  });
+
   await step('умение: огненная стрела тратит ману и ставит перезарядку', async () => {
-    await G(() => { const g = window.__g; const m = g.mobs.find((x) => x.id === 'wolf' && !x.dead); g.teleportTo(m.obj.position.x + 10, m.obj.position.z); g.target = m; });
+    const m = await nearMob(page);
+    await G((t) => window.__g.dev({ x: t.x + 8, z: t.z }), m);
+    await wait(700);
+    await G((t) => { window.__g.target = window.__g.mobs.get(t.id); }, m);
     const mp0 = await G(() => window.__g.P.mp);
     await page.keyboard.press('Digit1');
-    await wait(1500);
-    const mp1 = await G(() => window.__g.P.mp);
-    expect(mp1 < mp0, `мана ${mp0} → ${mp1}`);
+    await page.waitForFunction((v) => window.__g.P.mp < v, mp0, { timeout: 8000 });
+    expect(await G(() => (window.__g.P.mp) < 1e9), 'мана не списалась');
   });
 
   await step('получение уровня открывает умение', async () => {
-    await G(() => window.__g.gainXp(5000));
+    await G(() => window.__g.dev({ xp: 50000 }));
+    await page.waitForFunction(() => window.__g.P.lvl >= 3, null, { timeout: 8000 });
     const lvl = await G(() => window.__g.P.lvl);
     expect(lvl >= 3, `уровень ${lvl}`);
     expect(!(await page.$eval('[data-skill=heal]', (e) => e.classList.contains('locked'))), 'исцеление заблокировано');
   });
 
   await step('инвентарь: кукла, надеть и снять, окно персонажа', async () => {
-    await G(() => { const g = window.__g; g.P.inv.push({ id: 'staff_oak', n: 1 }, { id: 'ring_bronze', n: 1 }); g.P.lvl = Math.max(g.P.lvl, 8); g.useItem('staff_oak'); });
-    expect((await G(() => window.__g.P.equip.weapon)) === 'staff_oak', 'посох не надет');
+    await G(() => window.__g.dev({ item: 'staff_oak' }));
+    await G(() => window.__g.dev({ item: 'ring_bronze' }));
+    await untilP(page, () => window.__g.P.inv.some((e) => e.id === 'ring_bronze') && window.__g.P.inv.some((e) => e.id === 'staff_oak'));
+    await G(() => window.__g.useItem('staff_oak'));
+    await untilP(page, () => window.__g.P.equip.weapon === 'staff_oak');
     await page.keyboard.press('KeyI');
     expect((await page.getAttribute('#doll [data-slot=weapon]', 'title')) === 'Дубовый жезл', 'нет на кукле');
     // перетаскивание кольца из сумки на куклу
@@ -121,12 +179,12 @@ try {
     const from = await page.locator(`#inv-grid [data-bag="${idx}"]`).boundingBox(), to = await page.locator('#doll [data-slot=ring2]').boundingBox();
     await page.mouse.move(from.x + 20, from.y + 20); await page.mouse.down();
     await page.mouse.move(to.x + 20, to.y + 20, { steps: 6 }); await page.mouse.up();
-    expect((await G(() => window.__g.P.equip.ring2)) === 'ring_bronze', 'перетаскивание не надело кольцо');
+    await untilP(page, () => window.__g.P.equip.ring2 === 'ring_bronze');
     // выбор и снятие кнопкой
     await page.click('#doll [data-slot=ring2]');
     expect((await page.textContent('#inv-info')).includes('Бронзовое кольцо'), 'нет описания');
     await page.click('#inv-info [data-cmd=off]');
-    expect((await G(() => window.__g.P.equip.ring2)) === null, 'кольцо не снято');
+    await untilP(page, () => !window.__g.P.equip.ring2);
     // окно персонажа
     await page.keyboard.press('KeyC');
     expect((await page.textContent('#char-body')).includes('Маг. атака'), 'нет характеристик');
@@ -135,13 +193,22 @@ try {
   });
 
   await step('усиление: безопасная заточка до +3', async () => {
-    const r = await G(() => {
-      const g = window.__g; g.P.inv.push({ id: 'scroll_ench_w', n: 3 });
-      for (let i = 0; i < 3; i++) { g.useItem('scroll_ench_w'); g.enchant({ slot: 'weapon' }); }
-      return { e: g.P.enc.weapon, left: g.P.inv.filter((x) => x.id === 'scroll_ench_w').length, mode: g.enchMode };
-    });
-    expect(r.e === 3 && r.left === 0 && !r.mode, JSON.stringify(r));
+    await G(() => window.__g.dev({ item: 'scroll_ench_w', n: 3 }));
+    await untilP(page, () => (window.__g.P.inv.find((x) => x.id === 'scroll_ench_w')?.n || 0) === 3);
+    for (let i = 1; i <= 3; i++) {
+      await G(() => { window.__g.useItem('scroll_ench_w'); window.__g.enchant({ slot: 'weapon' }); });
+      await untilP(page, (k) => (window.__g.P.enc.weapon || 0) === k, i);
+    }
+    const r = await G(() => ({ e: window.__g.P.enc.weapon, left: window.__g.P.inv.filter((x) => x.id === 'scroll_ench_w').length }));
+    expect(r.e === 3 && r.left === 0, JSON.stringify(r));
     await page.keyboard.press('Escape');
+  });
+
+  await step('читер: заточка без свитка не проходит', async () => {
+    const e0 = await G(() => window.__g.P.enc.weapon || 0);
+    await G(() => window.__g.netSend({ t: 'ench', scroll: 'scroll_ench_w', ref: { slot: 'weapon' } }));
+    await wait(900);
+    expect((await G(() => window.__g.P.enc.weapon || 0)) === e0, 'сервер заточил без свитка');
   });
 
   await step('кнопки меню на ПК: инвентарь и карта без клавиатуры', async () => {
@@ -158,31 +225,39 @@ try {
   });
 
   await step('смерть и возрождение в городе', async () => {
-    await G(() => { const g = window.__g; g.P.hp = 1; const m = g.mobs.find((x) => x.def.aggro && !x.dead && x.home.x < 2000); g.teleportTo(m.obj.position.x + 2, m.obj.position.z); });
-    await page.waitForFunction(() => window.__g.dead, null, { timeout: 20000 });
+    // агрессивные мобы живут в лесу и катакомбах — идём туда и ждём, пока сервер их пришлёт
+    await G(() => window.__g.dev({ x: 20, z: 10, lvl: 1 }));
+    await page.waitForFunction(() => [...window.__g.mobs.values()].some((m) => m.def.aggro && !m.dead && m.obj.visible), null, { timeout: 20000 });
+    const agro = await G(() => {
+      const g = window.__g, h = g.hero.position;
+      const m = [...g.mobs.values()].filter((x) => x.def.aggro && !x.dead && x.obj.visible).sort((a, b) => a.obj.position.distanceTo(h) - b.obj.position.distanceTo(h))[0];
+      return m ? { x: m.obj.position.x, z: m.obj.position.z } : null;
+    });
+    expect(agro, 'рядом нет агрессивного моба');
+    await G((t) => window.__g.dev({ x: t.x + 1, z: t.z + 1, hp: 1, lvl: 1 }), agro);
+    await page.waitForFunction(() => window.__g.dead, null, { timeout: 25000 });
     expect(await page.isVisible('#death'), 'нет окна смерти');
     await page.click('#respawn');
-    expect(!(await G(() => window.__g.dead)), 'не возродился');
+    await page.waitForFunction(() => !window.__g.dead, null, { timeout: 8000 });
     expect(await zoneHas('мирная зона'), 'возрождение не в городе');
   });
 
-  await step('вход в катакомбы через склеп и выход', async () => {
-    await G(() => window.__g.teleportTo(150, 250 + 14));
-    await page.mouse.move(640, 400);
-    await G(() => { const h = window.__g.hero.position; h.set(150, h.y, 250 + 8.5); });
-    expect(await zoneHas('Катакомбы'), 'не попал в катакомбы');
+  await step('вход в катакомбы через склеп', async () => {
+    await G(() => window.__g.dev({ x: 150, z: 250 + 8.5 }));
+    expect(await zoneHas('Катакомбы', 10000), 'не попал в катакомбы');
   });
 
   await step('свиток возврата переносит в город', async () => {
+    await G(() => window.__g.dev({ item: 'scroll_escape' }));
+    await untilP(page, () => window.__g.P.inv.some((e) => e.id === 'scroll_escape'));
     await G(() => window.__g.useItem('scroll_escape'));
     expect(await zoneHas('мирная зона', 20000), 'не вернулся в город');
   });
 
-  await step('сохранение переживает перезагрузку', async () => {
-    await page.evaluate(() => dispatchEvent(new Event('beforeunload')));
-    await wait(500);
-    // локальную копию стираем — прогресс должен прийти с сервера
-    await page.evaluate(() => localStorage.removeItem('l2w-save1'));
+  await step('прогресс живёт на сервере и переживает перезагрузку', async () => {
+    await wait(800);
+    // чистим весь локальный кэш, кроме токена входа: прогресс должен прийти с сервера
+    await page.evaluate(() => { const a = localStorage.getItem('l2w-auth'); localStorage.clear(); localStorage.setItem('l2w-auth', a); });
     await page.reload();
     await page.waitForSelector('#start-cont:not([hidden]):not([disabled])', { timeout: 10000 });
     expect((await page.textContent('#start-cont')).includes('Автотест'), 'нет кнопки продолжения');
@@ -196,10 +271,10 @@ try {
   phone.on('pageerror', (e) => errors.push('телефон: ' + e.message));
   const PG = (fn, arg) => phone.evaluate(fn, arg);
   await step('телефон: создание персонажа, мобильный интерфейс', async () => {
-    await phone.goto(URL + '&touch');
+    await phone.goto(URL + '&touch', { waitUntil: 'domcontentloaded', timeout: 60000 }); // второй контекст с WebGL поднимается небыстро
     await phone.waitForSelector('#start-new:not([disabled])');
     await phone.fill('#cname', 'Телефон'); await phone.fill('#cpass', 'пароль2'); await phone.tap('#start-new');
-    await phone.waitForFunction(() => window.__g?.P, null, { timeout: 10000 });
+    await phone.waitForFunction(() => window.__g?.P, null, { timeout: 30000 });
     expect(await phone.isVisible('#joy'), 'нет джойстика');
     expect(await phone.isVisible('#mbtns [data-act=attack]'), 'нет кнопки атаки');
     const over = await PG(() => { const r = (id) => document.getElementById(id).getBoundingClientRect(); const a = r('skills'), b = r('log'); return a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom; });
@@ -246,17 +321,28 @@ try {
     const a = await PG(() => window.__g.hero.position.clone());
     await PG(() => { const pad = document.getElementById('joy'), r = pad.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2;
       const ev = (t, x, y) => pad.dispatchEvent(new PointerEvent(t, { bubbles: true, pointerId: 9, pointerType: 'touch', clientX: x, clientY: y }));
-      ev('pointerdown', cx, cy); ev('pointermove', cx, cy - 60); setTimeout(() => ev('pointerup', cx, cy - 60), 1200); });
-    await phone.waitForTimeout(1500);
+      ev('pointerdown', cx, cy); ev('pointermove', cx, cy - 60); setTimeout(() => ev('pointerup', cx, cy - 60), 3000); });
+    await phone.waitForTimeout(3400);
     const b = await PG(() => window.__g.hero.position.clone());
     expect(Math.hypot(a.x - b.x, a.z - b.z) > 5, `сдвиг ${Math.hypot(a.x - b.x, a.z - b.z).toFixed(1)}`);
     expect((await PG(() => window.__g.joy.x + window.__g.joy.y)) === 0, 'джойстик не отпустился');
   });
   await step('телефон: кнопки атаки и вещей', async () => {
-    await PG(() => { const g = window.__g; const m = g.mobs.find((x) => x.id === 'rabbit' && !x.dead); g.teleportTo(m.obj.position.x + 5, m.obj.position.z); });
+    // уходим на луга и ждём, пока сервер пришлёт мобов: кнопка атаки выбирает цель из видимых
+    await PG(() => window.__g.dev({ x: -260, z: 180 }));
+    await phone.waitForFunction(() => [...window.__g.mobs.values()].some((m) => !m.dead && m.obj.visible), null, { timeout: 20000 });
+    await PG(() => {
+      const g = window.__g, h = g.hero.position;
+      const m = [...g.mobs.values()].filter((x) => !x.dead && x.obj.visible).sort((a, b) => a.obj.position.distanceTo(h) - b.obj.position.distanceTo(h))[0];
+      if (m) g.dev({ x: m.obj.position.x + 3, z: m.obj.position.z });
+    });
+    await phone.waitForFunction(() => {
+      const g = window.__g, h = g.hero.position;
+      return [...g.mobs.values()].some((m) => !m.dead && m.obj.visible && m.obj.position.distanceTo(h) < 40);
+    }, null, { timeout: 20000 });
     const k0 = await PG(() => window.__g.P.kills);
     await phone.tap('#mbtns [data-act=attack]'); await phone.tap('#mbtns [data-act=attack]');
-    await phone.waitForFunction((k) => window.__g.P.kills > k || window.__g.target, k0, { timeout: 8000 });
+    await phone.waitForFunction((k) => window.__g.P.kills > k || window.__g.target, k0, { timeout: 15000 });
     await phone.tap('#mbtns [data-act=inv]');
     const full = await PG(() => { const r = document.getElementById('inv').getBoundingClientRect(); return r.width >= innerWidth - 2; });
     expect(full, 'инвентарь не на весь экран');
@@ -265,10 +351,10 @@ try {
 
   await step('мультиплеер: видим друг друга, онлайн, чат', async () => {
     const pos = await G(() => { const p = window.__g.hero.position; return { x: p.x, z: p.z }; });
-    await PG((p) => window.__g.teleportTo(p.x + 3, p.z), pos);
+    await PG((p) => window.__g.dev({ x: p.x + 3, z: p.z }), pos);
     await page.waitForFunction(() => [...window.__g.remotes.values()].some((r) => r.name === 'Телефон' && r.obj.visible), null, { timeout: 8000 });
     await page.waitForFunction(() => document.getElementById('online').textContent.includes('Онлайн: 2'), null, { timeout: 5000 });
-    expect((await page.textContent('#labels')).includes('Телефон'), 'нет подписи другого игрока');
+    await page.waitForFunction(() => document.getElementById('labels').textContent.includes('Телефон'), null, { timeout: 8000 }).catch(() => { throw new Error('нет подписи другого игрока'); });
     await page.keyboard.press('Enter');
     await page.keyboard.type('Привет из теста');
     await page.keyboard.press('Enter');
@@ -292,10 +378,12 @@ try {
   });
 
   await step('PvP: флаг, убийство белого — PK, объявление, жрец смывает карму', async () => {
-    await G(() => { const g = window.__g; if (g.dead) g.respawn(); g.teleportTo(-260, 180); });
-    await PG(() => { const g = window.__g; if (g.dead) g.respawn(); g.teleportTo(-257, 180); });
+    await G(() => { const g = window.__g; if (g.dead) g.respawn(); g.dev({ x: -260, z: 180, hp: 99999, lvl: 20 }); });
+    await PG(() => { const g = window.__g; if (g.dead) g.respawn(); g.dev({ x: -257, z: 180, lvl: 20 }); });
+    await wait(800);
     await phone.waitForFunction(() => [...window.__g.remotes.values()].some((r) => r.name === 'Автотест' && r.obj.visible), null, { timeout: 8000 });
-    await G(() => { window.__g.P.hp = 1; });
+    await G(() => window.__g.dev({ hp: 1 }));
+    await wait(300);
     await PG(() => { const g = window.__g; g.target = [...g.remotes.values()].find((r) => r.name === 'Автотест'); g.attack(); });
     await page.waitForFunction(() => window.__g.dead, null, { timeout: 10000 });
     await phone.waitForFunction(() => window.__g.P.karma > 0 && window.__g.P.pk === 1, null, { timeout: 5000 });
@@ -304,7 +392,9 @@ try {
     await page.waitForFunction(() => [...document.querySelectorAll('#labels .nlabel')].some((l) => l.textContent === 'Телефон' && l.style.color === 'rgb(255, 74, 74)'), null, { timeout: 5000 });
     await G(() => window.__g.respawn());
     // жрец: отмыв за деньги
-    await PG(() => { const g = window.__g; g.P.coins = 100000; g.openNpc(g.npcs.find((n) => n.role === 'priest')); });
+    await PG(() => { const g = window.__g, n = g.npcs.find((x) => x.role === 'priest'); g.dev({ coins: 100000, x: n.x + 2, z: n.z + 2 }); });
+    await untilP(phone, () => window.__g.P.coins === 100000);
+    await PG(() => window.__g.openNpc(window.__g.npcs.find((n) => n.role === 'priest')));
     await phone.tap('#wash');
     await phone.waitForFunction(() => window.__g.P.karma === 0, null, { timeout: 5000 });
     expect((await PG(() => window.__g.P.coins)) < 100000, 'деньги за отмыв не списаны');
@@ -315,7 +405,7 @@ try {
     const other = await (await browser.newContext({ viewport: { width: 1000, height: 700 } })).newPage();
     other.on('pageerror', (e) => errors.push('другое устройство: ' + e.message));
     await other.goto(URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await other.waitForSelector('#start-new:not([disabled])');
+    await other.waitForSelector('#start-new:not([disabled])', { timeout: 60000 });
     const msg = (t) => other.waitForFunction((t) => document.getElementById('start-msg').textContent.includes(t), t, { timeout: 5000 });
     await other.fill('#cname', 'автотест'); await other.fill('#cpass', 'чужой');
     await other.click('#start-new'); await msg('занято');

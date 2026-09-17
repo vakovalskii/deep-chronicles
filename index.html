@@ -58,6 +58,7 @@
   #logbox[data-tab=trade]>div:not(.c-trade),#logbox[data-tab=near]>div:not(.c-near),#logbox[data-tab=pm]>div:not(.c-pm),
   #logbox.no-trade[data-tab=all]>.c-trade,#logbox.no-near[data-tab=all]>.c-near{display:none}
   /* цвета каналов */
+  #logbox .c-ann{color:#ff7a5a;font-weight:600}
   #logbox .c-all{color:#f2ece0}#logbox .c-trade{color:#ff9ad8}#logbox .c-near{color:#b8c8d8}#logbox .c-pm{color:#c88cff}
   #logbox b{cursor:pointer;font-weight:600}#logbox b:hover{text-decoration:underline}
   #logbox .c-all b{color:#ffcf70}#logbox .me b{color:#9fd8ff}#logbox .c-pm b{color:#e0b0ff}
@@ -266,6 +267,7 @@
   <h3>Хранитель врат <button data-close>Закрыть</button></h3>
   <div class="body"><p style="margin:0 0 8px;color:var(--dim)">Куда отправимся? Этот город станет вашей точкой возрождения.</p><div id="tp-list"></div></div>
 </div>
+<div id="priest" class="panel win" hidden><h3>Жрец <button data-close>Закрыть</button></h3><div class="body" id="priest-body"></div></div>
 <div id="bigmap" class="panel win" hidden><h3>Карта мира <button data-close>Закрыть</button></h3><canvas id="bigmap-cv" width="640" height="640"></canvas></div>
 <div id="death" class="panel" hidden><h3 style="color:#f88;margin-top:0">Вы погибли</h3><button id="respawn">Возродиться в городе</button></div>
 

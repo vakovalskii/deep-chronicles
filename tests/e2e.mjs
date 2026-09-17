@@ -267,6 +267,25 @@ try {
     await page.click('#chatset [data-set=sys]'); await page.click('#chatgear');
   });
 
+  await step('PvP: флаг, убийство белого — PK, объявление, жрец смывает карму', async () => {
+    await G(() => { const g = window.__g; if (g.dead) g.respawn(); g.teleportTo(-260, 180); });
+    await PG(() => { const g = window.__g; if (g.dead) g.respawn(); g.teleportTo(-257, 180); });
+    await phone.waitForFunction(() => [...window.__g.remotes.values()].some((r) => r.name === 'Автотест' && r.obj.visible), null, { timeout: 8000 });
+    await G(() => { window.__g.P.hp = 1; });
+    await PG(() => { const g = window.__g; g.target = [...g.remotes.values()].find((r) => r.name === 'Автотест'); g.attack(); });
+    await page.waitForFunction(() => window.__g.dead, null, { timeout: 10000 });
+    await phone.waitForFunction(() => window.__g.P.karma > 0 && window.__g.P.pk === 1, null, { timeout: 5000 });
+    await page.waitForFunction(() => document.getElementById('logbox').textContent.includes('стал PK'), null, { timeout: 5000 });
+    // ник PK у жертвы — красный
+    await page.waitForFunction(() => [...document.querySelectorAll('#labels .nlabel')].some((l) => l.textContent === 'Телефон' && l.style.color === 'rgb(255, 74, 74)'), null, { timeout: 5000 });
+    await G(() => window.__g.respawn());
+    // жрец: отмыв за деньги
+    await PG(() => { const g = window.__g; g.P.coins = 100000; g.openNpc(g.npcs.find((n) => n.role === 'priest')); });
+    await phone.tap('#wash');
+    await phone.waitForFunction(() => window.__g.P.karma === 0, null, { timeout: 5000 });
+    expect((await PG(() => window.__g.P.coins)) < 100000, 'деньги за отмыв не списаны');
+  });
+
   await step('аккаунт: занятое имя, неверный пароль, вход с другого устройства', async () => {
     const other = await (await browser.newContext({ viewport: { width: 1000, height: 700 } })).newPage();
     other.on('pageerror', (e) => errors.push('другое устройство: ' + e.message));

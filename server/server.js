@@ -4,6 +4,8 @@ import { WebSocketServer } from 'ws';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openDb } from './accounts.js';
+import { zoneAt } from '../src/world.js';
+import { PVP, karmaForPk, karmaWashCost } from '../src/pvp.js';
 
 const acc = openDb(process.env.DB || path.join(path.dirname(fileURLToPath(import.meta.url)), 'data', 'realms.db'));
 
@@ -59,7 +61,9 @@ wss.on('connection', (ws, req) => {
       // тот же аккаунт с другого устройства — старое соединение закрываем
       for (const q of players.values()) if (q !== p && q.key === r.key) { send(q, { t: 'kicked' }); q.key = null; q.ws.close(); }
       p.key = r.key; p.name = r.name; p.look = null;
+      p.karma = Math.max(0, r.save?.karma | 0); p.pk = r.save?.pk | 0; p.pvp = r.save?.pvp | 0; p.flagUntil = 0; p.hitBy = new Map(); p.lvl = r.save?.lvl | 0;
       send(p, { t: 'authok', id: p.id, name: r.name, token: r.token, save: r.save, online: online() });
+      sendMe(p);
       broadcast({ t: 'online', n: online() });
       return;
     }
@@ -68,7 +72,9 @@ wss.on('connection', (ws, req) => {
       const now = Date.now();
       if (now - p.saveT < 2000) return; // не чаще раза в 2 с
       p.saveT = now;
-      if (!acc.store(p.key, m.p)) send(p, { t: 'saveerr' });
+      if (m.p && typeof m.p === 'object') p.lvl = m.p.lvl | 0;
+      // PvP-счётчики и карму ведёт сервер
+      if (!acc.store(p.key, { ...m.p, karma: p.karma, pk: p.pk, pvp: p.pvp })) send(p, { t: 'saveerr' });
       return;
     }
     if (m.t === 'logout') { if (m.token) acc.logout(m.token); return; }
@@ -82,6 +88,28 @@ wss.on('connection', (ws, req) => {
       p.look = cleanLook(m.look);
       const s = JSON.stringify({ t: 'look', id: p.id, name: p.name, look: p.look });
       for (const q of players.values()) if (q.known.has(p.id)) send(q, s);
+    }
+    if (m.t === 'pvp') return onPvp(p, m);
+    if (m.t === 'hurt') { const q = players.get(m.by | 0); if (q?.key) send(q, { t: 'hurtres', id: p.id, dmg: num(m.dmg, 1e6) | 0, crit: !!m.crit }); return; }
+    if (m.t === 'pdied') return onDied(p, m);
+    if (m.t === 'mobkill') {
+      if (p.karma > 0 && Date.now() - (p.mkT || 0) > 300) { p.mkT = Date.now(); p.karma = Math.max(0, p.karma - Math.max(1, Math.ceil(num(m.xp, 5000) / PVP.karmaPerXp))); sendMe(p); }
+      return;
+    }
+    if (m.t === 'wash') {
+      if (p.karma <= 0) return;
+      const cost = karmaWashCost(p.karma);
+      if ((num(m.coins, 1e9) | 0) < cost) return send(p, { t: 'washerr', cost });
+      p.karma = 0; sendMe(p); send(p, { t: 'washok', cost });
+      return;
+    }
+    if (m.t === 'pkloot') {
+      const k = players.get(m.to | 0);
+      if (!k?.key || typeof m.item?.id !== 'string') return;
+      const item = { id: m.item.id.slice(0, 32), n: Math.max(1, num(m.item.n, 9999) | 0), e: num(m.item.e, 20) | 0 };
+      send(k, { t: 'pkloot', from: p.name, item });
+      broadcast({ t: 'announce', text: `С PK ${p.name} упала вещь — её подобрал ${k.name}` });
+      return;
     }
     if (m.t === 'pm') {
       const text = cleanText(m.text);
@@ -118,6 +146,54 @@ wss.on('connection', (ws, req) => {
   });
 });
 
+// ===== PvP: флаг, PK, карма =====
+const inTown = (p) => !p.st || !!zoneAt(p.st.x, p.st.z).town;
+const flagged = (p) => p.flagUntil > Date.now();
+const status = (p) => (p.karma > 0 ? 2 : flagged(p) ? 1 : 0); // 0 — белый, 1 — фиолетовый, 2 — красный
+const sendMe = (p) => send(p, { t: 'me', karma: p.karma, pk: p.pk, pvp: p.pvp, flag: Math.max(0, p.flagUntil - Date.now()) });
+function onPvp(p, m) {
+  const q = players.get(m.to | 0), now = Date.now();
+  if (!q?.key || q === p || !p.st || !q.st) return;
+  if (now - (p.pvpT || 0) < PVP.minHitMs) return;
+  if ((p.st.a & 8) || (q.st.a & 8)) return;
+  if (inTown(p) || inTown(q)) return send(p, { t: 'pvperr', reason: 'В городе сражаться нельзя' });
+  const range = Math.min(num(m.range, 40), 30);
+  if (d2(p, q) > range + 4) return;
+  p.pvpT = now;
+  // напал на белого — флаг (у PK флаг не нужен, он и так красный)
+  if (status(q) === 0 && p.karma <= 0) { const was = flagged(p); p.flagUntil = now + PVP.flagMs; if (!was) sendMe(p); }
+  q.hitBy.set(p.id, now);
+  const cap = PVP.atkCap(p.lvl);
+  send(q, { t: 'phit', from: p.id, name: p.name, atk: Math.min(num(m.atk, 1e6), cap), mul: Math.min(Math.max(num(m.mul, 10), 0.5), 3), school: m.school === 'm' ? 'm' : 'p', crit: !!m.crit });
+}
+function onDied(p, m) {
+  const k = players.get(m.by | 0), now = Date.now();
+  if (!k?.key || k === p || !(now - (p.hitBy.get(k.id) || 0) < 10_000)) return;
+  p.hitBy.clear();
+  const victimWasRed = p.karma > 0, victimFlag = flagged(p);
+  if (victimWasRed || victimFlag) {
+    k.pvp++;
+    if (victimWasRed) broadcast({ t: 'announce', text: `${k.name} победил PK ${p.name}` });
+  } else {
+    k.pk++; k.karma += karmaForPk(k.pk); k.flagUntil = 0;
+    broadcast({ t: 'announce', text: `${k.name} убил ${p.name} и стал PK! Зона: ${zoneAt(k.st?.x || 0, k.st?.z || 0).name}`, pk: k.id });
+  }
+  sendMe(k);
+  // с умершего PK падает вещь — достаётся убийце
+  if (victimWasRed) send(p, { t: 'pkdrop', to: k.id, name: k.name });
+}
+setInterval(() => {
+  for (const p of players.values()) {
+    if (!p.key) continue;
+    if (p.flagUntil && p.flagUntil <= Date.now()) { p.flagUntil = 0; sendMe(p); }
+  }
+}, 1000);
+// объявления: где сейчас PK
+setInterval(() => {
+  const reds = [...players.values()].filter((p) => p.key && p.karma > 0 && p.st);
+  for (const p of reds) broadcast({ t: 'announce', text: `PK ${p.name} (карма ${p.karma}) замечен: ${zoneAt(p.st.x, p.st.z).name}`, pk: p.id });
+}, PVP.announceMs);
+
 // снапшоты: каждому — соседи в радиусе видимости
 setInterval(() => {
   const list = [...players.values()].filter((p) => p.key && p.st);
@@ -126,7 +202,7 @@ setInterval(() => {
     for (const q of list) {
       if (q === p || d2(p, q) > VIEW) continue;
       if (!p.known.has(q.id)) { p.known.add(q.id); send(p, { t: 'look', id: q.id, name: q.name, look: q.look }); }
-      const s = q.st; o.push([q.id, +s.x.toFixed(2), +s.y.toFixed(2), +s.z.toFixed(2), +s.r.toFixed(2), s.a, s.hp]);
+      const s = q.st; o.push([q.id, +s.x.toFixed(2), +s.y.toFixed(2), +s.z.toFixed(2), +s.r.toFixed(2), s.a, s.hp, status(q)]);
     }
     for (const id of p.known) if (!players.has(id)) p.known.delete(id);
     if (o.length || p.hadSnap) send(p, { t: 'snap', ts: Date.now(), o });

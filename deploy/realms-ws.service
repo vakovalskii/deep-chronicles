@@ -2,7 +2,7 @@
 Description=Realms (Хроники Глубин) WS server
 After=network.target
 [Service]
-WorkingDirectory=/opt/realms/server
+WorkingDirectory=/opt/realms
 ExecStart=/usr/bin/node --no-warnings /opt/realms/server/server.js
 Environment=PORT=8790
 Environment=DB=/opt/realms/data/realms.db

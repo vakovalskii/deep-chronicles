@@ -95,3 +95,32 @@ test('личные сообщения: доставка, эхо отправит
   assert.match((await a.wait('pmerr')).reason, /не в сети/);
   a.ws.close(); b.ws.close(); await a.closed(); await b.closed();
 });
+
+test('PvP: флаг за удар по белому, PK за убийство, карма смывается мобами, в городе нельзя', async () => {
+  const mk = async (name) => { const c = client(); await c.open(); c.send({ t: 'register', name, pass: 'pvp12345', save: { ...char(name), lvl: 20 } }); await c.wait('authok'); await c.wait('me'); return c; };
+  const a = await mk('Убийца'), b = await mk('Жертва');
+  const at = (c, x, z) => c.send({ t: 'st', x, y: 0, z, r: 0, a: 0, hp: 100 });
+  // в городе (Светлая Гавань -430,400) — отказ
+  at(a, -430, 400); at(b, -428, 400); await new Promise((r) => setTimeout(r, 50));
+  a.send({ t: 'pvp', to: 0, atk: 50, mul: 1, school: 'p', range: 3 });
+  const ids = await new Promise((res) => { const s = (m) => m.t === 'snap' && m.o.length && res(m.o[0][0]); a.ws.on('message', (d) => s(JSON.parse(d))); });
+  a.send({ t: 'pvp', to: ids, atk: 50, mul: 1, school: 'p', range: 3 });
+  assert.match((await a.wait('pvperr')).reason, /городе/);
+  // на лугу — удар доходит, атакующий флагнут, атака срезана потолком
+  at(a, -260, 180); at(b, -258, 180); await new Promise((r) => setTimeout(r, 300));
+  a.send({ t: 'pvp', to: ids, atk: 999999, mul: 1, school: 'p', range: 3 });
+  const hit = await b.wait('phit');
+  assert.ok(hit.atk <= 40 + 20 * 12, `атака не срезана: ${hit.atk}`);
+  const me1 = await a.wait('me'); assert.ok(me1.flag > 0 && me1.karma === 0);
+  // жертва умерла — убийца PK, объявление на сервер
+  b.send({ t: 'pdied', by: a.ws.__id ?? hit.from });
+  const me2 = await a.wait('me'); assert.equal(me2.pk, 1); assert.ok(me2.karma > 0);
+  assert.match((await b.wait('announce')).text, /стал PK/);
+  // убийство мобов смывает карму
+  a.send({ t: 'mobkill', xp: 400 });
+  const me3 = await a.wait('me'); assert.ok(me3.karma < me2.karma);
+  // отмыв за деньги
+  a.send({ t: 'wash', coins: 1 }); assert.ok((await a.wait('washerr')).cost > 1);
+  a.send({ t: 'wash', coins: 1e6 }); await a.wait('washok'); assert.equal((await a.wait('me')).karma, 0);
+  a.ws.close(); b.ws.close(); await a.closed(); await b.closed();
+});

@@ -213,6 +213,13 @@ function buildTown(t, B, npcs) {
   // NPC
   npcs.push({ id: t.id + ':gk', town: t.id, role: 'gatekeeper', name: 'Хранитель врат', x: t.x + 12, z: t.z + 10, color: 0x9040d0 });
   npcs.push({ id: t.id + ':shop', town: t.id, role: 'merchant', name: 'Торговец', x: t.x - 12, z: t.z + 10, color: 0xd09030 });
+  npcs.push({ id: t.id + ':priest', town: t.id, role: 'priest', name: 'Жрец', x: t.x, z: t.z - 16, color: 0xf0e8d0 });
+  // стражи снаружи у четырёх ворот — нападают на PK
+  for (let g = 0; g < 4; g++) {
+    const a = (g / 4) * Math.PI * 2 - Math.PI / 36, d = t.r + 6; // проёмы ворот — сегменты 8 и 0 (±5°)
+    const cx = t.x + Math.cos(a) * d, cz = t.z + Math.sin(a) * d, px = -Math.sin(a) * 5, pz = Math.cos(a) * 5;
+    for (const k of [-1, 1]) npcs.push({ id: `${t.id}:guard${g}${k}`, town: t.id, role: 'guard', name: 'Страж', x: cx + px * k, z: cz + pz * k, color: 0x8090a0 });
+  }
   // врата телепорта — светящееся кольцо
   B.use('stone'); B.add(CYL, 0x6a5aa0, t.x + 18, y + 0.3, t.z + 16, 0, 6, 0.6, 6);
 }

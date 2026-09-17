@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22%3E%3Cpath d=%22M8 1l2 5h5l-4 3 2 6-5-4-5 4 2-6-4-3h5z%22 fill=%22%23e0c080%22/%3E%3C/svg%3E" />
+<title>Хроники Глубин</title>
+<style>
+  :root{--bg:rgba(12,14,20,.82);--line:rgba(200,170,110,.35);--gold:#e0c080;--text:#e6e0d4;--dim:#9a9486}
+  html,body{margin:0;height:100%;overflow:hidden;background:#000;color:var(--text);font:13px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif}
+  canvas{display:block}
+  button{font:inherit;color:var(--text);background:linear-gradient(#3a3226,#241f18);border:1px solid var(--line);border-radius:4px;padding:5px 10px;cursor:pointer}
+  button:hover:not(:disabled){border-color:var(--gold);color:#fff}
+  button:disabled{opacity:.4;cursor:default}
+  .panel{position:fixed;background:var(--bg);border:1px solid var(--line);border-radius:6px;box-shadow:0 4px 18px rgba(0,0,0,.5)}
+  body:not(.ingame) .panel,body:not(.ingame) #labels{display:none}
+  /* статус */
+  #status{left:12px;top:12px;width:250px;padding:8px 10px}
+  #status .top{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+  #plvl{background:#5a4424;border:1px solid var(--gold);border-radius:50%;width:26px;height:26px;display:grid;place-items:center;font-weight:700;color:var(--gold)}
+  #pname{font-weight:600}
+  .bar{position:relative;height:14px;background:#111;border:1px solid #000;border-radius:2px;margin:3px 0;overflow:hidden}
+  .bar i{position:absolute;inset:0 auto 0 0;display:block}
+  .bar span{position:relative;display:block;text-align:center;font-size:10px;line-height:14px;text-shadow:0 1px 2px #000}
+  #hpbar i{background:linear-gradient(#e04a3a,#8a1a12)} #mpbar i{background:linear-gradient(#4a7ae0,#1a3a8a)} #xpbar i{background:linear-gradient(#e0c050,#8a6a12)}
+  #tbar i{background:linear-gradient(#e04a3a,#8a1a12)}
+  #coins{color:var(--gold)} #coins::after{content:" мон."}
+  #buffs span{display:inline-block;font-size:10px;background:#5a2020;border-radius:3px;padding:0 4px;margin:4px 3px 0 0}
+  /* цель */
+  #target{left:50%;top:12px;transform:translateX(-50%);width:260px;padding:6px 10px;text-align:center}
+  #tname{font-weight:600} #tlvl{font-size:11px;color:var(--dim)}
+  /* карта */
+  #mapbox{right:12px;top:12px;padding:6px}
+  #minimap{display:block;width:180px;height:180px;border-radius:4px}
+  #zone{font-size:11px;text-align:center;margin-top:4px;color:var(--gold)}
+  #mapbox .btns{display:flex;gap:4px;margin-top:4px}#mapbox .btns button{flex:1;padding:3px}
+  /* умения */
+  #skills{left:50%;bottom:12px;transform:translateX(-50%);display:flex;gap:6px;padding:6px}
+  .slot{position:relative;width:62px;height:62px;border:1px solid var(--line);border-radius:5px;background:#16140f;cursor:pointer;overflow:hidden}
+  .slot i{position:absolute;left:50%;top:9px;width:22px;height:22px;transform:translateX(-50%);border-radius:4px;box-shadow:0 0 8px currentColor}
+  .slot b{position:absolute;left:4px;top:2px;font-size:11px;color:var(--gold)}
+  .slot small{position:absolute;left:0;right:0;bottom:3px;text-align:center;font-size:9px;line-height:1.1;color:var(--dim)}
+  .slot .cd{position:absolute;left:0;right:0;bottom:0;background:rgba(0,0,0,.7)}
+  .slot .n{position:absolute;right:4px;top:2px;font-size:11px}
+  .slot.locked{opacity:.35}
+  #castbar{left:50%;bottom:90px;transform:translateX(-50%);width:240px;padding:4px}
+  #castbar i{background:linear-gradient(#c0a0ff,#6040a0)}
+  #stats{left:50%;bottom:84px;transform:translateX(-50%);font-size:11px;color:var(--dim);background:none;border:none;box-shadow:none;white-space:nowrap}
+  body.casting #stats{display:none}
+  /* лог */
+  #log{left:12px;bottom:12px;width:380px;height:170px;padding:6px 8px;overflow-y:auto;font-size:12px}
+  #log .good{color:#9f9} #log .bad{color:#f88} #log .loot{color:#adf} #log .rare{color:#ffcf50;font-weight:600}
+  /* окна */
+  .win{left:50%;top:50%;transform:translate(-50%,-50%);width:420px;max-height:70vh;padding:10px 12px;display:flex;flex-direction:column;z-index:5}
+  .win[hidden]{display:none}
+  .win h3{margin:0 0 8px;display:flex;justify-content:space-between;align-items:center;color:var(--gold);font-weight:600}
+  .win .body{overflow-y:auto}
+  .row{display:flex;align-items:center;gap:8px;padding:5px 2px;border-bottom:1px solid rgba(255,255,255,.06)}
+  .row>div{flex:1}.row small{display:block;color:var(--dim);font-size:11px}
+  .row.rare b{color:#ffcf50}
+  .sw{width:18px;height:18px;border-radius:3px;flex:none;box-shadow:inset 0 0 0 1px rgba(0,0,0,.5)}
+  .tabs{display:flex;gap:4px;margin-bottom:6px}.tabs .on{border-color:var(--gold);color:#fff}
+  #tp-list{display:flex;flex-direction:column;gap:6px}
+  #tp-list button{display:flex;justify-content:space-between;padding:8px 10px}
+  #bigmap{width:auto}
+  #bigmap-cv{width:min(70vh,640px);height:min(70vh,640px)}
+  #death{left:50%;top:40%;transform:translate(-50%,-50%);padding:16px 22px;text-align:center;z-index:6}
+  #death[hidden]{display:none}
+  #banner{position:fixed;left:50%;top:22%;transform:translateX(-50%);font-size:26px;font-weight:700;color:var(--gold);text-shadow:0 2px 10px #000;opacity:0;transition:opacity .4s;pointer-events:none}
+  /* подписи */
+  #labels{position:fixed;inset:0;pointer-events:none;overflow:hidden}
+  .nlabel,.ftext{position:absolute;left:0;top:0;white-space:nowrap;text-shadow:0 1px 2px #000,0 0 3px #000;font-size:12px;will-change:transform}
+  .nlabel.sel{font-weight:700;text-decoration:underline}
+  .ftext{font-weight:700;font-size:15px}.ftext.big{font-size:22px}
+  /* старт */
+  #start{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:radial-gradient(rgba(0,0,0,.2),rgba(0,0,0,.75));z-index:10}
+  #start .box{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:24px 28px;width:380px;text-align:center}
+  #start h1{margin:0 0 4px;letter-spacing:.12em;color:var(--gold);font-weight:700}
+  #start p{color:var(--dim);margin:0 0 16px}
+  #start input{width:100%;box-sizing:border-box;padding:8px;background:#0c0c0c;border:1px solid var(--line);color:var(--text);border-radius:4px;font:inherit;margin-bottom:10px}
+  .cls{display:flex;gap:8px;margin-bottom:12px}
+  .cls button{flex:1;padding:10px;text-align:left}
+  .cls button small{display:block;color:var(--dim);font-size:11px}
+  .cls .on{border-color:var(--gold);background:linear-gradient(#5a4830,#2a2418)}
+  #start .go{width:100%;padding:10px;font-size:15px;margin-top:6px}
+</style>
+</head>
+<body>
+<div id="labels"></div>
+<div id="banner"></div>
+
+<div id="status" class="panel">
+  <div class="top"><div id="plvl">1</div><div id="pname"></div></div>
+  <div id="hpbar" class="bar"><i></i><span></span></div>
+  <div id="mpbar" class="bar"><i></i><span></span></div>
+  <div id="xpbar" class="bar"><i></i><span></span></div>
+  <div><span id="coins">0</span></div>
+  <div id="buffs"></div>
+</div>
+<div id="target" class="panel" hidden><div id="tname"></div><div id="tlvl"></div><div id="tbar" class="bar"><i></i><span></span></div></div>
+<div id="mapbox" class="panel"><canvas id="minimap" width="180" height="180"></canvas><div id="zone"></div>
+  <div class="btns"><button data-open="bigmap">Карта (M)</button><button data-open="inv">Вещи (I)</button></div></div>
+<div id="castbar" class="panel bar" hidden><i></i><span></span></div>
+<div id="stats" class="panel"></div>
+<div id="skills" class="panel"></div>
+<div id="log" class="panel"></div>
+
+<div id="inv" class="panel win" hidden>
+  <h3>Инвентарь <button data-close>Закрыть</button></h3>
+  <div class="body"><div id="inv-eq"></div><h3 style="margin-top:10px">Сумка <small id="inv-coins" style="color:var(--gold)"></small></h3><div id="inv-list"></div></div>
+</div>
+<div id="shop" class="panel win" hidden>
+  <h3>Торговец <button data-close>Закрыть</button></h3>
+  <div class="tabs"><button data-tab="buy" class="on">Купить</button><button data-tab="sell">Продать</button><span id="shop-coins" style="margin-left:auto;color:var(--gold)"></span></div>
+  <div class="body" id="shop-list"></div>
+</div>
+<div id="tp" class="panel win" hidden>
+  <h3>Хранитель врат <button data-close>Закрыть</button></h3>
+  <div class="body"><p style="margin:0 0 8px;color:var(--dim)">Куда отправимся? Этот город станет вашей точкой возрождения.</p><div id="tp-list"></div></div>
+</div>
+<div id="bigmap" class="panel win" hidden><h3>Карта мира <button data-close>Закрыть</button></h3><canvas id="bigmap-cv" width="640" height="640"></canvas></div>
+<div id="death" class="panel" hidden><h3 style="color:#f88;margin-top:0">Вы погибли</h3><button id="respawn">Возродиться в городе</button></div>
+
+<div id="start">
+  <div class="box">
+    <h1>ХРОНИКИ ГЛУБИН</h1>
+    <p>Браузерная MMORPG от NeuralDeep · прототип мира</p>
+    <button id="start-cont" class="go" hidden></button>
+    <div style="margin:16px 0 8px;color:var(--dim)">Новый персонаж</div>
+    <input id="cname" placeholder="Имя персонажа" maxlength="16" />
+    <div class="cls">
+      <button data-cls="warrior" class="on"><b>Воин</b><small>ближний бой, много здоровья, вихрь по толпе</small></button>
+      <button data-cls="mage"><b>Маг</b><small>огонь издалека, исцеление, ледяная волна</small></button>
+    </div>
+    <button id="start-new" class="go">Создать и войти</button>
+  </div>
+</div>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>

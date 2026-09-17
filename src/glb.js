@@ -12,6 +12,12 @@ export const MODEL_OF = { 'Маг': 'mage_mystic_anime' };
 export const RIG = { height: 2.4, hip: 0.8, shoulder: 1.6, neck: 1.85, armX: 0.55 };
 
 const loader = new GLTFLoader();
+// правки из студии (tools/studio.mjs): рост модели и привязка оружия/щита
+let rigPromise = null;
+export function rigOverrides(base = 'assets/') {
+  rigPromise ||= fetch(base + 'rig.json', { cache: 'no-cache' }).then((r) => (r.ok ? r.json() : {})).catch(() => ({}));
+  return rigPromise;
+}
 const cache = new Map(); // id → Promise<Group>, чтобы одна модель грузилась один раз на всех
 
 export function loadModel(id, base = MODELS_URL) {
@@ -143,18 +149,25 @@ export async function applyModel(group, id, { base = MODELS_URL, height = RIG.he
   // (табличку с именем, флаг PvP) — это трогать нельзя, прячем только процедурные части
   const own = [...group.children];
   try {
-    const scene = await loadModel(id, base);
-    const rigged = rigModel(scene.clone(true), { height });
+    const [scene, over] = await Promise.all([loadModel(id, base), rigOverrides(base.replace('models/', ''))]);
+    const rig = over[id] || {};
+    const rigged = rigModel(scene.clone(true), { height: rig.height || height });
     if (!rigged) return false;
     for (const child of own) child.visible = false;
     group.add(rigged);
     // оружие и щит переносим из спрятанных процедурных рук в кисти модели
     const hands = group.userData.hands;
     if (hands) {
-      for (const [key, item] of [['armR', hands.weapon], ['armL', hands.shield]]) {
+      for (const [key, item, o] of [['armR', hands.weapon, rig.weapon], ['armL', hands.shield, rig.shield]]) {
         const node = rigged.userData.parts[key];
         if (!node || !item) continue;
-        item.position.set(0, rigged.userData.handY[key] ?? -0.6, 0.1);
+        if (o) { // студия задала привязку явно
+          item.position.set(o.x ?? 0, o.y ?? -0.7, o.z ?? 0.1);
+          item.rotation.set((o.rx || 0) * Math.PI / 180, (o.ry || 0) * Math.PI / 180, (o.rz || 0) * Math.PI / 180);
+          if (o.s) item.scale.multiplyScalar(o.s);
+        } else {
+          item.position.set(0, rigged.userData.handY[key] ?? -0.6, 0.1);
+        }
         item.visible = true;
         node.add(item);
       }

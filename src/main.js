@@ -1209,8 +1209,8 @@ function renderHud() {
 }
 function renderSkills() {
   const c = CLASSES[P.cls];
-  $('skills').innerHTML = c.skills.map((id, i) => `<div class="slot" data-skill="${id}" title="${SKILLS[id].name} · мана ${SKILLS[id].mp} · перезарядка ${SKILLS[id].cd} с · с ${SKILLS[id].lvl} ур."><i style="background:#${SKILLS[id].color.toString(16).padStart(6, '0')}"></i><b>${i + 1}</b><small>${SKILLS[id].name}</small><div class="cd"></div></div>`).join('')
-    + ['potion_hp', 'potion_mp'].map((id, i) => `<div class="slot" data-item="${id}" title="${ITEMS[id].name}"><i style="background:#${ITEMS[id].color.toString(16).padStart(6, '0')};border-radius:50%"></i><b>${i + 4}</b><small>${ITEMS[id].name}</small><span class="n"></span></div>`).join('');
+  $('skills').innerHTML = c.skills.map((id, i) => `<div class="slot" data-skill="${id}" title="${SKILLS[id].name} · мана ${SKILLS[id].mp} · перезарядка ${SKILLS[id].cd} с · с ${SKILLS[id].lvl} ур.">${png(id) ? `<i class="ico">${png(id)}</i>` : `<i style="background:#${SKILLS[id].color.toString(16).padStart(6, '0')}"></i>`}<b>${i + 1}</b><small>${SKILLS[id].name}</small><div class="cd"></div></div>`).join('')
+    + ['potion_hp', 'potion_mp'].map((id, i) => `<div class="slot" data-item="${id}" title="${ITEMS[id].name}">${png(id) ? `<i class="ico">${png(id)}</i>` : `<i style="background:#${ITEMS[id].color.toString(16).padStart(6, '0')};border-radius:50%"></i>`}<b>${i + 4}</b><small>${ITEMS[id].name}</small><span class="n"></span></div>`).join('');
 }
 $('skills').addEventListener('click', (e) => {
   const s = e.target.closest('.slot'); if (!s) return;
@@ -1237,8 +1237,13 @@ const ICON = {
 };
 const iconKind = (it) => it.slot === 'weapon' ? (it.twoHand ? 'staff' : 'sword') : it.slot === 'armor' ? (it.robe ? 'robe' : 'armor') : it.slot === 'head' ? (it.set === 'apprentice' || it.set === 'mystic' ? 'hat' : 'head')
   : it.slot || (it.use === 'hp' || it.use === 'mp' ? 'potion' : it.use ? 'scroll' : 'loot');
+for (const [k, v] of Object.entries(ITEMS)) v.id ||= k; // иконка предмета ищется по его id
 const hex = (c) => '#' + c.toString(16).padStart(6, '0');
-const icon = (it) => `<svg viewBox="0 0 24 24" fill="currentColor" style="color:${hex(it.color)}">${ICON[iconKind(it)]}</svg>`;
+// нарисованные иконки (tools/gen-icons.mjs); чего нет в списке — рисуем векторным значком, как раньше
+const PNG = new Set();
+fetch('assets/icons/index.json').then((r) => r.json()).then((a) => { a.forEach((id) => PNG.add(id)); if (P) renderSkills(); }).catch(() => { /* нет иконок — не беда */ });
+const png = (id) => (PNG.has(id) ? `<img class="png" src="assets/icons/${id}.png" alt="">` : null);
+const icon = (it) => png(it.id) || `<svg viewBox="0 0 24 24" fill="currentColor" style="color:${hex(it.color)}">${ICON[iconKind(it)]}</svg>`;
 const sw = (c, it) => it ? `<i class="sw ico">${icon(it)}</i>` : `<i class="sw" style="background:${hex(c)}"></i>`;
 const STAT_NAMES = { patk: 'Физ. атака', matk: 'Маг. атака', pdef: 'Физ. защита', mdef: 'Маг. защита', hp: 'Здоровье', mp: 'Мана', crit: 'Крит. шанс', speed: 'Скорость', cast: 'Скорость каста' };
 const fmtBonus = (k, v) => `${STAT_NAMES[k]} ${v > 0 ? '+' : ''}${k === 'crit' || k === 'cast' ? Math.round(v * 100) + '%' : v}`;

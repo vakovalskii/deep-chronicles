@@ -1,0 +1,273 @@
+<!doctype html>
+<!-- Студия ассетов: привязка оружия и щита к модели, просмотр и перерисовка иконок.
+     Запуск: node tools/studio.mjs -->
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<title>Студия — Хроники Глубин</title>
+<style>
+  :root { --bg:#14161c; --panel:#1c1f28; --line:#2c3040; --text:#dfe3ee; --dim:#8992a8; --acc:#9a7cff; --ok:#5fd18c; }
+  * { box-sizing: border-box; }
+  body { margin:0; height:100vh; display:flex; flex-direction:column; background:var(--bg); color:var(--text);
+         font:13px/1.5 ui-sans-serif,"Segoe UI",Roboto,sans-serif; }
+  header { display:flex; gap:6px; align-items:center; padding:9px 14px; border-bottom:1px solid var(--line); background:var(--panel); }
+  header b { font-size:12px; text-transform:uppercase; letter-spacing:.05em; color:var(--dim); margin-right:10px; }
+  .tab { padding:6px 14px; border:1px solid var(--line); border-radius:7px; background:none; color:var(--text); font:inherit; cursor:pointer; }
+  .tab[aria-selected="true"] { border-color:var(--acc); color:var(--acc); }
+  #save { margin-left:auto; padding:6px 16px; border:0; border-radius:7px; background:var(--acc); color:#10121a; font:inherit; font-weight:600; cursor:pointer; }
+  #save:disabled { opacity:.4; cursor:default; }
+  #msg { color:var(--ok); }
+  main { flex:1; display:flex; min-height:0; }
+  aside { width:220px; flex:none; border-right:1px solid var(--line); background:var(--panel); overflow-y:auto; padding:6px; }
+  aside button { display:block; width:100%; text-align:left; padding:7px 10px; border:0; border-radius:6px; background:none; color:var(--text); font:inherit; cursor:pointer; }
+  aside button:hover { background:#262a36; }
+  aside button[aria-current="true"] { background:var(--acc); color:#10121a; font-weight:600; }
+  #view { flex:1; position:relative; min-width:0; }
+  canvas { display:block; width:100%; height:100%; }
+  #ctl { width:260px; flex:none; border-left:1px solid var(--line); background:var(--panel); padding:14px; overflow-y:auto; }
+  #ctl h3 { margin:0 0 4px; font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--dim); }
+  #ctl section { margin-bottom:18px; }
+  .row { display:flex; align-items:center; gap:8px; margin:5px 0; }
+  .row label { width:20px; color:var(--dim); }
+  .row input[type=range] { flex:1; accent-color:var(--acc); }
+  .row output { width:48px; text-align:right; font-variant-numeric:tabular-nums; color:var(--dim); }
+  #info { position:absolute; left:12px; top:12px; padding:8px 11px; border-radius:8px; background:#0d0f14cc;
+          border:1px solid var(--line); color:var(--dim); white-space:pre; pointer-events:none; }
+  #hint { position:absolute; left:12px; bottom:10px; color:var(--dim); }
+  #icons { flex:1; overflow-y:auto; padding:18px; display:grid; grid-template-columns:repeat(auto-fill,minmax(130px,1fr)); gap:14px; align-content:start; }
+  figure { margin:0; padding:10px; background:var(--panel); border:1px solid var(--line); border-radius:10px; text-align:center; }
+  figure img { width:96px; height:96px; background:repeating-conic-gradient(#23262f 0 25%,#1a1d25 0 50%) 0/16px 16px; border-radius:6px; }
+  figure figcaption { margin-top:7px; font-size:11px; word-break:break-all; }
+  figure button { margin-top:6px; padding:4px 10px; border:1px solid var(--line); border-radius:6px; background:none; color:var(--dim); font:inherit; cursor:pointer; }
+  figure button:hover { color:var(--acc); border-color:var(--acc); }
+  .hidden { display:none !important; }
+</style>
+</head>
+<body>
+<header>
+  <b>Студия</b>
+  <button class="tab" id="tab-models" aria-selected="true">Модели</button>
+  <button class="tab" id="tab-icons" aria-selected="false">Иконки</button>
+  <span id="msg"></span>
+  <button id="save" disabled>Сохранить</button>
+</header>
+<main>
+  <aside id="list"></aside>
+  <div id="view">
+    <div id="info"></div>
+    <div id="hint">ЛКМ — повернуть · ПКМ — сдвинуть · колесо — зум</div>
+  </div>
+  <div id="ctl">
+    <section>
+      <h3>Модель</h3>
+      <div class="row"><label>Рост</label><input type="range" id="m-h" min="1.5" max="4" step="0.05"><output></output></div>
+      <div class="row"><label>Пов.</label><input type="range" id="m-ry" min="-180" max="180" step="1"><output></output></div>
+    </section>
+    <section>
+      <h3>Оружие в руке</h3>
+      <div class="row"><label>X</label><input type="range" id="w-x" min="-1" max="1" step="0.01"><output></output></div>
+      <div class="row"><label>Y</label><input type="range" id="w-y" min="-1.5" max="1" step="0.01"><output></output></div>
+      <div class="row"><label>Z</label><input type="range" id="w-z" min="-1" max="1" step="0.01"><output></output></div>
+      <div class="row"><label>Накл</label><input type="range" id="w-rx" min="-180" max="180" step="1"><output></output></div>
+      <div class="row"><label>Пов</label><input type="range" id="w-ry" min="-180" max="180" step="1"><output></output></div>
+      <div class="row"><label>Кр</label><input type="range" id="w-rz" min="-180" max="180" step="1"><output></output></div>
+      <div class="row"><label>Мсш</label><input type="range" id="w-s" min="0.2" max="2" step="0.02"><output></output></div>
+    </section>
+    <section>
+      <h3>Щит</h3>
+      <div class="row"><label>X</label><input type="range" id="s-x" min="-1" max="1" step="0.01"><output></output></div>
+      <div class="row"><label>Y</label><input type="range" id="s-y" min="-1.5" max="1" step="0.01"><output></output></div>
+      <div class="row"><label>Z</label><input type="range" id="s-z" min="-1" max="1" step="0.01"><output></output></div>
+      <div class="row"><label>Мсш</label><input type="range" id="s-s" min="0.2" max="2" step="0.02"><output></output></div>
+    </section>
+    <section>
+      <h3>Проверка</h3>
+      <div class="row"><label>Шаг</label><input type="range" id="p-walk" min="0" max="1" step="1"><output></output></div>
+      <div class="row"><label>Удар</label><input type="range" id="p-atk" min="0" max="1" step="0.01"><output></output></div>
+    </section>
+  </div>
+</main>
+
+<script type="importmap">
+{ "imports": { "three": "/node_modules/three/build/three.module.js", "three/addons/": "/node_modules/three/examples/jsm/" } }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { rigModel } from '/src/glb.js';
+
+const $ = (id) => document.getElementById(id);
+const view = $('view');
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+view.append(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x14161c);
+const camera = new THREE.PerspectiveCamera(35, 1, 0.05, 200);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+scene.add(new THREE.HemisphereLight(0xffffff, 0x404050, 2.2));
+const sun = new THREE.DirectionalLight(0xffffff, 1.7); sun.position.set(2.5, 4, 2.5); scene.add(sun);
+const grid = new THREE.GridHelper(8, 32, 0x50556a, 0x2a2e3a); grid.material.transparent = true; grid.material.opacity = .5; scene.add(grid);
+
+const root = new THREE.Group(); scene.add(root);
+const loader = new GLTFLoader();
+
+// заглушки оружия и щита — той же формы, что в игре
+function makeWeapon() {
+  const g = new THREE.Group();
+  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 1, 8), new THREE.MeshLambertMaterial({ color: 0x5a3a1a }));
+  shaft.scale.set(0.08, 2.2, 0.08); shaft.rotation.x = Math.PI / 2; shaft.position.z = 0.5;
+  const orb = new THREE.Mesh(new THREE.SphereGeometry(0.5, 16, 12), new THREE.MeshLambertMaterial({ color: 0x90a0ff, emissive: 0x3040a0 }));
+  orb.scale.setScalar(0.3); orb.position.z = 1.6;
+  g.add(shaft, orb); return g;
+}
+function makeShield() {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshLambertMaterial({ color: 0x808080 }));
+  m.scale.set(0.08, 0.75, 0.6); return m;
+}
+
+let state = null, rigData = {}, models = [], icons = [], cur = null, dirty = false;
+const weapon = makeWeapon(), shield = makeShield();
+
+const DEF = { height: 2.4, ry: 0, weapon: { x: 0, y: -0.7, z: 0.1, rx: 0, ry: 0, rz: 0, s: 1 }, shield: { x: -0.16, y: -0.45, z: 0.05, s: 1 } };
+const clone = (o) => JSON.parse(JSON.stringify(o));
+
+function setDirty(v) { dirty = v; $('save').disabled = !v; if (v) $('msg').textContent = ''; }
+
+async function showModel(id, btn) {
+  for (const b of $('list').querySelectorAll('button')) b.setAttribute('aria-current', String(b === btn));
+  cur = id;
+  state = Object.assign(clone(DEF), rigData[id] ? clone(rigData[id]) : {});
+  state.weapon = Object.assign(clone(DEF.weapon), state.weapon || {});
+  state.shield = Object.assign(clone(DEF.shield), state.shield || {});
+  root.clear();
+  $('info').textContent = 'загрузка…';
+  const gltf = await loader.loadAsync(`/public/assets/models/${id}.glb`);
+  const rigged = rigModel(gltf.scene, { height: state.height });
+  root.add(rigged);
+  const parts = rigged.userData.parts;
+  if (parts.armR) parts.armR.add(weapon);
+  if (parts.armL) parts.armL.add(shield);
+  root.userData.rigged = rigged;
+  let tri = 0; rigged.traverse((o) => { if (o.isMesh) tri += o.geometry.attributes.position.count / 3; });
+  $('info').textContent = `${id}\nчастей: ${Object.keys(parts).length} (${Object.keys(parts).join(', ')})\nтреугольников: ${Math.round(tri).toLocaleString('ru')}`;
+  const dist = state.height * 1.9;
+  controls.target.set(0, state.height / 2, 0);
+  camera.position.set(dist * .5, state.height * .6, dist * .8);
+  controls.update();
+  syncInputs(); apply();
+}
+
+const INPUTS = {
+  'm-h': ['height'], 'm-ry': ['ry'],
+  'w-x': ['weapon', 'x'], 'w-y': ['weapon', 'y'], 'w-z': ['weapon', 'z'],
+  'w-rx': ['weapon', 'rx'], 'w-ry': ['weapon', 'ry'], 'w-rz': ['weapon', 'rz'], 'w-s': ['weapon', 's'],
+  's-x': ['shield', 'x'], 's-y': ['shield', 'y'], 's-z': ['shield', 'z'], 's-s': ['shield', 's'],
+};
+const get = (p) => p.reduce((o, k) => o[k], state);
+const set = (p, v) => { const last = p.pop(); p.reduce((o, k) => o[k], state)[last] = v; };
+
+function syncInputs() {
+  for (const [el, p] of Object.entries(INPUTS)) {
+    const v = get([...p]);
+    $(el).value = v;
+    $(el).nextElementSibling.value = typeof v === 'number' ? v.toFixed(2) : v;
+  }
+}
+
+function apply() {
+  const r = root.userData.rigged;
+  if (!r) return;
+  r.rotation.y = state.ry * Math.PI / 180;
+  const w = state.weapon;
+  weapon.position.set(w.x, w.y, w.z);
+  weapon.rotation.set(w.rx * Math.PI / 180, w.ry * Math.PI / 180, w.rz * Math.PI / 180);
+  weapon.scale.setScalar(w.s);
+  const s = state.shield;
+  shield.position.set(s.x, s.y, s.z);
+  shield.scale.set(0.08 * s.s, 0.75 * s.s, 0.6 * s.s);
+}
+
+for (const [el, p] of Object.entries(INPUTS)) {
+  $(el).addEventListener('input', (e) => {
+    const v = Number(e.target.value);
+    e.target.nextElementSibling.value = v.toFixed(2);
+    if (p[0] === 'height') { set([...p], v); return showModel(cur, $('list').querySelector('[aria-current="true"]')).then(() => setDirty(true)); }
+    set([...p], v); apply(); setDirty(true);
+  });
+}
+for (const el of ['p-walk', 'p-atk']) $(el).addEventListener('input', (e) => { e.target.nextElementSibling.value = Number(e.target.value).toFixed(2); });
+
+$('save').onclick = async () => {
+  rigData[cur] = clone(state);
+  const r = await fetch('/api/rig', { method: 'POST', body: JSON.stringify(rigData) });
+  setDirty(false);
+  $('msg').textContent = r.ok ? `сохранено: ${cur}` : 'не сохранилось';
+  setTimeout(() => ($('msg').textContent = ''), 3000);
+};
+
+// --- иконки ---
+const iconsEl = document.createElement('div'); iconsEl.id = 'icons'; iconsEl.className = 'hidden';
+document.querySelector('main').append(iconsEl);
+
+function drawIcons() {
+  iconsEl.innerHTML = icons.map((id) =>
+    `<figure><img src="/public/assets/icons/${id}.png?t=${Date.now()}" alt=""><figcaption>${id}</figcaption><button data-id="${id}">Перерисовать</button></figure>`).join('');
+}
+iconsEl.addEventListener('click', async (e) => {
+  const id = e.target.dataset?.id;
+  if (!id) return;
+  e.target.textContent = 'рисую…'; e.target.disabled = true;
+  const r = await (await fetch('/api/icon', { method: 'POST', body: JSON.stringify({ id }) })).json();
+  e.target.textContent = r.ok ? 'готово' : 'ошибка';
+  const img = e.target.parentElement.querySelector('img');
+  img.src = `/public/assets/icons/${id}.png?t=${Date.now()}`;
+  setTimeout(() => { e.target.textContent = 'Перерисовать'; e.target.disabled = false; }, 1500);
+});
+
+function tab(which) {
+  const m = which === 'models';
+  $('tab-models').setAttribute('aria-selected', String(m));
+  $('tab-icons').setAttribute('aria-selected', String(!m));
+  $('view').classList.toggle('hidden', !m);
+  $('ctl').classList.toggle('hidden', !m);
+  $('list').classList.toggle('hidden', !m);
+  iconsEl.classList.toggle('hidden', m);
+  if (!m && !iconsEl.innerHTML) drawIcons();
+  resize();
+}
+$('tab-models').onclick = () => tab('models');
+$('tab-icons').onclick = () => tab('icons');
+
+const data = await (await fetch('/api/list')).json();
+models = data.models; icons = data.icons; rigData = data.rig || {};
+$('list').innerHTML = '';
+for (const m of models) {
+  const b = document.createElement('button');
+  b.textContent = m; b.onclick = () => showModel(m, b);
+  $('list').append(b);
+}
+if (models.length) showModel(models[0], $('list').firstChild);
+
+function resize() {
+  const w = view.clientWidth || 1, h = view.clientHeight || 1;
+  renderer.setSize(w, h);
+  camera.aspect = w / h; camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize); resize();
+
+const clock = new THREE.Clock();
+renderer.setAnimationLoop(() => {
+  const t = clock.getElapsedTime();
+  const r = root.userData.rigged;
+  if (r?.userData.anim) r.userData.anim(t, { moving: $('p-walk').value === '1', attackT: Number($('p-atk').value) });
+  controls.update();
+  renderer.render(scene, camera);
+});
+</script>
+</body>
+</html>

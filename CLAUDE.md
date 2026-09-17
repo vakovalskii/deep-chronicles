@@ -6,7 +6,7 @@ three.js r170 + Vite. Простые формы + пиксельные текс�
 ## Запуск и релиз
 - `npm install` → `npm run dev` (WS-сервер :8790 + Vite http://localhost:5173). `?ws=ws://…` — свой адрес сервера (E2E поднимает его на 8791).
 - `npm test` — юнит-тесты (`tests/unit.test.js`, node:test) → сборка → E2E в Chrome (`tests/e2e.mjs`, playwright, сам поднимает vite на 5199).
-- `bash deploy/deploy.sh` — **сначала `npm test`**, потом rsync `dist/` на `root@92.255.78.10:/opt/realms/dist`, `server/` → `/opt/realms/server` и рестарт systemd `realms-ws` (порт 8790). Прод: https://realms.neuraldeep.ru (nginx `deploy/nginx-realms.conf`: статика + `/ws`, certbot).
+- `bash deploy/deploy.sh` — **сначала `npm test`**, потом rsync `dist/` на `$DEPLOY_HOST:/opt/realms/dist` (адрес сервера — в переменной окружения, в репозиторий не коммитим), `server/` → `/opt/realms/server` и рестарт systemd `realms-ws` (порт 8790). Прод: https://realms.neuraldeep.ru (nginx `deploy/nginx-realms.conf`: статика + `/ws`, certbot).
 - Добавил механику — добавь шаг в E2E или проверку в юнит-тесты.
 
 ## Структура

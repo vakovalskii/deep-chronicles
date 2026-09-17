@@ -1,0 +1,200 @@
+<!doctype html>
+<!-- Просмотрщик сгенерированных моделей: tools/models-out/*.glb.
+     Запуск: node tools/viewer.mjs → откроется в браузере. -->
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<title>Модели — Хроники Глубин</title>
+<style>
+  :root { --bg: #14161c; --panel: #1c1f28; --line: #2c3040; --text: #dfe3ee; --dim: #8992a8; --acc: #9a7cff; }
+  * { box-sizing: border-box; }
+  body { margin: 0; height: 100vh; display: flex; background: var(--bg); color: var(--text);
+         font: 13px/1.5 ui-sans-serif, "Segoe UI", Roboto, sans-serif; }
+  aside { width: 240px; flex: none; border-right: 1px solid var(--line); background: var(--panel);
+          display: flex; flex-direction: column; }
+  h1 { font-size: 13px; margin: 0; padding: 14px 16px; border-bottom: 1px solid var(--line); letter-spacing: .04em;
+       text-transform: uppercase; color: var(--dim); font-weight: 600; }
+  #list { overflow-y: auto; flex: 1; padding: 6px; }
+  #list button { display: block; width: 100%; text-align: left; padding: 7px 10px; border: 0; border-radius: 6px;
+                 background: none; color: var(--text); font: inherit; cursor: pointer; }
+  #list button:hover { background: #262a36; }
+  #list button[aria-current="true"] { background: var(--acc); color: #10121a; font-weight: 600; }
+  #list .empty { padding: 16px; color: var(--dim); }
+  main { flex: 1; position: relative; min-width: 0; }
+  canvas { display: block; }
+  #info { position: absolute; left: 14px; top: 14px; padding: 9px 12px; border-radius: 8px;
+          background: #0d0f14cc; border: 1px solid var(--line); color: var(--dim); white-space: pre; pointer-events: none; }
+  #info b { color: var(--text); font-weight: 600; }
+  #tools { position: absolute; right: 14px; top: 14px; display: flex; gap: 6px; }
+  #tools button { padding: 7px 12px; border: 1px solid var(--line); border-radius: 7px; background: #0d0f14cc;
+                  color: var(--text); font: inherit; cursor: pointer; }
+  #tools button[aria-pressed="true"] { border-color: var(--acc); color: var(--acc); }
+  #hint { position: absolute; left: 14px; bottom: 12px; color: var(--dim); }
+</style>
+</head>
+<body>
+<aside>
+  <h1>Модели</h1>
+  <div id="list"></div>
+</aside>
+<main>
+  <div id="info"></div>
+  <div id="tools">
+    <button id="wire" aria-pressed="false">Сетка</button>
+    <button id="spin" aria-pressed="true">Вращение</button>
+    <button id="bg">Фон</button>
+  </div>
+  <div id="hint">ЛКМ — повернуть · ПКМ — сдвинуть · колесо — зум</div>
+</main>
+
+<script type="importmap">
+{ "imports": {
+  "three": "/node_modules/three/build/three.module.js",
+  "three/addons/": "/node_modules/three/examples/jsm/"
+} }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const main = document.querySelector('main');
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+main.append(renderer.domElement);
+
+const scene = new THREE.Scene();
+const FONS = [0x14161c, 0x30343f, 0xdfe3ee];
+let fon = 0;
+scene.background = new THREE.Color(FONS[fon]);
+
+const camera = new THREE.PerspectiveCamera(35, 1, 0.01, 100);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+
+// камера смотрит в середину модели и отъезжает так, чтобы она влезла целиком
+function frame(h = curH) {
+  curH = h;
+  const dist = (h / 2) / Math.tan((camera.fov / 2) * Math.PI / 180) * 1.9;
+  controls.target.set(0, h / 2, 0);
+  camera.position.set(dist * 0.55, h * 0.62, dist * 0.85);
+  camera.near = dist / 100;
+  camera.far = dist * 20;
+  camera.updateProjectionMatrix();
+  controls.update();
+}
+
+scene.add(new THREE.HemisphereLight(0xffffff, 0x404050, 2.2));
+const sun = new THREE.DirectionalLight(0xffffff, 1.7);
+sun.position.set(2.5, 4, 2.5);
+scene.add(sun);
+const fill = new THREE.DirectionalLight(0xbfd0ff, 0.6);
+fill.position.set(-2, 1.5, -2.5);
+scene.add(fill);
+
+const grid = new THREE.GridHelper(4, 16, 0x50556a, 0x2a2e3a);
+grid.material.transparent = true;
+grid.material.opacity = 0.5;
+scene.add(grid);
+
+const root = new THREE.Group();
+scene.add(root);
+
+const loader = new GLTFLoader();
+const info = document.getElementById('info');
+let wire = false, spin = true, cur = null, curH = 1;
+
+// модель ставим на пол и вписываем в куб 1×1×1, чтобы всё смотрелось в одном масштабе
+function fit(obj) {
+  const box = new THREE.Box3().setFromObject(obj);
+  const size = box.getSize(new THREE.Vector3());
+  const k = 1 / Math.max(size.x, size.y, size.z);
+  obj.scale.setScalar(k);
+  const b2 = new THREE.Box3().setFromObject(obj);
+  const c = b2.getCenter(new THREE.Vector3());
+  obj.position.sub(new THREE.Vector3(c.x, b2.min.y, c.z));
+  return size;
+}
+
+function stats(obj) {
+  let tri = 0, verts = 0, meshes = 0;
+  const maps = new Set();
+  obj.traverse((o) => {
+    if (!o.isMesh) return;
+    meshes++;
+    const g = o.geometry;
+    verts += g.attributes.position.count;
+    tri += (g.index ? g.index.count : g.attributes.position.count) / 3;
+    for (const key of ['map', 'normalMap', 'roughnessMap', 'emissiveMap']) if (o.material?.[key]) maps.add(o.material[key].image);
+  });
+  const px = [...maps].map((i) => `${i.width}×${i.height}`).join(', ') || '—';
+  return { tri: Math.round(tri), verts, meshes, px };
+}
+
+async function show(name, btn) {
+  for (const b of document.querySelectorAll('#list button')) b.setAttribute('aria-current', String(b === btn));
+  root.clear();
+  info.textContent = 'загрузка…';
+  const t0 = performance.now();
+  const res = await fetch(`/tools/models-out/${name}.glb`);
+  const bytes = (await res.clone().arrayBuffer()).byteLength;
+  const gltf = await loader.parseAsync(await res.arrayBuffer(), '');
+  cur = gltf.scene;
+  const size = fit(cur);
+  root.add(cur);
+  frame(new THREE.Box3().setFromObject(cur).max.y);
+  applyWire();
+  const s = stats(cur);
+  info.innerHTML = `<b>${name}</b>\nтреугольников: ${s.tri.toLocaleString('ru')}\nвершин: ${s.verts.toLocaleString('ru')}\n`
+    + `мешей: ${s.meshes}   текстуры: ${s.px}\nразмер: ${(bytes / 1048576).toFixed(2)} МБ   загрузка: ${Math.round(performance.now() - t0)} мс\n`
+    + `габарит: ${size.x.toFixed(2)} × ${size.y.toFixed(2)} × ${size.z.toFixed(2)}`;
+  location.hash = name;
+}
+
+function applyWire() {
+  cur?.traverse((o) => { if (o.isMesh) o.material.wireframe = wire; });
+}
+
+document.getElementById('wire').onclick = (e) => {
+  wire = !wire; e.target.setAttribute('aria-pressed', String(wire)); applyWire();
+};
+document.getElementById('spin').onclick = (e) => {
+  spin = !spin; e.target.setAttribute('aria-pressed', String(spin));
+};
+document.getElementById('bg').onclick = () => {
+  fon = (fon + 1) % FONS.length;
+  scene.background = new THREE.Color(FONS[fon]);
+  grid.visible = fon !== 2;
+};
+
+function resize() {
+  const w = main.clientWidth, h = main.clientHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  frame();
+}
+addEventListener('resize', resize);
+resize();
+
+const models = await (await fetch('/tools/models.json')).json();
+const list = document.getElementById('list');
+if (!models.length) list.innerHTML = '<div class="empty">Пока нет моделей.<br>Сгенерируйте: <code>node tools/gen-3d.mjs</code></div>';
+for (const m of models) {
+  const b = document.createElement('button');
+  b.textContent = m;
+  b.onclick = () => show(m, b);
+  list.append(b);
+}
+const start = decodeURIComponent(location.hash.slice(1));
+const first = models.includes(start) ? start : models[0];
+if (first) show(first, [...list.children][models.indexOf(first)]);
+
+renderer.setAnimationLoop(() => {
+  if (spin) root.rotation.y += 0.004;
+  controls.update();
+  renderer.render(scene, camera);
+});
+</script>
+</body>
+</html>

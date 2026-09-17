@@ -7,3 +7,4 @@ public/assets/tex/raw/
 server/data/
 tools/models-src/
 .DS_Store
+tools/models-out/

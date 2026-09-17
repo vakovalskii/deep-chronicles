@@ -77,11 +77,23 @@ function spawnHero() {
   scene.add(hero);
   refreshGear();
 }
-function refreshGear() {
+function lookOf() {
   const g = (sl) => ITEMS[P.equip[sl]], w = g('weapon'), a = g('armor');
-  hero.userData.setWeapon(w ? w.color : null, !!w?.twoHand, P.enc.weapon || 0);
-  hero.userData.setBody(a && a.grade !== 'none' ? a.color : CLASSES[P.cls].color, !!a?.robe || (P.cls === 'mage' && !a));
-  hero.userData.setGear({ head: g('head')?.color, legs: g('legs')?.color, gloves: g('gloves')?.color, feet: g('feet')?.color, shield: g('shield')?.color, helmKind: g('head')?.set });
+  return {
+    cls: P.cls, lvl: P.lvl, w: w ? w.color : null, staff: !!w?.twoHand, ench: P.enc.weapon || 0,
+    body: a && a.grade !== 'none' ? a.color : CLASSES[P.cls].color, robe: !!a?.robe || (P.cls === 'mage' && !a),
+    gear: { head: g('head')?.color ?? null, legs: g('legs')?.color ?? null, gloves: g('gloves')?.color ?? null, feet: g('feet')?.color ?? null, shield: g('shield')?.color ?? null, helmKind: g('head')?.set ?? null },
+  };
+}
+function applyLook(obj, L) {
+  const u = (v) => (v == null ? undefined : v);
+  obj.userData.setWeapon(u(L.w), L.staff, L.ench);
+  obj.userData.setBody(L.body ?? CLASSES[L.cls].color, L.robe);
+  obj.userData.setGear({ head: u(L.gear?.head), legs: u(L.gear?.legs), gloves: u(L.gear?.gloves), feet: u(L.gear?.feet), shield: u(L.gear?.shield), helmKind: L.gear?.helmKind });
+}
+function refreshGear() {
+  applyLook(hero, lookOf());
+  sendLook();
 }
 
 // ================= Мобы =================
@@ -151,7 +163,8 @@ function updateFx(dt) {
   for (let i = fx.length - 1; i >= 0; i--) {
     const f = fx[i]; f.life -= dt; const k = 1 - f.life / f.max;
     if (f.m) { f.m.material.opacity = 1 - k; if (f.grow) f.m.scale.setScalar(1 + k * 1.5); }
-    if (f.el) { f.pos.y += dt * 1.6; const p = toScreen(f.pos); f.el.style.transform = `translate(${p.x}px,${p.y}px) translate(-50%,-50%)`; f.el.style.opacity = String(1 - k * k); f.el.style.display = p.vis ? '' : 'none'; }
+    if (f.el && f.follow) { const o = f.follow.position, p = toScreen(_v.copy(o).setY(o.y + 3.6)); f.el.style.transform = `translate(${p.x | 0}px,${p.y | 0}px) translate(-50%,-100%)`; f.el.style.display = p.vis && f.follow.visible !== false ? '' : 'none'; f.el.style.opacity = String(Math.min(1, f.life)); }
+    else if (f.el) { f.pos.y += dt * 1.6; const p = toScreen(f.pos); f.el.style.transform = `translate(${p.x}px,${p.y}px) translate(-50%,-50%)`; f.el.style.opacity = String(1 - k * k); f.el.style.display = p.vis ? '' : 'none'; }
     if (f.life <= 0) { if (f.m) { scene.remove(f.m); f.m.geometry.dispose(); } f.el?.remove(); fx.splice(i, 1); }
   }
   for (let i = bolts.length - 1; i >= 0; i--) {
@@ -164,9 +177,13 @@ function updateFx(dt) {
 
 // ================= Лог и сообщения =================
 function log(text, cls = '') {
-  const el = document.createElement('div'); el.className = cls; el.textContent = text;
-  const box = $('log'); box.append(el); while (box.children.length > 60) box.firstChild.remove();
-  box.scrollTop = box.scrollHeight;
+  const el = document.createElement('div'); el.className = `c-sys ${cls}`; el.textContent = text;
+  logAppend(el);
+}
+function logAppend(el) {
+  const box = $('logbox'), stick = box.scrollTop + box.clientHeight >= box.scrollHeight - 30;
+  box.append(el); while (box.children.length > 150) box.firstChild.remove();
+  if (stick) box.scrollTop = box.scrollHeight;
 }
 let bannerT = 0;
 function banner(text) { $('banner').textContent = text; $('banner').style.opacity = '1'; bannerT = 2.5; }
@@ -222,7 +239,7 @@ function gainXp(xp) {
     banner(`Новый уровень: ${P.lvl}`); log(`Уровень повышен до ${P.lvl}!`, 'rare');
     ringFx(hero.position, 4, 0xffe070); flashFx(hero.position, 0xffe070, 2.5);
     for (const id of CLASSES[P.cls].skills) if (SKILLS[id].lvl === P.lvl) log(`Изучено умение: ${SKILLS[id].name}`, 'good');
-    renderSkills();
+    renderSkills(); sendLook();
   }
   save();
 }
@@ -364,6 +381,125 @@ function teleportTo(x, z) {
   save();
 }
 
+
+// ================= Сеть: другие игроки, онлайн, чат =================
+const net = { ws: null, ok: false, id: 0, online: 0, retry: 1000, lastSt: 0 };
+const WS_URL = new URLSearchParams(location.search).get('ws') || (import.meta.env.DEV ? `ws://${location.hostname}:8790` : `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
+const netSend = (m) => { if (net.ok) net.ws.send(JSON.stringify(m)); };
+function sendLook() { if (P) netSend({ t: 'look', look: lookOf() }); }
+function netConnect() {
+  const ws = new WebSocket(WS_URL);
+  net.ws = ws;
+  ws.onopen = () => { net.ok = true; net.retry = 1000; netSend({ t: 'hello', name: P.name, look: lookOf() }); };
+  ws.onclose = () => {
+    if (net.ws !== ws) return;
+    net.ok = false;
+    for (const r of remotes.values()) scene.remove(r.obj);
+    remotes.clear();
+    setTimeout(netConnect, net.retry); net.retry = Math.min(15000, net.retry * 2);
+  };
+  ws.onmessage = (ev) => { let m; try { m = JSON.parse(ev.data); } catch { return; } onNet(m); };
+}
+const remotes = new Map(); // id → { obj, name, look, to, a, hp, seen, st }
+function onNet(m) {
+  if (m.t === 'welcome') { net.id = m.id; net.online = m.online; }
+  if (m.t === 'online') net.online = m.n;
+  if (m.t === 'look') {
+    let r = remotes.get(m.id);
+    const cls = m.look?.cls || 'warrior';
+    if (r && r.cls !== cls) { scene.remove(r.obj); r = null; }
+    if (!r) {
+      const obj = buildHero(CLASSES[cls]); obj.visible = false; scene.add(obj);
+      r = { obj, cls, to: null, a: 0, hp: 100, seen: 0, st: { moving: false, attackT: 0, casting: false } };
+      obj.traverse((o) => { o.userData.remote = r; });
+      remotes.set(m.id, r);
+    }
+    r.name = m.name; r.look = m.look;
+    if (m.look) applyLook(r.obj, m.look);
+  }
+  if (m.t === 'snap') {
+    const now = performance.now();
+    for (const [id, x, y, z, ry, a, hp] of m.o) {
+      const r = remotes.get(id); if (!r) continue;
+      if (!r.obj.visible || Math.hypot(r.obj.position.x - x, r.obj.position.z - z) > 30) { r.obj.position.set(x, y, z); r.obj.rotation.y = ry; }
+      r.to = { x, y, z, r: ry };
+      if (a & 2 && !(r.a & 2)) r.st.attackT = 1;
+      r.a = a; r.hp = hp; r.seen = now; r.obj.visible = true;
+    }
+  }
+  if (m.t === 'leave') { const r = remotes.get(m.id); if (r) { scene.remove(r.obj); remotes.delete(m.id); } }
+  if (m.t === 'chat') chatAdd(m);
+  if (m.t === 'chatwait') log(`${CH_NAME[m.ch]}: можно писать через ${Math.ceil(m.wait / 1000)} с`, 'bad');
+}
+function updateRemotes(dt, t) {
+  const now = performance.now(), k = 1 - Math.exp(-dt * 12);
+  for (const r of remotes.values()) {
+    if (now - r.seen > 1500) r.obj.visible = false;
+    if (!r.obj.visible || !r.to) continue;
+    const o = r.obj;
+    o.position.x += (r.to.x - o.position.x) * k; o.position.y += (r.to.y - o.position.y) * k; o.position.z += (r.to.z - o.position.z) * k;
+    let dr = r.to.r - o.rotation.y; dr = Math.atan2(Math.sin(dr), Math.cos(dr)); o.rotation.y += dr * k;
+    r.st.moving = !!(r.a & 1); r.st.casting = !!(r.a & 4);
+    r.st.attackT = Math.max(0, r.st.attackT - dt * 3);
+    o.rotation.z = r.a & 8 ? Math.PI / 2 : 0;
+    o.userData.anim(t, r.st);
+  }
+  if (net.ok && t - net.lastSt > 0.1) {
+    net.lastSt = t;
+    const p = hero.position;
+    netSend({ t: 'st', x: +p.x.toFixed(2), y: +p.y.toFixed(2), z: +p.z.toFixed(2), r: +hero.rotation.y.toFixed(2), a: (heroSt.moving ? 1 : 0) | (heroSt.attackT > 0 ? 2 : 0) | (heroSt.casting ? 4 : 0) | (dead ? 8 : 0), hp: Math.round((P.hp / stats().maxHp) * 100) });
+  }
+}
+// чат: вкладки фильтруют окно, «+текст» — в торговлю
+const CH_NAME = { all: 'Общий', trade: 'Торговля', near: 'Рядом' };
+let chatTab = 'all';
+function chatAdd(m) {
+  const el = document.createElement('div');
+  el.className = `c-${m.ch}${m.id === net.id ? ' me' : ''}`;
+  const tag = m.ch === 'all' ? '' : m.ch === 'trade' ? '+' : '·';
+  const who = document.createElement('b'); who.textContent = `${tag}${m.from}: `;
+  el.append(who, document.createTextNode(m.text));
+  logAppend(el);
+  const r = [...remotes.values()].find((x) => x.name === m.from && x.obj.visible);
+  if (r || m.id === net.id) bubble(m.id === net.id ? hero : r.obj, m.text);
+}
+function setChatTab(tab) {
+  chatTab = tab; $('logbox').dataset.tab = tab;
+  for (const b of $('chtabs').children) b.classList.toggle('on', b.dataset.tab === tab);
+  $('chatin').placeholder = `${tab === 'sys' ? 'Общий' : CH_NAME[tab] || 'Общий'}${MOBILE ? '' : ' — Enter, «+» в начале — торговля'}`;
+  $('logbox').scrollTop = 1e9;
+}
+$('chtabs').addEventListener('click', (e) => { const b = e.target.closest('[data-tab]'); if (b) setChatTab(b.dataset.tab); });
+function sendChat() {
+  let text = $('chatin').value.trim(); $('chatin').value = '';
+  if (!text) return;
+  let ch = CH_NAME[chatTab] ? chatTab : 'all';
+  if (text.startsWith('+')) { ch = 'trade'; text = text.slice(1).trim(); }
+  if (!net.ok) return log('Нет связи с сервером', 'bad');
+  if (text) netSend({ t: 'chat', ch, text });
+}
+$('chatin').addEventListener('keydown', (e) => {
+  e.stopPropagation();
+  if (e.key === 'Enter') { sendChat(); if (!MOBILE) $('chatin').blur(); }
+  if (e.key === 'Escape') $('chatin').blur();
+});
+$('chatin').addEventListener('focus', () => { for (const k in keys) keys[k] = false; $('log').classList.add('open'); });
+$('chatin').addEventListener('blur', () => { if (!MOBILE) $('log').classList.remove('open'); });
+$('chatsend').addEventListener('pointerdown', (e) => { e.preventDefault(); sendChat(); });
+$('chatclose').addEventListener('pointerdown', (e) => { e.preventDefault(); $('chatin').blur(); $('log').classList.remove('open'); });
+$('logbox').addEventListener('click', () => { if (MOBILE && !$('log').classList.contains('open')) { $('log').classList.add('open'); $('logbox').scrollTop = 1e9; } });
+if (MOBILE && window.visualViewport) {
+  const fit = () => { const vv = visualViewport; $('log').style.bottom = $('log').classList.contains('open') ? `${Math.max(0, innerHeight - vv.height - vv.offsetTop) + 6}px` : ''; };
+  visualViewport.addEventListener('resize', fit); visualViewport.addEventListener('scroll', fit);
+  new MutationObserver(fit).observe($('log'), { attributes: true, attributeFilter: ['class'] });
+}
+// реплика над головой
+function bubble(obj, text) {
+  const el = document.createElement('div'); el.className = 'bubble'; el.textContent = text.length > 60 ? text.slice(0, 57) + '…' : text;
+  $('labels').append(el);
+  fx.push({ el, follow: obj, life: 5, max: 5 });
+}
+
 // ================= Ввод =================
 const keys = {};
 const cam = { yaw: Math.PI, pitch: 0.55, dist: 18 };
@@ -467,6 +603,7 @@ addEventListener('keydown', (e) => {
   if (e.code === 'Digit4') useItem('potion_hp');
   if (e.code === 'Digit5') useItem('potion_mp');
   if (e.code === 'KeyV') { cam.yaw = hero.rotation.y + Math.PI; cam.pitch = 0.55; cam.dist = 18; }
+  if (e.code === 'Enter') { e.preventDefault(); $('chatin').focus(); return; }
   if (e.code === 'KeyI') toggle('inv');
   if (e.code === 'KeyC') toggle('char');
   if (e.code === 'KeyM') toggle('bigmap');
@@ -662,6 +799,7 @@ function updateLabels() {
   list.sort((a, b) => a.d - b.d);
   const shown = list.slice(0, MOB_LABEL_MAX).map((x) => ({ pos: x.m.obj.position, h: 2.6 * (x.m.def.size || 1) + 0.6, text: `${x.m.def.name} ${x.m.def.lvl}`, color: levelColor(x.m.def.lvl), sel: x.m === target }));
   for (const n of npcs) if (flatDist(n.obj.position, hero.position) < 45) shown.push({ pos: n.obj.position, h: 2.9, text: n.name, color: '#a0e0ff', sel: n === target });
+  for (const r of remotes.values()) if (r.obj.visible && flatDist(r.obj.position, hero.position) < 70) shown.push({ pos: r.obj.position, h: 2.9, text: r.name, color: '#b8ffb0' });
   shown.push({ pos: hero.position, h: 2.9, text: P.name, color: '#ffffff' });
   for (let i = 0; i < Math.max(shown.length, labelPool.length); i++) {
     let el = labelPool[i];
@@ -688,6 +826,7 @@ function renderHud() {
   $('coins').textContent = P.coins.toLocaleString('ru');
   const z = zoneAt(hero.position.x, hero.position.z);
   $('zone').textContent = `${z.name} · ${z.lv}`;
+  $('online').textContent = net.ok ? `Онлайн: ${net.online}` : 'Нет связи с сервером';
   if (target) {
     $('target').hidden = false;
     if (target.def) { $('tname').textContent = `${target.def.name}`; $('tname').style.color = levelColor(target.def.lvl); $('tlvl').textContent = `ур. ${target.def.lvl}${target.def.aggro ? ' · агрессивный' : ''}`; bar('tbar', target.hp, target.def.hp, `${Math.round((target.hp / target.def.hp) * 100)}%`); $('tbar').hidden = false; }
@@ -963,6 +1102,7 @@ function loop() {
   frame++;
   updateHero(dt);
   updateMobs(dt, t);
+  updateRemotes(dt, t);
   hero.userData.anim(t, heroSt);
   updateFx(dt);
   marker.material.opacity = Math.max(0, marker.material.opacity - dt * 1.5); marker.visible = marker.material.opacity > 0;
@@ -994,8 +1134,9 @@ function start(p) {
   document.body.classList.add('ingame'); document.documentElement.classList.add('ingame-root');
   spawnHero();
   teleportTo(P.x, P.z);
-  renderSkills(); renderInv();
-  log(`Добро пожаловать, ${P.name}! ЛКМ — идти/выбрать цель (второй клик — атака), ПКМ или два пальца — камера, щипок/колесо — зум, V — сброс камеры, 1–3 — умения, 4–5 — зелья, Tab — цель, I — инвентарь, C — персонаж, M — карта.`);
+  renderSkills(); renderInv(); setChatTab('all');
+  netConnect();
+  log(`Добро пожаловать, ${P.name}! ЛКМ — идти/выбрать цель (второй клик — атака), ПКМ или два пальца — камера, щипок/колесо — зум, V — сброс камеры, 1–3 — умения, 4–5 — зелья, Tab — цель, I — инвентарь, C — персонаж, M — карта, Enter — чат.`);
   log('Поговорите с Хранителем врат, чтобы перенестись в зону охоты, и с Торговцем — за снаряжением.');
 }
 const saved = loadSave();
@@ -1008,4 +1149,4 @@ $('start-new').onclick = () => {
   start(newChar(name.slice(0, 16), pickCls));
 };
 // хук для автотестов: dev-сервер или ?test
-if (import.meta.env.DEV || location.search.includes('test')) window.__g = { get P() { return P; }, mobs, get hero() { return hero; }, cam, teleportTo, gainXp, useSkill, joy, useItem, openNpc, equipIdx, unequip, enchant, stats, get enchMode() { return enchMode; }, renderInv, npcs, respawn, get dead() { return dead; }, get target() { return target; }, set target(v) { target = v; }, attack() { attacking = true; } };
+if (import.meta.env.DEV || location.search.includes('test')) window.__g = { get P() { return P; }, mobs, get hero() { return hero; }, cam, teleportTo, gainXp, useSkill, joy, useItem, openNpc, equipIdx, unequip, enchant, stats, get enchMode() { return enchMode; }, renderInv, remotes, net, npcs, respawn, get dead() { return dead; }, get target() { return target; }, set target(v) { target = v; }, attack() { attacking = true; } };

@@ -2,8 +2,9 @@
 import { chromium } from 'playwright';
 import { spawn } from 'node:child_process';
 
-const PORT = 5199, URL = `http://localhost:${PORT}/`;
+const PORT = 5199, WS = 8791, URL = `http://localhost:${PORT}/?ws=ws://localhost:${WS}`;
 const server = spawn('npx', ['vite', '--port', String(PORT), '--strictPort'], { stdio: 'pipe' });
+const wsServer = spawn('node', ['server/server.js'], { stdio: 'pipe', env: { ...process.env, PORT: String(WS) } });
 const results = [];
 let failed = 0;
 async function step(name, fn) {
@@ -177,6 +178,9 @@ try {
     await page.reload();
     await page.waitForSelector('#start-cont:not([hidden])', { timeout: 10000 });
     expect((await page.textContent('#start-cont')).includes('Автотест'), 'нет кнопки продолжения');
+    await page.click('#start-cont');
+    await page.waitForFunction(() => window.__g?.hero, null, { timeout: 10000 });
+    expect((await G(() => window.__g.P.equip.weapon)) === 'staff_oak', 'экипировка не сохранилась');
   });
 
   // ===== телефон =====
@@ -184,7 +188,7 @@ try {
   phone.on('pageerror', (e) => errors.push('телефон: ' + e.message));
   const PG = (fn, arg) => phone.evaluate(fn, arg);
   await step('телефон: создание персонажа, мобильный интерфейс', async () => {
-    await phone.goto(URL + '?touch');
+    await phone.goto(URL + '&touch');
     await phone.waitForSelector('#start-new');
     await phone.fill('#cname', 'Телефон'); await phone.tap('#start-new');
     await phone.waitForFunction(() => window.__g?.P, null, { timeout: 10000 });
@@ -227,12 +231,26 @@ try {
     await phone.tap('#inv [data-close]');
   });
 
+  await step('мультиплеер: видим друг друга, онлайн, чат', async () => {
+    const pos = await G(() => { const p = window.__g.hero.position; return { x: p.x, z: p.z }; });
+    await PG((p) => window.__g.teleportTo(p.x + 3, p.z), pos);
+    await page.waitForFunction(() => [...window.__g.remotes.values()].some((r) => r.name === 'Телефон' && r.obj.visible), null, { timeout: 8000 });
+    await page.waitForFunction(() => document.getElementById('online').textContent.includes('Онлайн: 2'), null, { timeout: 5000 });
+    expect((await page.textContent('#labels')).includes('Телефон'), 'нет подписи другого игрока');
+    await page.keyboard.press('Enter');
+    await page.keyboard.type('Привет из теста');
+    await page.keyboard.press('Enter');
+    await phone.waitForFunction(() => document.getElementById('logbox').textContent.includes('Привет из теста'), null, { timeout: 5000 });
+    await PG(() => { document.getElementById('chatin').value = '+Продам меч'; document.getElementById('chatsend').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })); });
+    await page.waitForFunction(() => [...document.querySelectorAll('#logbox .c-trade')].some((d) => d.textContent.includes('Продам меч')), null, { timeout: 5000 });
+  });
+
   await step('нет ошибок в консоли', async () => { expect(!errors.length, errors.slice(0, 3).join(' | ')); });
   await browser.close();
 } catch (e) {
   failed++; results.push(`  ✗ запуск: ${e.message}`);
 } finally {
-  server.kill();
+  server.kill(); wsServer.kill();
 }
 console.log(`E2E:\n${results.join('\n')}\n${failed ? `ПРОВАЛЕНО: ${failed}` : 'всё прошло'}`);
 process.exit(failed ? 1 : 0);

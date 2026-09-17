@@ -51,8 +51,20 @@
   #stats{left:50%;bottom:84px;transform:translateX(-50%);font-size:11px;color:var(--dim);background:none;border:none;box-shadow:none;white-space:nowrap}
   body.casting #stats{display:none}
   /* лог */
-  #log{left:12px;bottom:12px;width:380px;height:170px;padding:6px 8px;overflow-y:auto;font-size:12px}
-  #log .good{color:#9f9} #log .bad{color:#f88} #log .loot{color:#adf} #log .rare{color:#ffcf50;font-weight:600}
+  #log{left:12px;bottom:12px;width:400px;height:210px;padding:4px 6px;font-size:12px;display:flex;flex-direction:column;z-index:3}
+  #chtabs{display:flex;gap:3px;margin-bottom:3px}#chtabs button{padding:1px 8px;font-size:11px;border-radius:3px}#chtabs .on{border-color:var(--gold);color:#fff}
+  #logbox{flex:1;overflow-y:auto;min-height:0;-webkit-overflow-scrolling:touch}
+  #logbox div{overflow-wrap:anywhere}
+  #logbox[data-tab=sys]>div:not(.c-sys),#logbox[data-tab=trade]>div:not(.c-trade),#logbox[data-tab=near]>div:not(.c-near){display:none}
+  #logbox .c-trade{color:#ff9ad8}#logbox .c-near{color:#d8e0e8}#logbox .c-all b{color:#fff}#logbox .me b{color:var(--gold)}
+  #logbox .c-sys{color:#b8b0a0}
+  #chatrow{display:flex;gap:4px;margin-top:3px}
+  #chatin{flex:1;min-width:0;background:#0c0c0c;border:1px solid var(--line);color:var(--text);border-radius:3px;padding:4px 6px;font:inherit}
+  #chatin:focus{outline:none;border-color:var(--gold)}
+  #chatsend,#chatclose{padding:2px 10px}#chatclose{display:none}
+  #online{font-size:11px;text-align:center;color:#b8ffb0}
+  .bubble{position:absolute;left:0;top:0;max-width:220px;padding:3px 7px;border-radius:6px;background:rgba(10,12,16,.85);border:1px solid var(--line);font-size:12px;white-space:normal;text-align:center;will-change:transform}
+  #logbox .good{color:#9f9} #logbox .bad{color:#f88} #logbox .loot{color:#adf} #logbox .rare{color:#ffcf50;font-weight:600}
   /* окна */
   .win{left:50%;top:50%;transform:translate(-50%,-50%);width:420px;max-height:70vh;padding:10px 12px;display:flex;flex-direction:column;z-index:5}
   .win[hidden]{display:none}
@@ -158,6 +170,12 @@
   .mob #stats{display:none}
   .mob #castbar{bottom:calc(84px + env(safe-area-inset-bottom))}
   .mob #log{left:calc(150px + env(safe-area-inset-left));bottom:calc(10px + env(safe-area-inset-bottom));width:min(260px,30vw);height:64px;font-size:10px;padding:3px 6px}
+  .mob #log:not(.open) #chtabs,.mob #log:not(.open) #chatrow{display:none}
+  .mob #log.open{left:calc(10px + env(safe-area-inset-left));width:min(460px,60vw);height:auto;max-height:70vh;z-index:9;font-size:12px}
+  .mob #log.open #logbox{height:150px;flex:none}
+  .mob #chatclose{display:block}
+  .mob #chatin{font-size:16px}
+  .mob #online{position:absolute;left:10px;top:9px;font-size:9px;background:rgba(0,0,0,.65);padding:0 4px;border-radius:3px}
   .mob .win{left:0;top:0;right:0;bottom:0;transform:none;width:auto;max-height:none;border-radius:0;padding:calc(10px + env(safe-area-inset-top)) calc(14px + env(safe-area-inset-right)) 10px calc(14px + env(safe-area-inset-left))}
   .mob .win button{min-height:40px}
   .mob .win{background:rgba(12,14,20,.96)}
@@ -189,11 +207,11 @@
   <div id="buffs"></div>
 </div>
 <div id="target" class="panel" hidden><div id="tname"></div><div id="tlvl"></div><div id="tbar" class="bar"><i></i><span></span></div></div>
-<div id="mapbox" class="panel"><canvas id="minimap" width="180" height="180"></canvas><div id="zone"></div><button id="fsbtn" data-act="fs">На весь экран</button></div>
+<div id="mapbox" class="panel"><canvas id="minimap" width="180" height="180"></canvas><div id="zone"></div><div id="online"></div><button id="fsbtn" data-act="fs">На весь экран</button></div>
 <div id="castbar" class="panel bar" hidden><i></i><span></span></div>
 <div id="stats" class="panel"></div>
 <div id="skills" class="panel"></div>
-<div id="log" class="panel"></div>
+<div id="log" class="panel"><div id="chtabs"><button data-tab="all" class="on">Все</button><button data-tab="sys">Система</button><button data-tab="trade">Торговля</button><button data-tab="near">Рядом</button></div><div id="logbox" data-tab="all"></div><div id="chatrow"><input id="chatin" maxlength="160" enterkeyhint="send" autocomplete="off" /><button id="chatsend" type="button">&gt;</button><button id="chatclose" type="button">x</button></div></div>
 <div id="joy"><i></i></div>
 <div id="menu"><button data-act="char">Персонаж <kbd>C</kbd></button><button data-act="inv">Инвентарь <kbd>I</kbd></button><button data-act="map">Карта <kbd>M</kbd></button><button data-act="cam">Сброс камеры <kbd>V</kbd></button></div>
 <div id="mbtns"><button class="big" data-act="attack">Атака</button><button data-act="next">Цель</button><button data-act="inv">Вещи</button><button data-act="char">Перс.</button><button data-act="map">Карта</button><button data-act="cam">Камера</button></div>

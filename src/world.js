@@ -1,5 +1,6 @@
 // Процедурный мир: рельеф, два города, зоны охоты, катакомбы. Без текстур — цвет вершин и простые формы.
 import * as THREE from 'three';
+import { TEX, worldUV } from './tex.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 // ---------- шум ----------
@@ -60,17 +61,26 @@ const addObs = (x, z, r) => obstacles.push({ x, z, r });
 
 const mat = (color, o = {}) => new THREE.MeshLambertMaterial({ color, ...o });
 const MATS = {};
-const M = (c) => (MATS[c] ||= mat(c));
+// kind — пиксельная текстура поверхности (см. tex.js), scale — плиток на метр
+const KIND_SCALE = { brick: 0.5, cobble: 0.35, roof: 0.6, house: 0.25, wood: 0.5, bark: 0.6, leaves: 0.3, stone: 0.35, plain: 0.5 };
+const M = (c, kind = 'plain') => (MATS[c + kind] ||= mat(c, TEX[kind] ? { map: TEX[kind]() } : {}));
 
 // кладём геометрию в «ведро» по цвету → потом сливаем: весь статичный мир — десяток вызовов отрисовки
 function bucketAdder() {
   const buckets = new Map();
+  let kind = 'plain';
   const add = (geo, color, x, y, z, ry = 0, sx = 1, sy = 1, sz = 1) => {
     const g = geo.clone(); g.scale(sx, sy, sz); if (ry) g.rotateY(ry); g.translate(x, y, z);
-    const k = color; if (!buckets.has(k)) buckets.set(k, []); buckets.get(k).push(g.index ? g.toNonIndexed() : g);
+    const k = `${color}|${kind}`; if (!buckets.has(k)) buckets.set(k, []); buckets.get(k).push(g.index ? g.toNonIndexed() : g);
   };
-  const build = (parent) => { for (const [c, list] of buckets) { const m = new THREE.Mesh(mergeGeometries(list), M(c)); m.castShadow = m.receiveShadow = true; parent.add(m); } };
-  return { add, build };
+  const build = (parent) => {
+    for (const [key, list] of buckets) {
+      const [c, kd] = key.split('|');
+      const geo = worldUV(mergeGeometries(list), KIND_SCALE[kd]);
+      const m = new THREE.Mesh(geo, M(+c, kd)); m.castShadow = m.receiveShadow = true; parent.add(m);
+    }
+  };
+  return { add, build, use: (k) => { kind = k; } };
 }
 const BOX = new THREE.BoxGeometry(1, 1, 1);
 const CONE4 = new THREE.ConeGeometry(0.75, 1, 4).rotateY(Math.PI / 4);
@@ -95,12 +105,15 @@ function buildTerrain(scene) {
   }
   geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
   geo.computeVertexNormals();
-  const m = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true }));
+  const uv = geo.attributes.uv;
+  for (let i = 0; i < pos.count; i++) uv.setXY(i, pos.getX(i) / 3, pos.getZ(i) / 3);
+  const m = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true, map: TEX.ground() }));
   m.receiveShadow = true; m.name = 'ground';
   scene.add(m);
   // вода в низинах
-  const water = new THREE.Mesh(new THREE.PlaneGeometry(MAP + 400, MAP + 400).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ color: 0x2a5a8a, transparent: true, opacity: 0.75 }));
-  water.position.y = -6.5; scene.add(water);
+  const wmap = TEX.water(); if (wmap) { wmap.repeat.set((MAP + 400) / 6, (MAP + 400) / 6); }
+  const water = new THREE.Mesh(new THREE.PlaneGeometry(MAP + 400, MAP + 400).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ color: 0x3a6a9a, transparent: true, opacity: 0.8, map: wmap }));
+  water.position.y = -6.5; water.name = 'water'; scene.add(water);
   return m;
 }
 
@@ -108,18 +121,22 @@ function buildTown(t, B, npcs) {
   const y = heightAt(t.x, t.z);
   // стена кольцом из сегментов, 4 ворот
   const segs = 36;
+  B.use('brick');
   for (let i = 0; i < segs; i++) {
     const a = (i / segs) * Math.PI * 2;
     if (i % 9 === 0 || i % 9 === 8) continue; // проёмы ворот (стороны света)
     const x = t.x + Math.cos(a) * t.r, z = t.z + Math.sin(a) * t.r;
     B.add(BOX, 0x9a9088, x, y + 4, z, -a, 2.2, 8, (2 * Math.PI * t.r) / segs + 0.6);
-    if (i % 3 === 0) { B.add(CYL, 0x8a8078, x, y + 6, z, 0, 5, 12, 5); B.add(CONE, 0x6a3a2a, x, y + 14, z, 0, 6.5, 5, 6.5); addObs(x, z, 3); }
+    if (i % 3 === 0) { B.add(CYL, 0x8a8078, x, y + 6, z, 0, 5, 12, 5); B.use('roof'); B.add(CONE, 0x6a3a2a, x, y + 14, z, 0, 6.5, 5, 6.5); B.use('brick'); addObs(x, z, 3); }
     else addObs(x, z, 2.4);
   }
   // площадь и фонтан
+  B.use('cobble');
   B.add(CYL, 0xcfc6b0, t.x, y + 0.1, t.z, 0, 40, 0.3, 40);
-  B.add(CYL, 0x8a9aa8, t.x, y + 1, t.z, 0, 8, 2, 8); B.add(CYL, 0x4a8ac8, t.x, y + 1.6, t.z, 0, 7, 0.4, 7);
+  B.use('stone');
+  B.add(CYL, 0x8a9aa8, t.x, y + 1, t.z, 0, 8, 2, 8);
   B.add(CYL, 0xd8d0c0, t.x, y + 3, t.z, 0, 1.2, 5, 1.2);
+  B.use('plain'); B.add(CYL, 0x4a8ac8, t.x, y + 1.6, t.z, 0, 7, 0.4, 7);
   addObs(t.x, t.z, 4.5);
   // дома по кругу
   const r = (k) => hash(t.x + k, t.z - k);
@@ -127,19 +144,19 @@ function buildTown(t, B, npcs) {
     const a = (i / 16) * Math.PI * 2 + 0.2, d = 45 + r(i) * 30;
     if (Math.abs(Math.sin(a * 2)) < 0.25) continue; // улицы к воротам
     const x = t.x + Math.cos(a) * d, z = t.z + Math.sin(a) * d, w = 8 + r(i + 3) * 6, h = 6 + r(i + 5) * 6;
-    B.add(BOX, t.color, x, y + h / 2, z, -a, w, h, w * 0.8);
-    B.add(CONE4, i % 2 ? 0x8a3a2a : 0x3a4a6a, x, y + h + w * 0.35, z, -a, w * 0.95, w * 0.7, w * 0.85);
+    B.use('house'); B.add(BOX, t.color, x, y + h / 2, z, -a, w, h, w * 0.8);
+    B.use('roof'); B.add(CONE4, i % 2 ? 0x8a3a2a : 0x3a4a6a, x, y + h + w * 0.35, z, -a, w * 0.95, w * 0.7, w * 0.85);
     addObs(x, z, w * 0.62);
   }
   // храм — точка возрождения
-  B.add(BOX, 0xeeeae0, t.x, y + 7, t.z - 26, 0, 16, 14, 12);
-  B.add(CONE4, 0xc8a040, t.x, y + 19, t.z - 26, 0, 16, 10, 12);
+  B.use('brick'); B.add(BOX, 0xeeeae0, t.x, y + 7, t.z - 26, 0, 16, 14, 12);
+  B.use('roof'); B.add(CONE4, 0xc8a040, t.x, y + 19, t.z - 26, 0, 16, 10, 12);
   addObs(t.x, t.z - 26, 9);
   // NPC
   npcs.push({ id: t.id + ':gk', town: t.id, role: 'gatekeeper', name: 'Хранитель врат', x: t.x + 12, z: t.z + 10, color: 0x9040d0 });
   npcs.push({ id: t.id + ':shop', town: t.id, role: 'merchant', name: 'Торговец', x: t.x - 12, z: t.z + 10, color: 0xd09030 });
   // врата телепорта — светящееся кольцо
-  B.add(CYL, 0x6a5aa0, t.x + 18, y + 0.3, t.z + 16, 0, 6, 0.6, 6);
+  B.use('stone'); B.add(CYL, 0x6a5aa0, t.x + 18, y + 0.3, t.z + 16, 0, 6, 0.6, 6);
 }
 
 function buildNature(B) {
@@ -155,17 +172,17 @@ function buildNature(B) {
     const p = hash(i, 3);
     if (zn.id === 'forest' && p < 0.75) {
       const s = 1 + hash(i, 4) * 1.2;
-      B.add(CYL, 0x4a3020, x, h + 3 * s, z, 0, 0.9 * s, 6 * s, 0.9 * s);
-      B.add(CONE, p < 0.4 ? 0x1f4a24 : 0x2a5a2a, x, h + 9 * s, z, 0, 7 * s, 11 * s, 7 * s);
+      B.use('bark'); B.add(CYL, 0x4a3020, x, h + 3 * s, z, 0, 0.9 * s, 6 * s, 0.9 * s);
+      B.use('leaves'); B.add(CONE, p < 0.4 ? 0x1f4a24 : 0x2a5a2a, x, h + 9 * s, z, 0, 7 * s, 11 * s, 7 * s);
       addObs(x, z, 1.2 * s); placed++;
     } else if (zn.id === 'meadow' && p < 0.12) {
       const s = 1 + hash(i, 4);
-      B.add(CYL, 0x5a3a22, x, h + 2 * s, z, 0, 0.8 * s, 4 * s, 0.8 * s);
-      B.add(ICO, 0x3a7a30, x, h + 5.5 * s, z, 0, 3.2 * s, 2.8 * s, 3.2 * s);
+      B.use('bark'); B.add(CYL, 0x5a3a22, x, h + 2 * s, z, 0, 0.8 * s, 4 * s, 0.8 * s);
+      B.use('leaves'); B.add(ICO, 0x3a7a30, x, h + 5.5 * s, z, 0, 3.2 * s, 2.8 * s, 3.2 * s);
       addObs(x, z, 1 * s); placed++;
     } else if (zn.id === 'waste' && p < 0.1) {
       const s = 1.5 + hash(i, 4) * 3;
-      B.add(ICO, 0x8a7050, x, h + s * 0.4, z, p * 30, s, s * 0.7, s * 1.2);
+      B.use('stone'); B.add(ICO, 0x8a7050, x, h + s * 0.4, z, p * 30, s, s * 0.7, s * 1.2);
       addObs(x, z, s * 0.9); placed++;
     }
   }
@@ -173,9 +190,10 @@ function buildNature(B) {
 
 function buildCrypt(B) {
   const y = heightAt(CRYPT.x, CRYPT.z);
+  B.use('brick');
   B.add(BOX, 0x5a5560, CRYPT.x, y + 5, CRYPT.z, 0, 14, 10, 14);
-  B.add(CONE4, 0x3a3540, CRYPT.x, y + 14, CRYPT.z, 0, 15, 8, 15);
-  B.add(BOX, 0x0a0a10, CRYPT.x, y + 3, CRYPT.z + 7.05, 0, 4, 6, 0.3); // проём
+  B.use('roof'); B.add(CONE4, 0x3a3540, CRYPT.x, y + 14, CRYPT.z, 0, 15, 8, 15);
+  B.use('plain'); B.add(BOX, 0x0a0a10, CRYPT.x, y + 3, CRYPT.z + 7.05, 0, 4, 6, 0.3); // проём
   addObs(CRYPT.x, CRYPT.z, 7.5);
 }
 
@@ -202,9 +220,9 @@ function buildDungeon(B) {
   for (let k = 0; k < n * 2; k++) { const i = Math.floor(rnd() * (n - 1)), j = Math.floor(rnd() * n); walls.delete(`${i},${j},e`); }
   for (const w of walls) dungeonWalls.add(w);
   const size = n * cell;
-  B.add(BOX, 0x2a2628, x0 + size / 2, -0.5, z0 + size / 2, 0, size, 1, size);
+  B.use('cobble'); B.add(BOX, 0x3a3438, x0 + size / 2, -0.5, z0 + size / 2, 0, size, 1, size);
   const wall = (x, z, sx, sz) => {
-    B.add(BOX, 0x4a4450, x, 4, z, 0, sx, 8, sz);
+    B.use('brick'); B.add(BOX, 0x5a5460, x, 4, z, 0, sx, 8, sz);
     // препятствия — цепочка кругов вдоль стены
     const len = Math.max(sx, sz), steps = Math.ceil(len / 2.5);
     for (let s = 0; s <= steps; s++) { const t = s / steps - 0.5; addObs(x + (sx > sz ? t * sx : 0), z + (sz > sx ? t * sz : 0), 1.6); }
@@ -220,7 +238,7 @@ function buildDungeon(B) {
   for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) {
     const cx = x0 + (i + 0.5) * cell, cz = z0 + (j + 0.5) * cell;
     dungeonCells.push({ x: cx, z: cz, i, j });
-    if ((i + j) % 3 === 0) B.add(CYL, 0xff8a30, cx, 7.5, cz - cell / 2 + 1.2, 0, 0.5, 1, 0.5);
+    if ((i + j) % 3 === 0) B.use('plain'), B.add(CYL, 0xff8a30, cx, 7.5, cz - cell / 2 + 1.2, 0, 0.5, 1, 0.5);
   }
 }
 

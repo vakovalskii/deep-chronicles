@@ -3,6 +3,7 @@ import { CLASSES, SKILLS, ITEMS, MOBS, SHOP, GRADES, SLOTS, SETS, xpToNext, MAX_
 import { calcStats, enchValue, equipFromBag, unequipSlot, wearError, migrate, MAX_ENCH, SAFE_ENCH, ENCH_CHANCE } from './stats.js';
 import { buildWorld, heightAt, zoneAt, obstacles, TOWNS, TELEPORTS, CRYPT, DUNGEON, ZONES, MAP } from './world.js';
 import { buildMob, buildHero, buildNpc } from './models.js';
+import { TEX } from './tex.js';
 
 const $ = (id) => document.getElementById(id);
 export const MOBILE = new URLSearchParams(location.search).has('touch') || matchMedia('(pointer: coarse)').matches;
@@ -19,7 +20,7 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 document.body.prepend(renderer.domElement);
 const scene = new THREE.Scene();
 const SKY = new THREE.Color(0x9cc4e8), CRYPT_SKY = new THREE.Color(0x07060a);
-scene.background = SKY.clone();
+scene.background = SKY.clone(); // перекрывается куполом неба
 scene.fog = new THREE.Fog(SKY.clone(), 150, 620);
 const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.3, 2000);
 const hemi = new THREE.HemisphereLight(0xdfefff, 0x4a4030, 1.3);
@@ -27,6 +28,10 @@ const sun = new THREE.DirectionalLight(0xfff0d8, 2.2);
 sun.castShadow = true; sun.shadow.mapSize.set(MOBILE ? 1024 : 2048, MOBILE ? 1024 : 2048);
 Object.assign(sun.shadow.camera, { left: -60, right: 60, top: 60, bottom: -60, near: 1, far: 300 });
 scene.add(hemi, sun, sun.target);
+// небо: пиксельный купол (градиент, облака, горы), следует за камерой
+const skyDome = new THREE.Mesh(new THREE.SphereGeometry(900, 32, 12, 0, Math.PI * 2, 0, Math.PI * 0.56), new THREE.MeshBasicMaterial({ map: TEX.sky(), fog: false, depthWrite: false, side: THREE.BackSide }));
+skyDome.renderOrder = -1; skyDome.frustumCulled = false; scene.add(skyDome);
+scene.background = new THREE.Color(0x8aa4bc);
 addEventListener('resize', () => { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); });
 
 const { ground, npcs: npcDefs, spawns } = buildWorld(scene);
@@ -81,15 +86,24 @@ function lookOf() {
   const g = (sl) => ITEMS[P.equip[sl]], w = g('weapon'), a = g('armor');
   return {
     cls: P.cls, lvl: P.lvl, w: w ? w.color : null, staff: !!w?.twoHand, ench: P.enc.weapon || 0,
-    body: a && a.grade !== 'none' ? a.color : CLASSES[P.cls].color, robe: !!a?.robe || (P.cls === 'mage' && !a),
-    gear: { head: g('head')?.color ?? null, legs: g('legs')?.color ?? null, gloves: g('gloves')?.color ?? null, feet: g('feet')?.color ?? null, shield: g('shield')?.color ?? null, helmKind: g('head')?.set ?? null },
+    body: a && a.grade !== 'none' ? a.color : CLASSES[P.cls].color, robe: !!a?.robe || (P.cls === 'mage' && !a), mat: matKind(a),
+    gear: { head: g('head')?.color ?? null, legs: g('legs')?.color ?? null, gloves: g('gloves')?.color ?? null, feet: g('feet')?.color ?? null, shield: g('shield')?.color ?? null, helmKind: g('head')?.set ?? null,
+      shieldKind: g('shield') ? (g('shield').grade === 'd' ? 'wood' : 'plate') : null, legKind: matKind(g('legs')) },
   };
+}
+// вид ткани/брони по комплекту
+function matKind(it) {
+  if (!it) return 'cloth';
+  if (it.set === 'chain') return 'chain';
+  if (it.set === 'bone') return 'plate';
+  if (it.set === 'leather') return 'leather';
+  return 'cloth';
 }
 function applyLook(obj, L) {
   const u = (v) => (v == null ? undefined : v);
   obj.userData.setWeapon(u(L.w), L.staff, L.ench);
-  obj.userData.setBody(L.body ?? CLASSES[L.cls].color, L.robe);
-  obj.userData.setGear({ head: u(L.gear?.head), legs: u(L.gear?.legs), gloves: u(L.gear?.gloves), feet: u(L.gear?.feet), shield: u(L.gear?.shield), helmKind: L.gear?.helmKind });
+  obj.userData.setBody(L.body ?? CLASSES[L.cls].color, L.robe, L.mat);
+  obj.userData.setGear({ head: u(L.gear?.head), legs: u(L.gear?.legs), gloves: u(L.gear?.gloves), feet: u(L.gear?.feet), shield: u(L.gear?.shield), helmKind: L.gear?.helmKind, shieldKind: L.gear?.shieldKind, legKind: L.gear?.legKind });
 }
 function refreshGear() {
   applyLook(hero, lookOf());
@@ -132,6 +146,67 @@ const dungeonExit = new THREE.Vector3(DUNGEON.x0 + DUNGEON.cell / 2 - 4, 0, DUNG
 
 // ================= Эффекты =================
 const fx = [];
+// пиксельные частицы: по одной системе Points на форму, до 800 частиц в каждой
+const PVS = `attribute float size; attribute vec4 pc; varying vec4 vC; uniform float scale;
+void main(){ vC = pc; vec4 mv = modelViewMatrix * vec4(position, 1.0); gl_PointSize = max(1.0, size * scale / -mv.z); gl_Position = projectionMatrix * mv; }`;
+const PFS = `uniform sampler2D map; varying vec4 vC;
+void main(){ vec4 t = texture2D(map, gl_PointCoord); if (t.a < 0.5) discard; gl_FragColor = vec4(vC.rgb * t.rgb, vC.a); }`;
+function makePsys(key, additive) {
+  const n = 800, geo = new THREE.BufferGeometry();
+  const pos = new Float32Array(n * 3), pc = new Float32Array(n * 4), size = new Float32Array(n);
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3).setUsage(THREE.DynamicDrawUsage));
+  geo.setAttribute('pc', new THREE.BufferAttribute(pc, 4).setUsage(THREE.DynamicDrawUsage));
+  geo.setAttribute('size', new THREE.BufferAttribute(size, 1).setUsage(THREE.DynamicDrawUsage));
+  const mat = new THREE.ShaderMaterial({ uniforms: { map: { value: TEX[key]() }, scale: { value: 600 } }, vertexShader: PVS, fragmentShader: PFS, transparent: true, depthWrite: false, blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending });
+  const pts = new THREE.Points(geo, mat); pts.frustumCulled = false; pts.renderOrder = 2; scene.add(pts);
+  return { geo, mat, pos, pc, size, parts: [], n };
+}
+const PS = { spark: makePsys('spark', true), dot: makePsys('dot', true), plus: makePsys('plus', false), flake: makePsys('flake', true), dust: makePsys('dot', false) };
+const _c = new THREE.Color();
+// kind — форма, o: n, color, speed, up, life, size, grav, spread (радиус появления), ring (разлёт по кругу), swirl
+function emit(kind, p, o = {}) {
+  const S = PS[kind], n = o.n ?? 8;
+  for (let k = 0; k < n && S.parts.length < S.n; k++) {
+    const a = Math.random() * Math.PI * 2, sp = (o.speed ?? 4) * (0.5 + Math.random() * 0.5), sr = (o.spread ?? 0.3) * Math.random();
+    _c.set(Array.isArray(o.color) ? o.color[k % o.color.length] : o.color ?? 0xffffff);
+    const ringK = o.ring ? 1 : Math.random();
+    S.parts.push({
+      x: p.x + Math.cos(a) * sr, y: p.y + (o.dy ?? 1.2) + (Math.random() - 0.5) * (o.h ?? 0.4), z: p.z + Math.sin(a) * sr,
+      vx: Math.cos(a) * sp * ringK, vy: (o.up ?? 2) * (0.6 + Math.random() * 0.8), vz: Math.sin(a) * sp * ringK,
+      life: (o.life ?? 0.6) * (0.7 + Math.random() * 0.6), max: 0, size: (o.size ?? 0.35) * (0.7 + Math.random() * 0.6),
+      r: _c.r, g: _c.g, b: _c.b, grav: o.grav ?? -6, swirl: o.swirl || 0, cx: p.x, cz: p.z, drag: o.drag ?? 1.5,
+    });
+    S.parts[S.parts.length - 1].max = S.parts[S.parts.length - 1].life;
+  }
+}
+function updateParticles(dt) {
+  const scale = renderer.getPixelRatio() * innerHeight / (2 * Math.tan((camera.fov * Math.PI) / 360));
+  for (const S of Object.values(PS)) {
+    const P2 = S.parts; let w = 0;
+    for (let i = 0; i < P2.length; i++) {
+      const q = P2[i]; q.life -= dt; if (q.life <= 0) continue;
+      const dk = Math.exp(-q.drag * dt);
+      q.vx *= dk; q.vz *= dk; q.vy = q.vy * dk + q.grav * dt;
+      if (q.swirl) { const dx = q.x - q.cx, dz = q.z - q.cz; q.vx += -dz * q.swirl * dt; q.vz += dx * q.swirl * dt; }
+      q.x += q.vx * dt; q.y += q.vy * dt; q.z += q.vz * dt;
+      const k = q.life / q.max;
+      S.pos[w * 3] = q.x; S.pos[w * 3 + 1] = q.y; S.pos[w * 3 + 2] = q.z;
+      S.pc[w * 4] = q.r; S.pc[w * 4 + 1] = q.g; S.pc[w * 4 + 2] = q.b; S.pc[w * 4 + 3] = Math.min(1, k * 2);
+      S.size[w] = q.size * (0.6 + 0.4 * k);
+      P2[w++] = q;
+    }
+    P2.length = w;
+    S.geo.setDrawRange(0, w);
+    if (w) { S.geo.attributes.position.needsUpdate = S.geo.attributes.pc.needsUpdate = S.geo.attributes.size.needsUpdate = true; }
+    S.mat.uniforms.scale.value = scale;
+  }
+}
+// столб света (уровень, телепорт)
+function pillarFx(pos, color, h = 12) {
+  const m = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.6, h, 12, 1, true), new THREE.MeshBasicMaterial({ color, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+  m.position.copy(pos).add(new THREE.Vector3(0, h / 2, 0)); scene.add(m);
+  fx.push({ m, life: 1.2, max: 1.2, pillar: true });
+}
 function ringFx(pos, radius, color) {
   const m = new THREE.Mesh(new THREE.RingGeometry(radius * 0.8, radius, 40).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color, transparent: true, side: THREE.DoubleSide }));
   m.position.copy(pos).add(new THREE.Vector3(0, 0.3, 0)); scene.add(m);
@@ -149,9 +224,10 @@ function slashFx(pos, crit) {
 }
 const bolts = [];
 function boltFx(from, target, color, onHit) {
-  const m = new THREE.Mesh(new THREE.SphereGeometry(0.35, 8, 6), new THREE.MeshBasicMaterial({ color }));
+  const m = new THREE.Sprite(new THREE.SpriteMaterial({ map: TEX.orb(), color, blending: THREE.AdditiveBlending, depthWrite: false }));
+  m.scale.setScalar(1.1);
   m.position.copy(from).add(new THREE.Vector3(0, 1.6, 0)); scene.add(m);
-  bolts.push({ m, target, onHit });
+  bolts.push({ m, target, onHit, color });
 }
 function floatText(pos, text, color = '#fff', big = false) {
   const el = document.createElement('div');
@@ -162,7 +238,7 @@ function floatText(pos, text, color = '#fff', big = false) {
 function updateFx(dt) {
   for (let i = fx.length - 1; i >= 0; i--) {
     const f = fx[i]; f.life -= dt; const k = 1 - f.life / f.max;
-    if (f.m) { f.m.material.opacity = 1 - k; if (f.grow) f.m.scale.setScalar(1 + k * 1.5); }
+    if (f.m) { f.m.material.opacity = f.pillar ? (1 - k) * 0.3 : 1 - k; if (f.grow) f.m.scale.setScalar(1 + k * 1.5); if (f.pillar) f.m.scale.set(1 - k * 0.7, 1 + k * 0.3, 1 - k * 0.7); }
     if (f.el && f.follow) { const o = f.follow.position, p = toScreen(_v.copy(o).setY(o.y + 3.6)); f.el.style.transform = `translate(${p.x | 0}px,${p.y | 0}px) translate(-50%,-100%)`; f.el.style.display = p.vis && f.follow.visible !== false ? '' : 'none'; f.el.style.opacity = String(Math.min(1, f.life)); }
     else if (f.el) { f.pos.y += dt * 1.6; const p = toScreen(f.pos); f.el.style.transform = `translate(${p.x}px,${p.y}px) translate(-50%,-50%)`; f.el.style.opacity = String(1 - k * k); f.el.style.display = p.vis ? '' : 'none'; }
     if (f.life <= 0) { if (f.m) { scene.remove(f.m); f.m.geometry.dispose(); } f.el?.remove(); fx.splice(i, 1); }
@@ -170,9 +246,34 @@ function updateFx(dt) {
   for (let i = bolts.length - 1; i >= 0; i--) {
     const b = bolts[i], tp = b.target.obj.position.clone().add(new THREE.Vector3(0, 1.2, 0));
     const d = tp.clone().sub(b.m.position), L = d.length();
-    if (L < 0.8 || b.target.dead) { scene.remove(b.m); bolts.splice(i, 1); if (!b.target.dead) b.onHit(); continue; }
+    if (L < 0.8 || b.target.dead) { scene.remove(b.m); b.m.material.dispose(); bolts.splice(i, 1); if (!b.target.dead) { b.onHit(); emit('spark', b.target.obj.position, { n: 14, color: [b.color, 0xffffff], speed: 7, up: 3, life: 0.45 }); } continue; }
     b.m.position.addScaledVector(d.normalize(), Math.min(L, dt * 45));
+    b.m.material.rotation += dt * 8;
+    emit('dot', b.m.position, { n: 2, color: [b.color, 0xffe0a0], speed: 0.6, up: 0.5, life: 0.35, size: 0.3, dy: 0, grav: 0, spread: 0.1 });
   }
+}
+
+// окружение: пыль из-под ног, факелы и туман в катакомбах, фонтаны и врата в городах, рябь воды
+let stepT = 0;
+const torches = [];
+for (let i = 0; i < DUNGEON.n; i++) for (let j = 0; j < DUNGEON.n; j++) if ((i + j) % 3 === 0) torches.push(new THREE.Vector3(DUNGEON.x0 + (i + 0.5) * DUNGEON.cell, 7.3, DUNGEON.z0 + (j + 0.5) * DUNGEON.cell - DUNGEON.cell / 2 + 1.2));
+const water = scene.getObjectByName('water');
+function ambientFx(dt) {
+  const hp = hero.position, inCrypt = hp.x > DUNGEON.x0 - 100;
+  stepT -= dt;
+  if (heroSt.moving && stepT <= 0 && !inCrypt) { stepT = 0.22; emit('dust', hp, { n: 2, color: zoneAt(hp.x, hp.z).town ? 0xb0a890 : 0x9a8a6a, speed: 0.8, up: 0.8, life: 0.5, size: 0.35, grav: -1, dy: 0.1, spread: 0.3, h: 0 }); }
+  if (inCrypt) {
+    for (const tp of torches) if (Math.abs(tp.x - hp.x) < 45 && Math.abs(tp.z - hp.z) < 45 && Math.random() < dt * 14) emit('dot', tp, { n: 1, color: [0xff8a20, 0xffd040, 0xff4010], speed: 0.3, up: 1.6, life: 0.5, size: 0.4, grav: 1, dy: 0.4, spread: 0.2, h: 0 });
+    if (Math.random() < dt * 6) emit('dust', hp, { n: 1, color: 0x6a6070, speed: 0.2, up: 0.1, life: 3, size: 0.2, grav: 0, dy: 2, spread: 14, h: 4 });
+  } else {
+    for (const t of TOWNS) {
+      if (Math.hypot(t.x - hp.x, t.z - hp.z) > 90) continue;
+      const y = heightAt(t.x, t.z);
+      if (Math.random() < dt * 20) emit('dot', { x: t.x, y: y + 4.4, z: t.z }, { n: 1, color: [0x9ad0ff, 0xffffff], speed: 1.8, up: 3, life: 0.9, size: 0.3, grav: -7, dy: 0, spread: 0.2, h: 0 });
+      if (Math.random() < dt * 8) emit('dot', { x: t.x + 18, y, z: t.z + 16 }, { n: 1, color: [0xa080ff, 0xd0c0ff], speed: 0.2, up: 2, life: 1.5, size: 0.35, grav: 0.3, dy: 0.3, spread: 2.6, swirl: 2, h: 0 });
+    }
+  }
+  if (water?.material.map) water.material.map.offset.x += dt * 0.02;
 }
 
 // ================= Лог и сообщения =================
@@ -209,6 +310,8 @@ function levelColor(lv) {
 function hitMob(m, dmg, crit, color) {
   if (m.dead) return;
   m.hp -= dmg;
+  m.flash = 0.12; m.st.hitT = 1;
+  emit('spark', m.obj.position, { n: crit ? 16 : 6, color: crit ? [0xffd040, 0xffffff] : [0xffffff, 0xffc080], speed: crit ? 8 : 5, up: 3, life: 0.4, size: crit ? 0.5 : 0.35, dy: 1.2 * (m.def.size || 1) });
   floatText(m.obj.position, crit ? `${dmg}!` : String(dmg), color || (crit ? '#ffd040' : '#ffffff'), crit);
   if (m.state !== 'chase') { m.state = 'chase'; m.target = 'hero'; }
   if (m.hp <= 0) killMob(m);
@@ -216,7 +319,8 @@ function hitMob(m, dmg, crit, color) {
 function killMob(m) {
   m.dead = true; m.hp = 0; m.state = 'dead';
   m.respawnAt = performance.now() + (m.def.respawn || 25) * 1000;
-  m.obj.rotation.z = Math.PI / 2; m.obj.position.y += 0.3;
+  m.dieT = 0;
+  emit('dust', m.obj.position, { n: 18, color: [0x8a8070, 0xb0a890], speed: 3, up: 1, life: 1, size: 0.6, grav: -1, dy: 0.5, spread: 1 });
   // опыт — меньше за слабых
   const diff = m.def.lvl - P.lvl;
   const xp = Math.round(m.def.xp * (diff < -5 ? Math.max(0.1, 1 + (diff + 5) * 0.15) : 1));
@@ -237,7 +341,8 @@ function gainXp(xp) {
     P.xp -= xpToNext(P.lvl); P.lvl++;
     const s = stats(); P.hp = s.maxHp; P.mp = s.maxMp;
     banner(`Новый уровень: ${P.lvl}`); log(`Уровень повышен до ${P.lvl}!`, 'rare');
-    ringFx(hero.position, 4, 0xffe070); flashFx(hero.position, 0xffe070, 2.5);
+    ringFx(hero.position, 4, 0xffe070); pillarFx(hero.position, 0xffe070, 14);
+    emit('spark', hero.position, { n: 60, color: [0xffe070, 0xffffff, 0xffb040], speed: 2, up: 9, life: 1.4, size: 0.4, grav: -2, spread: 1.4, swirl: 3, dy: 0.2, h: 1 });
     for (const id of CLASSES[P.cls].skills) if (SKILLS[id].lvl === P.lvl) log(`Изучено умение: ${SKILLS[id].name}`, 'good');
     renderSkills(); sendLook();
   }
@@ -249,6 +354,8 @@ function heroHit(m) {
   if (Math.random() < THREE.MathUtils.clamp(0.05 + (s.eva - (m.def.lvl + 33)) * 0.01, 0.02, 0.3)) return floatText(hero.position, 'Уклонение', '#a0c0ff');
   const { d } = calcDmg(mobDmg(m), s.pdef, 1, 0.05);
   P.hp -= d;
+  heroSt.hitT = 1;
+  emit('spark', hero.position, { n: 5, color: [0xff4040, 0xffa0a0], speed: 4, up: 2, life: 0.35 });
   floatText(hero.position, String(d), '#ff6060');
   if (P.hp <= 0) die(m);
 }
@@ -256,13 +363,13 @@ function die(m) {
   dead = true; P.hp = 0; attacking = false; cast = null; dest = null;
   const loss = Math.round(xpToNext(P.lvl) * 0.04); P.xp = Math.max(0, P.xp - loss);
   log(`Вас убил ${m.def.name}. Потеряно опыта: ${loss}`, 'bad');
-  hero.rotation.z = Math.PI / 2;
+  heroSt.dieT = 0;
   for (const mm of mobs) if (mm.target === 'hero') { mm.state = 'return'; mm.target = null; }
   $('death').hidden = false;
 }
 function respawn() {
   const t = TOWNS.find((x) => x.id === P.home) || TOWNS[0];
-  dead = false; hero.rotation.z = 0;
+  dead = false; hero.rotation.z = 0; heroSt.dieT = null;
   const s = stats(); P.hp = Math.round(s.maxHp * 0.7); P.mp = Math.round(s.maxMp * 0.7);
   teleportTo(t.x, t.z - 12);
   $('death').hidden = true;
@@ -294,17 +401,22 @@ function applySkill(id, tgt, s) {
     if (!tgt || tgt.dead) return;
     const atk = sk.school === 'm' ? s.matk : s.patk;
     const r = calcDmg(atk, tgt.def.pdef * (sk.school === 'm' ? 0.8 : 1), sk.mul, s.crit + 0.05);
+    if (sk.school !== 'm') slashFx(tgt.obj.position, true);
     if (sk.school === 'm') boltFx(hero.position, tgt, sk.color, () => { hitMob(tgt, r.d, r.crit, '#ffb060'); flashFx(tgt.obj.position, sk.color); });
     else { heroSt.attackT = 1; hitMob(tgt, r.d, r.crit, '#ffb060'); flashFx(tgt.obj.position, sk.color); }
     attacking = true;
   } else if (sk.kind === 'heal') {
     const amt = Math.round(s.maxHp * sk.amount); P.hp = Math.min(s.maxHp, P.hp + amt);
     floatText(hero.position, `+${amt}`, '#60ff90'); ringFx(hero.position, 2.5, sk.color);
+    emit('plus', hero.position, { n: 24, color: [0x60ff90, 0xc0ffd0], speed: 1, up: 3, life: 1.2, size: 0.45, grav: 0.5, spread: 1.2, dy: 0.3, h: 1.5 });
   } else if (sk.kind === 'buff') {
     buffs.push({ stat: sk.stat, mul: sk.mul, until: performance.now() + sk.dur * 1000, name: sk.name });
-    ringFx(hero.position, 3, sk.color); log(`${sk.name}: сила атаки +${Math.round((sk.mul - 1) * 100)}% на ${sk.dur} с`, 'good');
+    ringFx(hero.position, 3, sk.color);
+    emit('spark', hero.position, { n: 30, color: [sk.color, 0xffd0a0], speed: 2, up: 5, life: 0.9, size: 0.35, grav: -3, spread: 1, swirl: 6, dy: 0.2 });
+    log(`${sk.name}: сила атаки +${Math.round((sk.mul - 1) * 100)}% на ${sk.dur} с`, 'good');
   } else if (sk.kind === 'aoe') {
     ringFx(hero.position, sk.radius, sk.color); heroSt.attackT = 1;
+    emit(sk.school === 'm' ? 'flake' : 'spark', hero.position, { n: 70, color: sk.school === 'm' ? [0x80d0ff, 0xffffff] : [0xffd060, 0xffffff], speed: sk.radius * 2.2, up: 1.5, life: 0.6, size: 0.45, grav: -2, drag: 2.5, ring: true, dy: 0.8, spread: 0.5 });
     const atk = sk.school === 'm' ? s.matk : s.patk;
     let n = 0;
     for (const m of mobs) if (!m.dead && flatDist(m.obj.position, hero.position) < sk.radius + m.radius) { const r = calcDmg(atk, m.def.pdef, sk.mul, s.crit); hitMob(m, r.d, r.crit, '#ffe080'); n++; }
@@ -322,8 +434,8 @@ function useItem(id) {
     if (idx >= 0) equipIdx(idx);
   } else if (it.use && !dead) {
     const s = stats();
-    if (it.use === 'hp') { if (!takeItem(id)) return; P.hp = Math.min(s.maxHp, P.hp + it.amount); floatText(hero.position, `+${it.amount}`, '#60ff90'); }
-    if (it.use === 'mp') { if (!takeItem(id)) return; P.mp = Math.min(s.maxMp, P.mp + it.amount); floatText(hero.position, `+${it.amount}`, '#6090ff'); }
+    if (it.use === 'hp') { if (!takeItem(id)) return; P.hp = Math.min(s.maxHp, P.hp + it.amount); floatText(hero.position, `+${it.amount}`, '#60ff90'); emit('plus', hero.position, { n: 10, color: 0xff6070, speed: 0.6, up: 2.5, life: 0.9, grav: 0, spread: 0.8, dy: 0.5, h: 1 }); }
+    if (it.use === 'mp') { if (!takeItem(id)) return; P.mp = Math.min(s.maxMp, P.mp + it.amount); floatText(hero.position, `+${it.amount}`, '#6090ff'); emit('plus', hero.position, { n: 10, color: 0x70a0ff, speed: 0.6, up: 2.5, life: 0.9, grav: 0, spread: 0.8, dy: 0.5, h: 1 }); }
     if (it.use === 'escape') { if (!takeItem(id)) return; log('Свиток возврата: перенос через 3 с…'); cast = { id: 'escape', t: 3, total: 3 }; heroSt.casting = true; }
     if (it.use === 'ench') { enchMode = id; sel = null; $('inv').hidden = false; log(`${it.name}: выберите ${it.ench === 'w' ? 'оружие' : 'броню или украшение'} в инвентаре`); }
   }
@@ -358,11 +470,13 @@ function enchant(ref, force) {
   if (ok) {
     if (ref.slot) P.enc[ref.slot] = cur + 1; else entry.e = cur + 1;
     log(`Усиление удалось: ${it.name} +${cur + 1}`, 'rare'); ringFx(hero.position, 2.2, sc.color); flashFx(hero.position, sc.color, 1.5);
+    emit('spark', hero.position, { n: 40, color: [sc.color, 0xffffff, 0xffe070], speed: 3, up: 6, life: 1, size: 0.4, grav: -4, spread: 0.6, swirl: 5 });
     if (ref.slot) refreshGear();
   } else {
     if (ref.slot) { P.equip[ref.slot] = null; delete P.enc[ref.slot]; refreshGear(); } else P.inv.splice(P.inv.indexOf(entry), 1);
     const n = { d: 2, c: 6, b: 15 }[it.grade] * (cur + 1); addItem('crystal', n);
     log(`Усиление не удалось — ${it.name} +${cur} рассыпается. Получено кристаллов: ${n}`, 'bad'); flashFx(hero.position, 0x606060, 2);
+    emit('dust', hero.position, { n: 30, color: [0x707070, 0x90e0ff], speed: 4, up: 3, life: 1.2, size: 0.5, grav: -5 });
   }
   if (!P.inv.some((e) => e.id === enchMode)) enchMode = null;
   renderInv(); save();
@@ -377,7 +491,8 @@ function teleportTo(x, z) {
   scene.background.copy(inCrypt ? CRYPT_SKY : SKY); scene.fog.color.copy(scene.background);
   scene.fog.near = inCrypt ? 20 : 150; scene.fog.far = inCrypt ? 110 : 620;
   hemi.intensity = inCrypt ? 0.35 : 1.3; sun.intensity = inCrypt ? 0.15 : 2.2;
-  flashFx(hero.position, 0xa080ff, 3);
+  flashFx(hero.position, 0xa080ff, 1.5); pillarFx(hero.position, 0xa080ff, 8);
+  emit('dot', hero.position, { n: 40, color: [0xa080ff, 0xffffff], speed: 1.5, up: 5, life: 1, size: 0.35, grav: -1, spread: 1.3, swirl: 8, dy: 0.1, h: 0.5 });
   save();
 }
 
@@ -441,7 +556,7 @@ function updateRemotes(dt, t) {
     let dr = r.to.r - o.rotation.y; dr = Math.atan2(Math.sin(dr), Math.cos(dr)); o.rotation.y += dr * k;
     r.st.moving = !!(r.a & 1); r.st.casting = !!(r.a & 4);
     r.st.attackT = Math.max(0, r.st.attackT - dt * 3);
-    o.rotation.z = r.a & 8 ? Math.PI / 2 : 0;
+    o.rotation.z += ((r.a & 8 ? Math.PI / 2 : 0) - o.rotation.z) * Math.min(1, dt * 8);
     o.userData.anim(t, r.st);
   }
   if (net.ok && t - net.lastSt > 0.1) {
@@ -682,6 +797,7 @@ function updateHero(dt) {
   // каст
   if (cast) {
     cast.t -= dt;
+    if (Math.random() < dt * 30) { const col = cast.id === 'escape' ? 0xa080ff : SKILLS[cast.id].color; emit('dot', hero.position, { n: 1, color: [col, 0xffffff], speed: 0.4, up: 1.5, life: 0.6, size: 0.3, grav: 0, spread: 0.9, swirl: 5, dy: 0.4, h: 1.2 }); }
     if (cast.t <= 0) {
       const c = cast; cast = null; heroSt.casting = false;
       if (c.id === 'escape') { const t = TOWNS.find((x) => x.id === P.home) || TOWNS[0]; teleportTo(t.x, t.z - 12); }
@@ -748,9 +864,29 @@ function updateMobs(dt, t) {
     const pos = m.obj.position;
     const near = flatDist(pos, hero.position) < 160;
     if (m.dead) {
-      if (now > m.respawnAt) { m.dead = false; m.hp = m.def.hp; m.state = 'idle'; pos.set(m.home.x, heightAt(m.home.x, m.home.z), m.home.z); m.obj.rotation.z = 0; m.obj.visible = true; }
+      if (now > m.respawnAt) {
+        m.dead = false; m.hp = m.def.hp; m.state = 'idle'; pos.set(m.home.x, heightAt(m.home.x, m.home.z), m.home.z); m.obj.rotation.z = 0; m.obj.visible = true; m.spawnT = 0;
+        if (flatDist(pos, hero.position) < 80) emit('dust', pos, { n: 14, color: 0x9a9080, speed: 2, up: 1, life: 0.8, size: 0.6, grav: -1, dy: 0.3, spread: 0.8 });
+      } else if (m.dieT != null && m.dieT < 3) {
+        // падение, затем уход в землю
+        m.dieT += dt;
+        const k = Math.min(1, m.dieT * 3.5);
+        m.obj.rotation.z = (Math.PI / 2) * k * k;
+        if (m.dieT > 1.3) pos.y -= dt * 1.2 * (m.def.size || 1);
+      }
       continue;
     }
+    if (m.spawnT != null && m.spawnT < 1) { m.spawnT += dt * 2; pos.y = heightAt(pos.x, pos.z) - (1 - Math.min(1, m.spawnT)) * 2 * (m.def.size || 1); }
+    // вспышка при попадании
+    if (m.flash > 0 || m.flashOn) {
+      m.flash -= dt;
+      const on = m.flash > 0;
+      if (on !== m.flashOn) {
+        m.flashOn = on;
+        m.obj.traverse((o) => { if (!o.material?.emissive) return; o.material.userData.em ??= o.material.emissive.getHex(); o.material.emissive.setHex(on ? 0xaa2010 : o.material.userData.em); });
+      }
+    }
+    m.st.hitT = Math.max(0, (m.st.hitT || 0) - dt * 5);
     m.obj.visible = near || m.def.boss;
     if (!near) continue; // далёких не симулируем
     m.st.moving = false; m.st.attackT = Math.max(0, m.st.attackT - dt * 3);
@@ -1103,14 +1239,19 @@ function loop() {
   updateHero(dt);
   updateMobs(dt, t);
   updateRemotes(dt, t);
+  heroSt.hitT = Math.max(0, (heroSt.hitT || 0) - dt * 5);
+  if (heroSt.dieT != null) { heroSt.dieT += dt; const k = Math.min(1, heroSt.dieT * 3.5); hero.rotation.z = (Math.PI / 2) * k * k; }
   hero.userData.anim(t, heroSt);
+  ambientFx(dt);
   updateFx(dt);
+  updateParticles(dt);
   marker.material.opacity = Math.max(0, marker.material.opacity - dt * 1.5); marker.visible = marker.material.opacity > 0;
   selRing.visible = !!target && (!target.def || !target.dead);
   if (selRing.visible) { const o = target.obj.position; selRing.position.set(o.x, o.y + 0.15, o.z); selRing.scale.setScalar(target.radius || 1); selRing.material.color.set(target.def ? 0xff5050 : 0x60c0ff); }
   if (bannerT > 0) { bannerT -= dt; if (bannerT <= 0) $('banner').style.opacity = '0'; }
   applyCamInput(dt);
   placeCamera(hero.position, cam.dist);
+  skyDome.position.copy(camera.position);
   sun.position.copy(hero.position).add(new THREE.Vector3(60, 110, 40)); sun.target.position.copy(hero.position);
   updateLabels();
   if (frame % 6 === 0) { renderHud(); drawMap($('minimap'), 0); }
@@ -1118,6 +1259,7 @@ function loop() {
   renderer.render(scene, camera);
 }
 function placeCamera(p, dist) {
+  if (p.x > DUNGEON.x0 - 100) dist = Math.min(dist, 8); // в катакомбах стены близко
   const off = new THREE.Vector3(Math.sin(cam.yaw) * Math.cos(cam.pitch), Math.sin(cam.pitch), Math.cos(cam.yaw) * Math.cos(cam.pitch)).multiplyScalar(dist);
   camera.position.copy(p).add(off).add(new THREE.Vector3(0, 2, 0));
   // камера не уходит под землю

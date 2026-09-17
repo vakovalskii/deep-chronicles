@@ -12,7 +12,9 @@ const SRC = 'tools/models-src', OUT = 'tools/models-out';
 const FIRST = ['warrior_cloth', 'mage_cloth', 'warrior_leather', 'warrior_chain', 'mage_apprentice', 'mage_mystic', 'warrior_bone', 'merchant', 'gatekeeper',
   'house_a', 'house_b', 'tower', 'temple', 'wall', 'fountain', 'portal'];
 // параметры: мелочь — меньше треугольников и текстура поменьше
-const PARAMS = (id) => (/^(sword|staff|shield|bush|rock)/.test(id) ? { dec: 8000, tex: 512 } : { dec: 30000, tex: 1024 });
+const PARAMS = (id) => (/^(sword|staff|shield|bush|rock)/.test(id) ? { dec: 8000, tex: 512 }
+  : /^body_/.test(id) ? { dec: 15000, tex: 1024 } // тело под одеждой — лишние треугольники не нужны
+  : { dec: 30000, tex: 1024 });
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // сеть и туннель иногда рвутся — повторяем

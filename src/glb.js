@@ -3,6 +3,7 @@
 // руки и ноги и вешаем их на те же пивоты, что у процедурного героя (src/models.js).
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { detectRig, skinnedAnim } from './skin.js';
 
 export const MODELS_URL = 'assets/models/';
 // какая модель за каким классом (по имени из CLASSES); нет записи — рисуем процедурную модель, как раньше
@@ -81,8 +82,9 @@ export function pivotOf(key, rig = RIG) {
 
 // Цельный меш → группа из частей на пивотах + anim(t, st), совместимый с процедурным героем.
 export function rigModel(scene, { height = RIG.height } = {}) {
-  let mesh = null;
-  scene.traverse((o) => { if (o.isMesh && !mesh) mesh = o; });
+  let mesh = null, skinned = null;
+  scene.traverse((o) => { if (o.isSkinnedMesh && !skinned) skinned = o; else if (o.isMesh && !mesh) mesh = o; });
+  if (skinned) return rigSkinned(scene, skinned, height); // есть кости — работаем с ними
   if (!mesh) return null;
 
   const geo = mesh.geometry.clone();
@@ -138,6 +140,29 @@ export function rigModel(scene, { height = RIG.height } = {}) {
     if (torso) torso.position.y = st.moving ? Math.abs(Math.sin(t * 9)) * 0.05 : Math.sin(t * 1.6) * 0.015;
     if (hasSkirt && legL) legL.rotation.x = legR.rotation.x = 0;
   };
+  return g;
+}
+
+// Модель с костями: ставим на пол, приводим к росту и вешаем анимацию по скелету.
+function rigSkinned(scene, skinned, height) {
+  const g = new THREE.Group();
+  g.add(scene);
+  scene.updateMatrixWorld(true);
+  const bb = new THREE.Box3().setFromObject(scene);
+  const k = height / Math.max(1e-6, bb.max.y - bb.min.y);
+  scene.scale.multiplyScalar(k);
+  scene.updateMatrixWorld(true);
+  const bb2 = new THREE.Box3().setFromObject(scene);
+  scene.position.sub(new THREE.Vector3((bb2.max.x + bb2.min.x) / 2, bb2.min.y, (bb2.max.z + bb2.min.z) / 2));
+  scene.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.frustumCulled = false; } });
+
+  const rig = detectRig(skinned.skeleton, scene);
+  g.userData.skinned = true;
+  g.userData.rig = rig;
+  // кисти — сюда вешается оружие и щит; частей-нарезки здесь нет
+  g.userData.parts = rig ? { armR: rig.handR, armL: rig.handL, head: rig.head } : {};
+  g.userData.handY = { armR: 0, armL: 0 };
+  g.userData.anim = rig ? skinnedAnim(rig) : () => {};
   return g;
 }
 

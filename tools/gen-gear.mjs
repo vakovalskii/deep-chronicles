@@ -6,12 +6,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import sharp from 'sharp';
+import { drawImage, KEY } from './ai.mjs';
 import { ITEMS } from '../src/data.js';
 import { POSE, BASE } from './gen-body.mjs';
 
-const env = fs.existsSync('.env') ? Object.fromEntries(fs.readFileSync('.env', 'utf8').split('\n').filter((l) => l.includes('=')).map((l) => l.split(/=(.*)/s).slice(0, 2))) : {};
-const KEY = process.env.OPENROUTER_API_KEY || env.OPENROUTER_API_KEY;
-const MODEL = process.env.IMG_MODEL || 'google/gemini-3.1-flash-image';
 const OUT = 'tools/models-src';
 
 // Тело-носитель: одно и то же описание во всех промптах одежды — чтобы вещи были одного размера и посадки.
@@ -64,17 +62,9 @@ export function gearPrompts() {
 }
 
 async function generate(id, prompt) {
-  const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json', 'X-Title': 'Realms' },
-    body: JSON.stringify({ model: MODEL, modalities: ['image', 'text'], image_config: { aspect_ratio: '1:1' }, messages: [{ role: 'user', content: prompt }] }),
-  });
-  const j = await res.json();
-  if (!res.ok) throw new Error(`${res.status} ${JSON.stringify(j).slice(0, 160)}`);
-  const url = j.choices?.[0]?.message?.images?.[0]?.image_url?.url;
-  if (!url) throw new Error('нет изображения');
-  await sharp(Buffer.from(url.split(',')[1], 'base64')).resize(1024, 1024, { fit: 'contain', background: '#fff' }).png().toFile(path.join(OUT, id + '.png'));
-  return j.usage?.cost || 0;
+  const { png, cost } = await drawImage(prompt);
+  await sharp(png).resize(1024, 1024, { fit: 'contain', background: '#fff' }).png().toFile(path.join(OUT, id + '.png'));
+  return cost;
 }
 
 if (process.argv[1].endsWith('gen-gear.mjs')) {

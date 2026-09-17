@@ -41,6 +41,10 @@
   figure button { margin-top:6px; padding:4px 10px; border:1px solid var(--line); border-radius:6px; background:none; color:var(--dim); font:inherit; cursor:pointer; }
   figure button:hover { color:var(--acc); border-color:var(--acc); }
   .hidden { display:none !important; }
+  .mini { padding:5px 10px; border:1px solid var(--line); border-radius:6px; background:none; color:var(--text); font:inherit; cursor:pointer }
+  .mini:hover { border-color:var(--acc); color:var(--acc) }
+  .kf { padding:3px 8px; border:1px solid var(--line); border-radius:5px; background:#0d0f14; color:var(--dim); font-size:11px; cursor:pointer }
+  .kf[aria-current="true"] { border-color:var(--acc); color:var(--acc) }
 </style>
 </head>
 <body>
@@ -48,6 +52,7 @@
   <b>Студия</b>
   <button class="tab" id="tab-models" aria-selected="true">Модели</button>
   <button class="tab" id="tab-icons" aria-selected="false">Иконки</button>
+  <button class="tab" id="tab-anims" aria-selected="false">Анимации</button>
   <span id="msg"></span>
   <button class="tab" id="bones" aria-selected="false">Скелет</button>
   <button id="save" disabled>Сохранить</button>
@@ -81,6 +86,37 @@
       <div class="row"><label>Z</label><input type="range" id="s-z" min="-1" max="1" step="0.01"><output></output></div>
       <div class="row"><label>Мсш</label><input type="range" id="s-s" min="0.2" max="2" step="0.02"><output></output></div>
     </section>
+    <section id="map-box">
+      <h3>Разметка костей</h3>
+      <div id="sel" style="margin-bottom:6px">кость не выбрана — кликните по шарику</div>
+      <div class="row"><select id="role" style="flex:1;padding:5px;border:1px solid var(--line);border-radius:6px;background:#0d0f14;color:var(--text);font:inherit"></select></div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">
+        <button id="role-set" class="mini">Назначить</button>
+        <button id="role-clear" class="mini">Снять роль</button>
+        <button id="map-auto" class="mini">Автоматически</button>
+      </div>
+      <div id="map-list" style="margin-top:8px;font-size:11px;color:var(--dim);line-height:1.7"></div>
+    </section>
+    <section id="clip-box">
+      <h3>Клип анимации</h3>
+      <div class="row"><select id="clip-name" style="flex:1;padding:5px;border:1px solid var(--line);border-radius:6px;background:#0d0f14;color:var(--text);font:inherit">
+        <option value="idle">покой</option><option value="walk" selected>ходьба</option><option value="run">бег</option>
+        <option value="attack">удар</option><option value="cast">каст</option><option value="death">смерть</option></select></div>
+      <div class="row"><label style="width:96px">Кадр</label><input type="range" id="clip-t" min="0" max="1" step="0.001" value="0"><output>0</output></div>
+      <div id="frames" style="display:flex;flex-wrap:wrap;gap:4px;margin:8px 0"></div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <button id="key-add" class="mini">+ кадр</button>
+        <button id="key-del" class="mini">− кадр</button>
+        <button id="clip-play" class="mini">▶ играть</button>
+        <button id="clip-clear" class="mini">очистить</button>
+      </div>
+      <div id="sel" style="margin-top:8px;color:var(--dim)">кость не выбрана — кликните по шарику сустава</div>
+    </section>
+    <section id="gait-box">
+      <h3>Походка</h3>
+      <div id="gait"></div>
+      <button id="gait-reset" style="margin-top:8px;padding:5px 12px;border:1px solid var(--line);border-radius:7px;background:none;color:var(--dim);font:inherit;cursor:pointer">Сбросить</button>
+    </section>
     <section>
       <h3>Проверка</h3>
       <div class="row"><label>Шаг</label><input type="range" id="p-walk" min="0" max="1" step="1" value="0"><output></output></div>
@@ -97,6 +133,8 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { rigModel } from '/src/glb.js';
+import { GAIT, skinnedAnim as skinnedAnimOf, poseAt } from '/src/skin.js';
+import { TransformControls } from 'three/addons/controls/TransformControls.js';
 
 const $ = (id) => document.getElementById(id);
 const view = $('view');
@@ -110,13 +148,17 @@ scene.background = new THREE.Color(0x14161c);
 const camera = new THREE.PerspectiveCamera(35, 1, 0.05, 200);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
-scene.add(new THREE.HemisphereLight(0xffffff, 0x555a6a, 3.4));
-const sun = new THREE.DirectionalLight(0xffffff, 2.6); sun.position.set(2.5, 4, 2.5); scene.add(sun);
-const fill = new THREE.DirectionalLight(0xc8d4ff, 1.1); fill.position.set(-3, 2, -2); scene.add(fill);
-const rim = new THREE.DirectionalLight(0xffffff, 0.8); rim.position.set(0, 1.5, -4); scene.add(rim);
+scene.add(new THREE.AmbientLight(0xffffff, 1.6));
+scene.add(new THREE.HemisphereLight(0xffffff, 0x6a7080, 2.6));
+const sun = new THREE.DirectionalLight(0xffffff, 3.2); sun.position.set(3, 5, 3); scene.add(sun);
+const fill = new THREE.DirectionalLight(0xd0dcff, 1.6); fill.position.set(-3, 2, -2); scene.add(fill);
+const rim = new THREE.DirectionalLight(0xffffff, 1.2); rim.position.set(0, 2, -4); scene.add(rim);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.25;
 const grid = new THREE.GridHelper(8, 32, 0x50556a, 0x2a2e3a); grid.material.transparent = true; grid.material.opacity = .5; scene.add(grid);
 
 const root = new THREE.Group(); scene.add(root);
+const animRoot = new THREE.Group(); animRoot.visible = false; scene.add(animRoot);
 const loader = new GLTFLoader();
 
 // заглушки оружия и щита — той же формы, что в игре
@@ -137,6 +179,24 @@ let state = null, rigData = {}, models = [], icons = [], cur = null, dirty = fal
 const weapon = makeWeapon(), shield = makeShield();
 const SHOW_PROPS = new URLSearchParams(location.search).has('props'); // заглушки оружия — только по ?props
 
+const ROLES = {
+  hips: 'таз', spine: 'позвоночник', chest: 'грудь', neck: 'шея', head: 'голова',
+  shoulderL: 'плечо левое', shoulderR: 'плечо правое', elbowL: 'локоть левый', elbowR: 'локоть правый',
+  handL: 'кисть левая', handR: 'кисть правая',
+  hipL: 'бедро левое', hipR: 'бедро правое', kneeL: 'колено левое', kneeR: 'колено правое',
+  footL: 'стопа левая', footR: 'стопа правая',
+};
+const ROLE_COLOR = { hips: 0xffffff, spine: 0xffd040, chest: 0xc0c0c0, neck: 0xa0a0a0, head: 0x60ff90,
+  shoulderL: 0x60c0ff, shoulderR: 0x60c0ff, elbowL: 0x40a0ff, elbowR: 0x40a0ff, handL: 0xff60ff, handR: 0xff60ff,
+  hipL: 0xffa040, hipR: 0xffa040, kneeL: 0xff7020, kneeR: 0xff7020, footL: 0xff4040, footR: 0xff4040 };
+
+const GAIT_UI = {
+  speed: ['Частота шага', 2, 16, 0.1], hip: ['Мах бедром', 0, 1, 0.01], knee: ['Сгиб колена', 0, 1.6, 0.01],
+  ankle: ['Доворот стопы', 0, 1, 0.01], shoulder: ['Мах рукой', 0, 1.2, 0.01], elbow: ['Подгиб локтя', 0, 1.2, 0.01],
+  elbowSwing: ['Локоть в шаге', 0, 1.2, 0.01], sway: ['Доворот таза', 0, 0.5, 0.01], chest: ['Противоход груди', 0, 0.5, 0.01],
+  bob: ['Приседание', 0, 0.05, 0.001], lean: ['Наклон вперёд', 0, 0.4, 0.01], idle: ['Дыхание', 0.5, 4, 0.1], attack: ['Размах удара', 0, 3, 0.01],
+};
+
 const DEF = { height: 2.4, ry: 0, weapon: { x: 0, y: -0.7, z: 0.1, rx: 0, ry: 0, rz: 0, s: 1 }, shield: { x: -0.16, y: -0.45, z: 0.05, s: 1 } };
 const clone = (o) => JSON.parse(JSON.stringify(o));
 
@@ -148,10 +208,13 @@ async function showModel(id, btn) {
   state = Object.assign(clone(DEF), rigData[id] ? clone(rigData[id]) : {});
   state.weapon = Object.assign(clone(DEF.weapon), state.weapon || {});
   state.shield = Object.assign(clone(DEF.shield), state.shield || {});
+  state.gait = Object.assign({ ...GAIT }, state.gait || {});
+  state.bones = state.bones || {};
+  buildGait();
   root.clear();
   $('info').textContent = 'загрузка…';
   const gltf = await loader.loadAsync(`/public/assets/models/${id}.glb`);
-  const rigged = rigModel(gltf.scene, { height: state.height });
+  const rigged = rigModel(gltf.scene, { height: state.height, bones: state.bones });
   root.add(rigged);
   const parts = rigged.userData.parts;
   if (SHOW_PROPS) { if (parts.armR) parts.armR.add(weapon); if (parts.armL) parts.armL.add(shield); }
@@ -167,16 +230,12 @@ async function showModel(id, btn) {
     const sk = new THREE.SkeletonHelper(rigged);
     sk.material.linewidth = 2;
     helper.add(sk);
-    const rig = rigged.userData.rig || {};
-    const COLORS = { hips: 0xffffff, spine: 0xffd040, head: 0x60ff90, shoulderL: 0x60c0ff, shoulderR: 0x60c0ff,
-      elbowL: 0x40a0ff, elbowR: 0x40a0ff, handL: 0xff60ff, handR: 0xff60ff, hipL: 0xffa040, hipR: 0xffa040,
-      kneeL: 0xff7020, kneeR: 0xff7020, footL: 0xff4040, footR: 0xff4040 };
-    for (const [key, bone] of Object.entries(rig)) {
-      if (!bone?.isBone) continue;
-      const m = new THREE.Mesh(new THREE.SphereGeometry(0.035, 10, 8), new THREE.MeshBasicMaterial({ color: COLORS[key] || 0x888888, depthTest: false }));
+    for (const bone of skinned.skeleton.bones) {
+      const m = new THREE.Mesh(new THREE.SphereGeometry(0.03, 10, 8), new THREE.MeshBasicMaterial({ color: 0x777f95, depthTest: false }));
       m.userData.bone = bone; m.renderOrder = 10;
       helper.add(m);
     }
+    paintRoles();
     helper.visible = showBones;
     root.add(helper);
   }
@@ -186,7 +245,7 @@ async function showModel(id, btn) {
   controls.target.set(0, state.height / 2, 0);
   camera.position.set(dist * .5, state.height * .6, dist * .8);
   controls.update();
-  syncInputs(); apply();
+  syncInputs(); apply(); curFrame = -1; drawFrames();
 }
 
 const INPUTS = {
@@ -197,6 +256,35 @@ const INPUTS = {
 };
 const get = (p) => p.reduce((o, k) => o[k], state);
 const set = (p, v) => { const last = p.pop(); p.reduce((o, k) => o[k], state)[last] = v; };
+
+// ползунки походки строятся по самому набору параметров — добавил параметр в skin.js, он появился здесь
+function buildGait() {
+  const box = document.getElementById('gait');
+  if (box.dataset.ready) return void syncGait();
+  box.dataset.ready = '1';
+  box.innerHTML = Object.entries(GAIT_UI).map(([k, [name, min, max, step]]) =>
+    `<div class="row" title="${k}"><label style="width:96px">${name}</label><input type="range" data-g="${k}" min="${min}" max="${max}" step="${step}"><output></output></div>`).join('');
+  box.addEventListener('input', (e) => {
+    const k = e.target.dataset.g; if (!k) return;
+    state.gait[k] = Number(e.target.value);
+    e.target.nextElementSibling.value = Number(e.target.value).toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
+    rebuildAnim(); setDirty(true);
+  });
+  syncGait();
+}
+function syncGait() {
+  for (const el of document.querySelectorAll('#gait input')) {
+    const v = state.gait[el.dataset.g];
+    el.value = v;
+    el.nextElementSibling.value = String(+Number(v).toFixed(3));
+  }
+}
+// параметры меняются — пересобираем функцию анимации, модель не перезагружаем
+function rebuildAnim() {
+  const r = root.userData.rigged;
+  if (r?.userData.rig) r.userData.anim = skinnedAnimOf(r.userData.rig, state.gait);
+}
+document.getElementById('gait-reset').onclick = () => { state.gait = { ...GAIT }; syncGait(); rebuildAnim(); setDirty(true); };
 
 function syncInputs() {
   for (const [el, p] of Object.entries(INPUTS)) {
@@ -232,6 +320,7 @@ for (const el of ['p-walk', 'p-atk']) $(el).addEventListener('input', (e) => { e
 $('save').onclick = async () => {
   rigData[cur] = clone(state);
   const r = await fetch('/api/rig', { method: 'POST', body: JSON.stringify(rigData) });
+  await fetch('/api/clips', { method: 'POST', body: JSON.stringify(clips) });
   setDirty(false);
   $('msg').textContent = r.ok ? `сохранено: ${cur}` : 'не сохранилось';
   setTimeout(() => ($('msg').textContent = ''), 3000);
@@ -240,6 +329,15 @@ $('save').onclick = async () => {
 // --- иконки ---
 const iconsEl = document.createElement('div'); iconsEl.id = 'icons'; iconsEl.className = 'hidden';
 document.querySelector('main').append(iconsEl);
+
+// панель списка анимаций
+const animPanel = document.createElement('div');
+animPanel.id = 'anim-panel'; animPanel.className = 'hidden';
+animPanel.style.cssText = 'width:280px;flex:none;border-left:1px solid var(--line);background:var(--panel);padding:14px;overflow-y:auto';
+animPanel.innerHTML = '<h3 style="margin:0 0 4px;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--dim)">Анимации · CC0 Quaternius</h3>'
+  + '<select id="anim-who" style="width:100%;margin-bottom:8px;padding:5px;border:1px solid var(--line);border-radius:6px;background:#0d0f14;color:var(--text);font:inherit"></select>'
+  + '<div id="anim-cur" style="margin-bottom:10px;color:var(--acc)">—</div><div id="anim-list" style="display:flex;flex-wrap:wrap;gap:5px"></div>';
+document.querySelector('main').append(animPanel);
 
 function drawIcons() {
   iconsEl.innerHTML = icons.map((id) =>
@@ -256,23 +354,201 @@ iconsEl.addEventListener('click', async (e) => {
   setTimeout(() => { e.target.textContent = 'Перерисовать'; e.target.disabled = false; }, 1500);
 });
 
+// --- редактор клипов: ставим позу, снимаем кадр, между кадрами всё считается само ---
+let clips = {}, clipName = 'walk', playing = false, selBone = null, curFrame = -1;
+const gizmo = new TransformControls(camera, renderer.domElement);
+gizmo.setMode('rotate'); gizmo.setSize(0.6);
+gizmo.addEventListener('dragging-changed', (e) => { controls.enabled = !e.value; });
+gizmo.addEventListener('objectChange', () => { if (curFrame >= 0) saveFrame(curFrame); });
+scene.add(gizmo.getHelper ? gizmo.getHelper() : gizmo);
+
+const clipKey = () => `${cur}|${clipName}`;
+const curClip = () => (clips[cur] ||= {})[clipName] ||= { dur: 1, frames: [] };
+const rigBones = () => { const r = root.userData.rigged?.userData.rig || {}; return Object.entries(r).filter(([, b]) => b?.isBone); };
+
+function saveFrame(i) {
+  const f = curClip().frames[i];
+  if (!f) return;
+  f.pose = Object.fromEntries(rigBones().map(([k, b]) => [k, b.quaternion.toArray().map((v) => +v.toFixed(4))]));
+  const hips = root.userData.rigged?.userData.rig?.hips;
+  if (hips) f.y = +hips.position.y.toFixed(4);
+}
+
+function applyFrame(i) {
+  const f = curClip().frames[i];
+  if (!f) return;
+  const rig = root.userData.rigged?.userData.rig || {};
+  for (const [k, q] of Object.entries(f.pose || {})) rig[k]?.quaternion.fromArray(q);
+  if (f.y !== undefined && rig.hips) rig.hips.position.y = f.y;
+}
+
+function drawFrames() {
+  const c = curClip();
+  document.getElementById('frames').innerHTML = c.frames.map((f, i) =>
+    `<button class="kf" data-i="${i}" aria-current="${i === curFrame}">${f.t.toFixed(2)}</button>`).join('') || '<span style="color:var(--dim)">кадров нет</span>';
+}
+document.getElementById('frames').addEventListener('click', (e) => {
+  const i = e.target.dataset?.i; if (i === undefined) return;
+  curFrame = +i; playing = false;
+  document.getElementById('clip-t').value = curClip().frames[curFrame].t;
+  applyFrame(curFrame); drawFrames();
+});
+document.getElementById('key-add').onclick = () => {
+  const c = curClip(), t = Number(document.getElementById('clip-t').value);
+  const f = { t, pose: {} };
+  c.frames.push(f);
+  c.frames.sort((a, b) => a.t - b.t);
+  curFrame = c.frames.indexOf(f);
+  saveFrame(curFrame); drawFrames(); setDirty(true);
+};
+document.getElementById('key-del').onclick = () => {
+  const c = curClip();
+  if (curFrame < 0) return;
+  c.frames.splice(curFrame, 1); curFrame = -1; drawFrames(); setDirty(true);
+};
+document.getElementById('clip-clear').onclick = () => { curClip().frames = []; curFrame = -1; drawFrames(); setDirty(true); };
+document.getElementById('clip-play').onclick = (e) => { playing = !playing; e.target.textContent = playing ? '■ стоп' : '▶ играть'; };
+document.getElementById('clip-name').onchange = (e) => { clipName = e.target.value; curFrame = -1; drawFrames(); };
+document.getElementById('clip-t').addEventListener('input', (e) => {
+  e.target.nextElementSibling.value = Number(e.target.value).toFixed(2);
+  if (!playing) { const p = poseAt(curClip(), Number(e.target.value)); if (p) applyPose(p); }
+});
+
+function applyPose(pose) {
+  const rig = root.userData.rigged?.userData.rig || {};
+  for (const [k, q] of Object.entries(pose.pose || {})) rig[k]?.quaternion.fromArray(q);
+  if (pose.y !== undefined && rig.hips) rig.hips.position.y = pose.y;
+}
+
+// выбор кости мышкой по шарику сустава
+renderer.domElement.addEventListener('pointerdown', (e) => {
+  if (!helper?.visible || gizmo.dragging) return;
+  const r = renderer.domElement.getBoundingClientRect();
+  const ray = new THREE.Raycaster();
+  ray.setFromCamera(new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1), camera);
+  const hit = ray.intersectObjects(helper.children.filter((c) => c.userData.bone), false)[0];
+  if (!hit) return;
+  selBone = hit.object.userData.bone;
+  gizmo.attach(selBone);
+  const rig = root.userData.rigged?.userData.rig || {};
+  const role = Object.entries(rig).find(([, b]) => b === selBone)?.[0];
+  document.getElementById('sel').innerHTML = `<b>${selBone.name}</b> — ${role ? ROLES[role] : 'роль не назначена'}`;
+  if (role) document.getElementById('role').value = role;
+});
+
+// какая кость какой сустав: сперва ручная разметка из rig.json, иначе автоматика
+function boneMap() { return (state.bones ||= {}); }
+
+function paintRoles() {
+  const rig = root.userData.rigged?.userData.rig || {};
+  const byBone = new Map();
+  for (const [role, bone] of Object.entries(rig)) if (bone?.isBone) byBone.set(bone, role);
+  for (const m of helper?.children || []) {
+    const b = m.userData.bone;
+    if (!b || !m.material) continue;
+    const role = byBone.get(b);
+    m.material.color.setHex(role ? (ROLE_COLOR[role] ?? 0x888888) : 0x777f95);
+    m.scale.setScalar(role ? 1.25 : 0.8);
+  }
+  const map = boneMap();
+  document.getElementById('map-list').innerHTML = Object.entries(ROLES).map(([k, name]) => {
+    const b = rig[k];
+    const manual = map[k] ? ' ✎' : '';
+    return `${name}: <b style="color:${b ? 'var(--text)' : 'var(--dim)'}">${b?.name || '—'}</b>${manual}`;
+  }).join('<br>');
+}
+
+document.getElementById('role').innerHTML = Object.entries(ROLES).map(([k, n]) => `<option value="${k}">${n}</option>`).join('');
+document.getElementById('role-set').onclick = () => {
+  if (!selBone) return;
+  boneMap()[document.getElementById('role').value] = selBone.name;
+  applyBoneMap(); setDirty(true);
+};
+document.getElementById('role-clear').onclick = () => {
+  delete boneMap()[document.getElementById('role').value];
+  applyBoneMap(); setDirty(true);
+};
+document.getElementById('map-auto').onclick = () => { state.bones = {}; applyBoneMap(); setDirty(true); };
+
+// перестраиваем модель с учётом ручной разметки
+function applyBoneMap() {
+  const btn = $('list').querySelector('[aria-current="true"]');
+  showModel(cur, btn);
+}
+
+// --- библиотека готовых анимаций (Quaternius, CC0) ---
+let animMixer = null, animActions = {}, animLoaded = null, animLib = null;
+
+async function loadAnims(modelFile) {
+  const want = modelFile || '/public/assets/anims/AnimationLibrary_Godot_Standard.gltf';
+  if (animLoaded === want) return;
+  animLoaded = want;
+  animRoot.clear();
+  const gltf = await loader.loadAsync(want);
+  const model = gltf.scene;
+  model.traverse((o) => { if (o.isMesh) { o.frustumCulled = false; o.material.side = THREE.DoubleSide; } });
+  animRoot.add(model);
+  animMixer = new THREE.AnimationMixer(model);
+  animActions = {};
+  // клипы всегда берём из библиотеки: скелет у наших моделей тот же самый
+  const libClips = animLib || (animLib = (await loader.loadAsync('/public/assets/anims/AnimationLibrary_Godot_Standard.gltf')).animations);
+  for (const clip of libClips) animActions[clip.name] = animMixer.clipAction(clip);
+  // кем проигрывать: манекен библиотеки или наша модель на том же скелете
+  const who = document.getElementById('anim-who');
+  if (!who.dataset.ready) {
+    who.dataset.ready = '1';
+    who.innerHTML = '<option value="">манекен библиотеки</option>'
+      + models.filter((m) => /_rig$/.test(m)).map((m) => `<option value="/public/assets/models/${m}.glb">${m}</option>`).join('');
+    who.onchange = () => { const cur = document.getElementById('anim-cur').textContent; loadAnims(who.value || null).then(() => playAnim(cur !== '—' ? cur : 'Walk_Loop')); };
+  }
+  const box = document.getElementById('anim-list');
+  // набор для персонажа: то, что реально нужно магу в игре
+  const NEED = [['Idle_Loop', 'стоит'], ['Walk_Loop', 'идёт'], ['Jog_Fwd_Loop', 'бежит'], ['Sprint_Loop', 'спринт'],
+    ['Spell_Simple_Idle_Loop', 'готовит магию'], ['Spell_Simple_Shoot', 'кастует'], ['Sword_Attack', 'бьёт оружием'],
+    ['Punch_Jab', 'бьёт рукой'], ['Hit_Chest', 'получает урон'], ['Death01', 'умирает'],
+    ['Sitting_Idle_Loop', 'сидит'], ['Sitting_Enter', 'садится'], ['Sitting_Exit', 'встаёт'],
+    ['Jump_Start', 'прыгает'], ['Dance_Loop', 'танцует']];
+  const have = new Set(libClips.map((c) => c.name));
+  box.innerHTML = '<div style="width:100%;color:var(--dim);margin:2px 0 4px">Для персонажа</div>'
+    + NEED.filter(([n]) => have.has(n)).map(([n, ru]) => `<button class="mini" data-a="${n}" title="${n}">${ru}</button>`).join('')
+    + '<div style="width:100%;color:var(--dim);margin:10px 0 4px">Все клипы библиотеки</div>'
+    + libClips.map((c) => `<button class="mini" data-a="${c.name}" style="font-size:11px">${c.name}</button>`).join('');
+  box.addEventListener('click', (e) => {
+    const n = e.target.dataset?.a; if (!n) return;
+    for (const b of box.children) b.setAttribute('aria-selected', String(b === e.target));
+    playAnim(n);
+  });
+  playAnim('Walk_Loop');
+}
+function playAnim(name) {
+  for (const a of Object.values(animActions)) a.fadeOut(0.25);
+  const a = animActions[name];
+  if (!a) return;
+  a.reset().fadeIn(0.25).play();
+  document.getElementById('anim-cur').textContent = name;
+}
+
 function tab(which) {
-  const m = which === 'models';
-  $('tab-models').setAttribute('aria-selected', String(m));
-  $('tab-icons').setAttribute('aria-selected', String(!m));
-  $('view').classList.toggle('hidden', !m);
-  $('ctl').classList.toggle('hidden', !m);
-  $('list').classList.toggle('hidden', !m);
-  iconsEl.classList.toggle('hidden', m);
-  if (!m && !iconsEl.innerHTML) drawIcons();
+  for (const [id, key] of [['tab-models', 'models'], ['tab-icons', 'icons'], ['tab-anims', 'anims']]) $(id).setAttribute('aria-selected', String(which === key));
+  const inScene = which !== 'icons';
+  $('view').classList.toggle('hidden', !inScene);
+  $('ctl').classList.toggle('hidden', which !== 'models');
+  $('list').classList.toggle('hidden', which !== 'models');
+  iconsEl.classList.toggle('hidden', which !== 'icons');
+  animPanel.classList.toggle('hidden', which !== 'anims');
+  root.visible = which === 'models';
+  animRoot.visible = which === 'anims';
+  if (which === 'icons' && !iconsEl.innerHTML) drawIcons();
+  if (which === 'anims') { loadAnims(); controls.target.set(0, 1, 0); camera.position.set(2.2, 1.6, 2.8); controls.update(); }
   resize();
 }
 $('bones').onclick = (e) => { showBones = !showBones; e.target.setAttribute('aria-selected', String(showBones)); if (helper) helper.visible = showBones; };
 $('tab-models').onclick = () => tab('models');
 $('tab-icons').onclick = () => tab('icons');
+$('tab-anims').onclick = () => tab('anims');
 
 const data = await (await fetch('/api/list')).json();
-models = data.models; icons = data.icons; rigData = data.rig || {};
+models = data.models; icons = data.icons; rigData = data.rig || {}; clips = data.clips || {};
 $('list').innerHTML = '';
 for (const m of models) {
   const b = document.createElement('button');
@@ -289,11 +565,20 @@ function resize() {
 addEventListener('resize', resize); resize();
 
 const clock = new THREE.Clock();
+const mixClock = new THREE.Clock();
 renderer.setAnimationLoop(() => {
   const t = clock.getElapsedTime();
   const r = root.userData.rigged;
-  if (r?.userData.anim) r.userData.anim(t, { moving: $('p-walk').value === '1', attackT: Number($('p-atk').value) });
+  const c = clips[cur]?.[clipName];
+  if (playing && c?.frames?.length > 1) {
+    const tt = (t % c.dur) / c.dur;
+    $('clip-t').value = tt; $('clip-t').nextElementSibling.value = tt.toFixed(2);
+    const p = poseAt(c, tt); if (p) applyPose(p);
+  } else if (!c?.frames?.length && r?.userData.anim) {
+    r.userData.anim(t, { moving: $('p-walk').value === '1', attackT: Number($('p-atk').value) });
+  }
   if (helper?.visible) for (const m of helper.children) if (m.userData.bone) m.userData.bone.getWorldPosition(m.position);
+  if (animMixer && animRoot.visible) animMixer.update(mixClock.getDelta());
   controls.update();
   renderer.render(scene, camera);
 });

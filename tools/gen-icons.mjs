@@ -7,11 +7,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import sharp from 'sharp';
+import { drawImage, KEY } from './ai.mjs';
 import { SKILLS, ITEMS, SHOP } from '../src/data.js';
 
-const env = fs.existsSync('.env') ? Object.fromEntries(fs.readFileSync('.env', 'utf8').split('\n').filter((l) => l.includes('=')).map((l) => l.split(/=(.*)/s).slice(0, 2))) : {};
-const KEY = process.env.OPENROUTER_API_KEY || env.OPENROUTER_API_KEY;
-const MODEL = process.env.IMG_MODEL || 'google/gemini-3.1-flash-image';
 const OUT = 'public/assets/icons';
 const SIZE = 256;
 
@@ -80,17 +78,9 @@ async function cutWhite(buf) {
 }
 
 async function generate(id, art) {
-  const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json', 'X-Title': 'Realms' },
-    body: JSON.stringify({ model: MODEL, modalities: ['image', 'text'], image_config: { aspect_ratio: '1:1' }, messages: [{ role: 'user', content: BASE + art }] }),
-  });
-  const j = await res.json();
-  if (!res.ok) throw new Error(`${res.status} ${JSON.stringify(j).slice(0, 160)}`);
-  const url = j.choices?.[0]?.message?.images?.[0]?.image_url?.url;
-  if (!url) throw new Error('нет изображения');
-  fs.writeFileSync(path.join(OUT, id + '.png'), await cutWhite(Buffer.from(url.split(',')[1], 'base64')));
-  return j.usage?.cost || 0;
+  const { png, cost } = await drawImage(BASE + art);
+  fs.writeFileSync(path.join(OUT, id + '.png'), await cutWhite(png));
+  return cost;
 }
 
 const list = (dir) => fs.readdirSync(dir).filter((f) => f.endsWith('.png')).map((f) => f.slice(0, -4)).sort();

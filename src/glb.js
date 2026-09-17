@@ -81,10 +81,10 @@ export function pivotOf(key, rig = RIG) {
 }
 
 // Цельный меш → группа из частей на пивотах + anim(t, st), совместимый с процедурным героем.
-export function rigModel(scene, { height = RIG.height } = {}) {
+export function rigModel(scene, { height = RIG.height, gait, bones } = {}) {
   let mesh = null, skinned = null;
   scene.traverse((o) => { if (o.isSkinnedMesh && !skinned) skinned = o; else if (o.isMesh && !mesh) mesh = o; });
-  if (skinned) return rigSkinned(scene, skinned, height); // есть кости — работаем с ними
+  if (skinned) return rigSkinned(scene, skinned, height, gait, bones); // есть кости — работаем с ними
   if (!mesh) return null;
 
   const geo = mesh.geometry.clone();
@@ -144,7 +144,7 @@ export function rigModel(scene, { height = RIG.height } = {}) {
 }
 
 // Модель с костями: ставим на пол, приводим к росту и вешаем анимацию по скелету.
-function rigSkinned(scene, skinned, height) {
+function rigSkinned(scene, skinned, height, gait, bones) {
   const g = new THREE.Group();
   g.add(scene);
   scene.updateMatrixWorld(true);
@@ -156,13 +156,13 @@ function rigSkinned(scene, skinned, height) {
   scene.position.sub(new THREE.Vector3((bb2.max.x + bb2.min.x) / 2, bb2.min.y, (bb2.max.z + bb2.min.z) / 2));
   scene.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.frustumCulled = false; } });
 
-  const rig = detectRig(skinned.skeleton, scene);
+  const rig = detectRig(skinned.skeleton, scene, bones);
   g.userData.skinned = true;
   g.userData.rig = rig;
   // кисти — сюда вешается оружие и щит; частей-нарезки здесь нет
   g.userData.parts = rig ? { armR: rig.handR, armL: rig.handL, head: rig.head } : {};
   g.userData.handY = { armR: 0, armL: 0 };
-  g.userData.anim = rig ? skinnedAnim(rig) : () => {};
+  g.userData.anim = rig ? skinnedAnim(rig, gait) : () => {};
   return g;
 }
 
@@ -176,7 +176,7 @@ export async function applyModel(group, id, { base = MODELS_URL, height = RIG.he
   try {
     const [scene, over] = await Promise.all([loadModel(id, base), rigOverrides(base.replace('models/', ''))]);
     const rig = over[id] || {};
-    const rigged = rigModel(scene.clone(true), { height: rig.height || height });
+    const rigged = rigModel(scene.clone(true), { height: rig.height || height, gait: rig.gait, bones: rig.bones });
     if (!rigged) return false;
     for (const child of own) child.visible = false;
     group.add(rigged);

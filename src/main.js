@@ -454,6 +454,18 @@ function clickMark(p) { marker.position.copy(p).add(new THREE.Vector3(0, 0.2, 0)
 const selRing = new THREE.Mesh(new THREE.RingGeometry(1, 1.2, 32).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xff5050, transparent: true, opacity: 0.8 }));
 scene.add(selRing);
 
+// Кнопки меню (ПК и телефон)
+function menuClick(e) {
+  const b = e.target.closest('[data-act]'); if (!b || !P) return;
+  const a = b.dataset.act;
+  if (a === 'attack') { if (target?.def && !target.dead) { attacking = true; dest = null; } else nextTarget(); }
+  if (a === 'next') nextTarget();
+  if (a === 'inv') toggle('inv');
+  if (a === 'map') toggle('bigmap');
+  if (a === 'cam') { cam.yaw = hero.rotation.y + Math.PI; cam.pitch = 0.55; cam.dist = 18; }
+  if (a === 'fs') (document.documentElement.requestFullscreen?.() || Promise.reject()).catch(() => log('На iPhone: «Поделиться» → «На экран Домой» — игра откроется на весь экран'));
+}
+$('menu').addEventListener('click', menuClick);
 // ================= Телефон: джойстик и кнопки =================
 const joy = { x: 0, y: 0 };
 if (MOBILE) {
@@ -469,16 +481,7 @@ if (MOBILE) {
   const end = (e) => { if (e.pointerId !== jid) return; jid = null; joy.x = joy.y = 0; knob.style.transform = ''; };
   pad.addEventListener('pointerup', end); pad.addEventListener('pointercancel', end);
   $('fsbtn').onclick = () => (document.documentElement.requestFullscreen?.() || Promise.reject()).catch(() => log('На iPhone: «Поделиться» → «На экран Домой» — игра откроется на весь экран'));
-  $('mbtns').addEventListener('click', (e) => {
-    const b = e.target.closest('[data-act]'); if (!b || !P) return;
-    const a = b.dataset.act;
-    if (a === 'attack') { if (target?.def && !target.dead) { attacking = true; dest = null; } else nextTarget(); }
-    if (a === 'next') nextTarget();
-    if (a === 'inv') toggle('inv');
-    if (a === 'map') toggle('bigmap');
-    if (a === 'cam') { cam.yaw = hero.rotation.y + Math.PI; cam.pitch = 0.55; cam.dist = 18; }
-    if (a === 'fs') (document.documentElement.requestFullscreen?.() || Promise.reject()).catch(() => log('На iPhone: «Поделиться» → «На экран Домой» — игра откроется на весь экран'));
-  });
+  $('mbtns').addEventListener('click', menuClick);
   // Safari: не масштабировать страницу
   for (const ev of ['gesturestart', 'gesturechange']) document.addEventListener(ev, (e) => e.preventDefault(), { passive: false });
   document.addEventListener('dblclick', (e) => e.preventDefault(), { passive: false });

@@ -113,6 +113,16 @@ try {
     await page.keyboard.press('Escape');
   });
 
+  await step('кнопки меню на ПК: инвентарь и карта без клавиатуры', async () => {
+    await page.click('#menu [data-act=inv]');
+    expect(await page.isVisible('#inv'), 'инвентарь не открылся кнопкой');
+    await page.click('#menu [data-act=inv]');
+    expect(!(await page.isVisible('#inv')), 'инвентарь не закрылся кнопкой');
+    await page.click('#menu [data-act=map]');
+    expect(await page.isVisible('#bigmap'), 'карта не открылась кнопкой');
+    await page.keyboard.press('Escape');
+  });
+
   await step('смерть и возрождение в городе', async () => {
     await G(() => { const g = window.__g; g.P.hp = 1; const m = g.mobs.find((x) => x.def.aggro && !x.dead && x.home.x < 2000); g.teleportTo(m.obj.position.x + 2, m.obj.position.z); });
     await page.waitForFunction(() => window.__g.dead, null, { timeout: 20000 });

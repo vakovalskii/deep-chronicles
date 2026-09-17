@@ -89,6 +89,10 @@
 
   /* ===== телефон ===== */
   #joy,#mbtns,#fsbtn{display:none}
+  #menu{position:fixed;right:12px;top:232px;display:none;flex-direction:column;gap:4px;z-index:4}
+  .ingame-root:not(.mob) #menu{display:flex}
+  #menu button{min-width:120px;text-align:left;font-size:12px;padding:5px 9px}
+  #menu kbd{float:right;opacity:.55;margin-left:10px;font:inherit}
   .mob #fsbtn{display:block;width:100%;margin-top:3px;padding:2px;font-size:10px}
   .mob body{touch-action:none;overscroll-behavior:none;-webkit-user-select:none;user-select:none}
   .mob input{font-size:16px;-webkit-user-select:text;user-select:text}
@@ -140,6 +144,7 @@
 <div id="skills" class="panel"></div>
 <div id="log" class="panel"></div>
 <div id="joy"><i></i></div>
+<div id="menu"><button data-act="inv">Инвентарь <kbd>I</kbd></button><button data-act="map">Карта <kbd>M</kbd></button><button data-act="cam">Сброс камеры <kbd>V</kbd></button></div>
 <div id="mbtns"><button class="big" data-act="attack">Атака</button><button data-act="next">Цель</button><button data-act="inv">Вещи</button><button data-act="map">Карта</button><button data-act="cam">Камера</button></div>
 <div id="rotate">Поверни телефон горизонтально</div>
 

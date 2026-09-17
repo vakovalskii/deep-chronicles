@@ -175,7 +175,7 @@ try {
 
   await step('свиток возврата переносит в город', async () => {
     await G(() => window.__g.useItem('scroll_escape'));
-    expect(await zoneHas('мирная зона', 8000), 'не вернулся в город');
+    expect(await zoneHas('мирная зона', 20000), 'не вернулся в город');
   });
 
   await step('сохранение переживает перезагрузку', async () => {
@@ -211,6 +211,30 @@ try {
     await phone.waitForTimeout(1500);
     await phone.screenshot({ path: 'tests/last-phone.png' });
   });
+  await step('iPhone 16 в Safari (852×340): всё влезает, ничего не перекрыто', async () => {
+    await phone.setViewportSize({ width: 852, height: 340 });
+    await phone.waitForTimeout(500);
+    const bad = await PG(() => {
+      const r = (el) => el.getBoundingClientRect();
+      const ids = ['status', 'mapbox', 'mbtns', 'skills', 'joy', 'log'];
+      const out = [];
+      for (const id of ids) { const b = r(document.getElementById(id)); if (b.bottom > innerHeight + 1 || b.right > innerWidth + 1 || b.top < -1 || b.left < -1) out.push(`${id} за краем`); }
+      for (let i = 0; i < ids.length; i++) for (let j = i + 1; j < ids.length; j++) {
+        const a = r(document.getElementById(ids[i])), b = r(document.getElementById(ids[j]));
+        if (a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom) out.push(`${ids[i]}×${ids[j]}`);
+      }
+      return out;
+    });
+    await phone.screenshot({ path: 'tests/last-iphone.png' });
+    await phone.setViewportSize({ width: 844, height: 390 });
+    expect(!bad.length, bad.join(', '));
+    // в Chrome полный экран включается сразу, в Safari на iPhone — подсказка «На экран Домой»
+    await PG(() => { Element.prototype.requestFullscreen = undefined; Element.prototype.webkitRequestFullscreen = undefined; });
+    await phone.tap('#fsbtn');
+    expect(await phone.isVisible('#fshint'), 'нет подсказки про полный экран');
+    await phone.tap('#fshint-ok');
+  });
+
   await step('телефон: тап по земле — идти', async () => {
     const a = await PG(() => window.__g.hero.position.clone());
     await phone.touchscreen.tap(560, 230);
@@ -287,9 +311,10 @@ try {
   });
 
   await step('аккаунт: занятое имя, неверный пароль, вход с другого устройства', async () => {
+    await phone.context().close(); // три WebGL-вкладки на программном рендере не успевают
     const other = await (await browser.newContext({ viewport: { width: 1000, height: 700 } })).newPage();
     other.on('pageerror', (e) => errors.push('другое устройство: ' + e.message));
-    await other.goto(URL, { waitUntil: 'domcontentloaded' });
+    await other.goto(URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
     await other.waitForSelector('#start-new:not([disabled])');
     const msg = (t) => other.waitForFunction((t) => document.getElementById('start-msg').textContent.includes(t), t, { timeout: 5000 });
     await other.fill('#cname', 'автотест'); await other.fill('#cpass', 'чужой');

@@ -80,3 +80,18 @@ test('вход с другого устройства вытесняет пер�
   await a.closed();
   b.ws.close(); await b.closed();
 });
+
+test('личные сообщения: доставка, эхо отправителю, адресат не в сети', async () => {
+  const a = client(); await a.open();
+  a.send({ t: 'login', name: 'Тестер', pass: 'secret1' }); await a.wait('authok');
+  const b = client(); await b.open();
+  b.send({ t: 'register', name: 'Друг', pass: 'secret2', save: char('x') }); await b.wait('authok');
+  a.send({ t: 'pm', to: 'друг', text: 'привет' });
+  const got = await b.wait('pm'), echo = await a.wait('pm');
+  assert.deepEqual([got.from, got.to, got.text], ['Тестер', 'Друг', 'привет']);
+  assert.equal(echo.text, 'привет');
+  await new Promise((r) => setTimeout(r, 450));
+  a.send({ t: 'pm', to: 'Никто', text: 'эй' });
+  assert.match((await a.wait('pmerr')).reason, /не в сети/);
+  a.ws.close(); b.ws.close(); await a.closed(); await b.closed();
+});

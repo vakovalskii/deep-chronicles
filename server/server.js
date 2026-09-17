@@ -83,6 +83,19 @@ wss.on('connection', (ws, req) => {
       const s = JSON.stringify({ t: 'look', id: p.id, name: p.name, look: p.look });
       for (const q of players.values()) if (q.known.has(p.id)) send(q, s);
     }
+    if (m.t === 'pm') {
+      const text = cleanText(m.text);
+      if (!text || Date.now() - (p.lastPm || 0) < 400) return;
+      p.lastPm = Date.now();
+      const key = String(m.to || '').trim().toLowerCase();
+      let q = null;
+      for (const x of players.values()) if (x.key === key) q = x;
+      if (!q) return send(p, { t: 'pmerr', to: String(m.to || '').slice(0, 16), reason: 'не в сети' });
+      const msg = JSON.stringify({ t: 'pm', from: p.name, to: q.name, text });
+      send(q, msg);
+      if (q !== p) send(p, msg);
+      return;
+    }
     if (m.t === 'chat') {
       const ch = CHAT[m.ch] ? m.ch : 'all';
       const text = cleanText(m.text);

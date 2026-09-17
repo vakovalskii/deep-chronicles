@@ -251,6 +251,20 @@ try {
     await phone.waitForFunction(() => document.getElementById('logbox').textContent.includes('Привет из теста'), null, { timeout: 5000 });
     await PG(() => { document.getElementById('chatin').value = '+Продам меч'; document.getElementById('chatsend').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })); });
     await page.waitForFunction(() => [...document.querySelectorAll('#logbox .c-trade')].some((d) => d.textContent.includes('Продам меч')), null, { timeout: 5000 });
+    // личное сообщение: клик по имени подставляет /w, приходит только адресату фиолетовым
+    await page.click('#logbox .c-trade b[data-name="Телефон"]');
+    expect((await page.inputValue('#chatin')) === '/w Телефон ', 'клик по имени не подставил /w');
+    await page.keyboard.type('секрет'); await page.keyboard.press('Enter');
+    await phone.waitForFunction(() => [...document.querySelectorAll('#logbox .c-pm')].some((d) => d.textContent.includes('секрет')), null, { timeout: 5000 });
+    expect(await PG(() => getComputedStyle(document.querySelector('#logbox .c-pm')).color === 'rgb(200, 140, 255)'), 'личное не фиолетовое');
+    await page.waitForFunction(() => document.querySelector('#logbox .c-pm.me')?.textContent.includes('-> Телефон'), null, { timeout: 5000 });
+    await PG(() => { document.getElementById('chatin').value = '/r и тебе'; document.getElementById('chatsend').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })); });
+    await page.waitForFunction(() => [...document.querySelectorAll('#logbox .c-pm')].some((d) => d.textContent.includes('и тебе')), null, { timeout: 5000 });
+    await page.waitForFunction(() => document.querySelector('#chtabs [data-tab=pm] i'), null, { timeout: 3000 });
+    // настройки: системные сообщения выключаются
+    await page.click('#chatgear'); await page.click('#chatset [data-set=sys]');
+    expect(!(await page.isVisible('#syslog')), 'системный чат не выключился');
+    await page.click('#chatset [data-set=sys]'); await page.click('#chatgear');
   });
 
   await step('аккаунт: занятое имя, неверный пароль, вход с другого устройства', async () => {
@@ -265,7 +279,7 @@ try {
     await other.fill('#cpass', 'пароль1'); await other.click('#start-login');
     await other.waitForFunction(() => window.__g?.P, null, { timeout: 8000 });
     expect((await other.evaluate(() => window.__g.P.equip.weapon)) === 'staff_oak', 'на другом устройстве не тот персонаж');
-    await page.waitForFunction(() => document.getElementById('logbox').textContent.includes('другого устройства'), null, { timeout: 5000 });
+    await page.waitForFunction(() => document.getElementById('syslog').textContent.includes('другого устройства'), null, { timeout: 5000 });
     await other.close();
   });
 

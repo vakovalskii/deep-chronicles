@@ -55,16 +55,30 @@
   #chtabs{display:flex;gap:3px;margin-bottom:3px}#chtabs button{padding:1px 8px;font-size:11px;border-radius:3px}#chtabs .on{border-color:var(--gold);color:#fff}
   #logbox{flex:1;overflow-y:auto;min-height:0;-webkit-overflow-scrolling:touch}
   #logbox div{overflow-wrap:anywhere}
-  #logbox[data-tab=sys]>div:not(.c-sys),#logbox[data-tab=trade]>div:not(.c-trade),#logbox[data-tab=near]>div:not(.c-near){display:none}
-  #logbox .c-trade{color:#ff9ad8}#logbox .c-near{color:#d8e0e8}#logbox .c-all b{color:#fff}#logbox .me b{color:var(--gold)}
-  #logbox .c-sys{color:#b8b0a0}
+  #logbox[data-tab=trade]>div:not(.c-trade),#logbox[data-tab=near]>div:not(.c-near),#logbox[data-tab=pm]>div:not(.c-pm),
+  #logbox.no-trade[data-tab=all]>.c-trade,#logbox.no-near[data-tab=all]>.c-near{display:none}
+  /* цвета каналов */
+  #logbox .c-all{color:#f2ece0}#logbox .c-trade{color:#ff9ad8}#logbox .c-near{color:#b8c8d8}#logbox .c-pm{color:#c88cff}
+  #logbox b{cursor:pointer;font-weight:600}#logbox b:hover{text-decoration:underline}
+  #logbox .c-all b{color:#ffcf70}#logbox .me b{color:#9fd8ff}#logbox .c-pm b{color:#e0b0ff}
+  #chtabs button i{font-style:normal;background:#c33;color:#fff;border-radius:7px;padding:0 4px;margin-left:4px;font-size:10px}
+  #chtabs .flash{animation:pmflash .5s 3}@keyframes pmflash{50%{background:#6a3a9a}}
+  #chatgear{margin-left:auto}
+  #chatset{position:absolute;left:0;bottom:100%;margin-bottom:4px;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:8px 10px;display:flex;flex-direction:column;gap:4px;font-size:12px}
+  #chatset[hidden]{display:none}#chatset input[type=range]{width:90px;vertical-align:middle}
+  /* системные сообщения — облачко над чатом, старые гаснут */
+  #syslog{position:fixed;left:12px;bottom:232px;width:400px;max-height:128px;overflow-y:auto;font-size:11px;pointer-events:none;display:flex;flex-direction:column;z-index:3;text-shadow:0 1px 2px #000,0 0 3px #000}
+  body:not(.ingame) #syslog{display:none}#syslog[hidden]{display:none}
+  #syslog div{align-self:flex-start;background:rgba(12,14,20,.62);border-radius:8px;padding:1px 8px;margin-top:2px;color:#d8d0c0;transition:opacity 1.5s}
+  #syslog div.old{opacity:0}
+  #syslog:hover div.old{opacity:.8}
+  #syslog .good{color:#9f9}#syslog .bad{color:#f99}#syslog .loot{color:#adf}#syslog .rare{color:#ffcf50;font-weight:600}
   #chatrow{display:flex;gap:4px;margin-top:3px}
   #chatin{flex:1;min-width:0;background:#0c0c0c;border:1px solid var(--line);color:var(--text);border-radius:3px;padding:4px 6px;font:inherit}
   #chatin:focus{outline:none;border-color:var(--gold)}
   #chatsend,#chatclose{padding:2px 10px}#chatclose{display:none}
   #online{font-size:11px;text-align:center;color:#b8ffb0}
   .bubble{position:absolute;left:0;top:0;max-width:220px;padding:3px 7px;border-radius:6px;background:rgba(10,12,16,.85);border:1px solid var(--line);font-size:12px;white-space:normal;text-align:center;will-change:transform}
-  #logbox .good{color:#9f9} #logbox .bad{color:#f88} #logbox .loot{color:#adf} #logbox .rare{color:#ffcf50;font-weight:600}
   /* окна */
   .win{left:50%;top:50%;transform:translate(-50%,-50%);width:420px;max-height:70vh;padding:10px 12px;display:flex;flex-direction:column;z-index:5}
   .win[hidden]{display:none}
@@ -175,6 +189,9 @@
   .mob #castbar{bottom:calc(84px + env(safe-area-inset-bottom))}
   .mob #log{left:calc(150px + env(safe-area-inset-left));bottom:calc(10px + env(safe-area-inset-bottom));width:min(260px,30vw);height:64px;font-size:10px;padding:3px 6px}
   .mob #log:not(.open) #chtabs,.mob #log:not(.open) #chatrow{display:none}
+  .mob #syslog{left:calc(150px + env(safe-area-inset-left));bottom:calc(80px + env(safe-area-inset-bottom));width:min(300px,34vw);max-height:84px;font-size:10px}
+  .mob #syslog div{padding:0 6px}
+  .mob body:has(#log.open) #syslog{display:none}
   .mob #log.open{left:calc(10px + env(safe-area-inset-left));width:min(460px,60vw);height:auto;max-height:70vh;z-index:9;font-size:12px}
   .mob #log.open #logbox{height:150px;flex:none}
   .mob #chatclose{display:block}
@@ -215,7 +232,15 @@
 <div id="castbar" class="panel bar" hidden><i></i><span></span></div>
 <div id="stats" class="panel"></div>
 <div id="skills" class="panel"></div>
-<div id="log" class="panel"><div id="chtabs"><button data-tab="all" class="on">Все</button><button data-tab="sys">Система</button><button data-tab="trade">Торговля</button><button data-tab="near">Рядом</button></div><div id="logbox" data-tab="all"></div><div id="chatrow"><input id="chatin" maxlength="160" enterkeyhint="send" autocomplete="off" /><button id="chatsend" type="button">&gt;</button><button id="chatclose" type="button">x</button></div></div>
+<div id="syslog"></div>
+<div id="log" class="panel"><div id="chtabs"><button data-tab="all" class="on">Все</button><button data-tab="trade">Торговля</button><button data-tab="near">Рядом</button><button data-tab="pm">Личные</button><button id="chatgear" type="button" title="Настройки чата">Настройки</button></div>
+<div id="chatset" hidden>
+  <label><input type="checkbox" data-set="sys" /> Системные сообщения</label>
+  <label><input type="checkbox" data-set="trade" /> Торговля во «Все»</label>
+  <label><input type="checkbox" data-set="near" /> «Рядом» во «Все»</label>
+  <label><input type="checkbox" data-set="bubbles" /> Реплики над головами</label>
+  <label>Шрифт <input type="range" min="10" max="16" step="1" data-set="size" /></label>
+</div><div id="logbox" data-tab="all"></div><div id="chatrow"><input id="chatin" maxlength="160" enterkeyhint="send" autocomplete="off" /><button id="chatsend" type="button">&gt;</button><button id="chatclose" type="button">x</button></div></div>
 <div id="joy"><i></i></div>
 <div id="menu"><button data-act="char">Персонаж <kbd>C</kbd></button><button data-act="inv">Инвентарь <kbd>I</kbd></button><button data-act="map">Карта <kbd>M</kbd></button><button data-act="cam">Сброс камеры <kbd>V</kbd></button></div>
 <div id="mbtns"><button class="big" data-act="attack">Атака</button><button data-act="next">Цель</button><button data-act="inv">Вещи</button><button data-act="char">Перс.</button><button data-act="map">Карта</button><button data-act="cam">Камера</button></div>

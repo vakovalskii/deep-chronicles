@@ -287,7 +287,10 @@ function ambientFx(dt) {
 // ================= Лог и сообщения =================
 function log(text, cls = '') {
   const el = document.createElement('div'); el.className = `c-sys ${cls}`; el.textContent = text;
-  logAppend(el);
+  const box = $('syslog');
+  box.append(el); while (box.children.length > 60) box.firstChild.remove();
+  box.scrollTop = box.scrollHeight;
+  setTimeout(() => el.classList.add('old'), 9000);
 }
 function logAppend(el) {
   const box = $('logbox'), stick = box.scrollTop + box.clientHeight >= box.scrollHeight - 30;
@@ -578,6 +581,14 @@ function onNet(m) {
   }
   if (m.t === 'leave') { const r = remotes.get(m.id); if (r) { scene.remove(r.obj); remotes.delete(m.id); } }
   if (m.t === 'chat') chatAdd(m);
+  if (m.t === 'pm') {
+    const me = m.from === P?.name;
+    lastPm = me ? m.to : m.from;
+    chatLine('pm', m.from, m.text, { me, to: m.to });
+    if (chatTab === 'pm') setChatTab('pm');
+    if (!me) { $('chtabs').querySelector('[data-tab=pm]').classList.add('flash'); setTimeout(() => $('chtabs').querySelector('[data-tab=pm]')?.classList.remove('flash'), 1500); }
+  }
+  if (m.t === 'pmerr') log(`${m.to}: ${m.reason}`, 'bad');
   if (m.t === 'chatwait') log(`${CH_NAME[m.ch]}: можно писать через ${Math.ceil(m.wait / 1000)} с`, 'bad');
 }
 function updateRemotes(dt, t) {
@@ -599,32 +610,76 @@ function updateRemotes(dt, t) {
     netSend({ t: 'st', x: +p.x.toFixed(2), y: +p.y.toFixed(2), z: +p.z.toFixed(2), r: +hero.rotation.y.toFixed(2), a: (heroSt.moving ? 1 : 0) | (heroSt.attackT > 0 ? 2 : 0) | (heroSt.casting ? 4 : 0) | (dead ? 8 : 0), hp: Math.round((P.hp / stats().maxHp) * 100) });
   }
 }
-// чат: вкладки фильтруют окно, «+текст» — в торговлю
-const CH_NAME = { all: 'Общий', trade: 'Торговля', near: 'Рядом' };
-let chatTab = 'all';
-function chatAdd(m) {
+// чат: вкладки фильтруют окно; «+текст» — торговля, «/w Имя текст» или «"Имя текст» — личное, «/r текст» — ответ
+const CH_NAME = { all: 'Общий', trade: 'Торговля', near: 'Рядом', pm: 'Личные' };
+const CH_TAG = { all: '', trade: '+', near: '', pm: '' };
+let chatTab = 'all', lastPm = null;
+const unread = {};
+const chatSet = (() => { try { return { sys: true, trade: true, near: true, bubbles: true, size: 12, ...JSON.parse(localStorage.getItem('l2w-chat')) }; } catch { return { sys: true, trade: true, near: true, bubbles: true, size: 12 }; } })();
+function applyChatSet() {
+  try { localStorage.setItem('l2w-chat', JSON.stringify(chatSet)); } catch { /* */ }
+  $('syslog').hidden = !chatSet.sys;
+  $('logbox').classList.toggle('no-trade', !chatSet.trade);
+  $('logbox').classList.toggle('no-near', !chatSet.near);
+  $('log').style.fontSize = `${chatSet.size}px`; $('syslog').style.fontSize = `${chatSet.size - 1}px`;
+  for (const el of $('chatset').querySelectorAll('[data-set]')) { const k = el.dataset.set; if (el.type === 'checkbox') el.checked = !!chatSet[k]; else el.value = chatSet[k]; }
+}
+$('chatset').addEventListener('change', (e) => { const el = e.target.closest('[data-set]'); if (!el) return; chatSet[el.dataset.set] = el.type === 'checkbox' ? el.checked : +el.value; applyChatSet(); });
+$('chatgear').addEventListener('click', () => { $('chatset').hidden = !$('chatset').hidden; });
+applyChatSet();
+function chatLine(ch, from, text, { me = false, to = null } = {}) {
   const el = document.createElement('div');
-  el.className = `c-${m.ch}${m.id === net.id ? ' me' : ''}`;
-  const tag = m.ch === 'all' ? '' : m.ch === 'trade' ? '+' : '·';
-  const who = document.createElement('b'); who.textContent = `${tag}${m.from}: `;
-  el.append(who, document.createTextNode(m.text));
+  el.className = `c-${ch}${me ? ' me' : ''}`;
+  const who = document.createElement('b');
+  const peer = to && me ? to : from;
+  who.textContent = ch === 'pm' ? (me ? `-> ${to}: ` : `${from}: `) : `${CH_TAG[ch]}${from}: `;
+  who.dataset.name = peer;
+  el.append(who, document.createTextNode(text));
   logAppend(el);
+  if (ch !== chatTab && ch !== 'all' && !me) { unread[ch] = (unread[ch] || 0) + 1; renderTabs(); }
+}
+function chatAdd(m) {
+  const me = m.id === net.id;
+  chatLine(m.ch, m.from, m.text, { me });
+  if (!chatSet.bubbles) return;
   const r = [...remotes.values()].find((x) => x.name === m.from && x.obj.visible);
-  if (r || m.id === net.id) bubble(m.id === net.id ? hero : r.obj, m.text);
+  if (r || me) bubble(me ? hero : r.obj, m.text);
+}
+function renderTabs() {
+  for (const b of $('chtabs').querySelectorAll('[data-tab]')) {
+    const t = b.dataset.tab;
+    b.classList.toggle('on', t === chatTab);
+    b.textContent = t === 'all' ? 'Все' : CH_NAME[t];
+    if (unread[t]) { const i = document.createElement('i'); i.textContent = unread[t]; b.append(i); }
+  }
 }
 function setChatTab(tab) {
-  chatTab = tab; $('logbox').dataset.tab = tab;
-  for (const b of $('chtabs').children) b.classList.toggle('on', b.dataset.tab === tab);
-  $('chatin').placeholder = `${tab === 'sys' ? 'Общий' : CH_NAME[tab] || 'Общий'}${MOBILE ? '' : ' — Enter, «+» в начале — торговля'}`;
+  chatTab = tab; unread[tab] = 0; $('logbox').dataset.tab = tab;
+  renderTabs();
+  $('chatin').placeholder = tab === 'pm' ? (lastPm ? `Личное для ${lastPm}` : '/w Имя текст') : `${CH_NAME[tab]}${MOBILE ? '' : ' — Enter; «+» торговля, /w Имя — личное'}`;
   $('logbox').scrollTop = 1e9;
 }
 $('chtabs').addEventListener('click', (e) => { const b = e.target.closest('[data-tab]'); if (b) setChatTab(b.dataset.tab); });
+// клик по имени — написать лично
+$('logbox').addEventListener('click', (e) => {
+  const n = e.target.closest('b[data-name]')?.dataset.name;
+  if (!n || n === P?.name) return;
+  $('chatin').value = `/w ${n} `; $('chatin').focus();
+});
+function whisper(to, text) {
+  if (!to || !text) return log('Формат: /w Имя текст', 'bad');
+  netSend({ t: 'pm', to, text });
+}
 function sendChat() {
   let text = $('chatin').value.trim(); $('chatin').value = '';
   if (!text) return;
-  let ch = CH_NAME[chatTab] ? chatTab : 'all';
-  if (text.startsWith('+')) { ch = 'trade'; text = text.slice(1).trim(); }
   if (!net.ok) return log('Нет связи с сервером', 'bad');
+  let mm;
+  if ((mm = text.match(/^\/(?:w|ш|л)\s+(\S+)\s+([\s\S]+)/i)) || (mm = text.match(/^"(\S+)\s+([\s\S]+)/))) return whisper(mm[1], mm[2]);
+  if ((mm = text.match(/^\/(?:r|о)\s+([\s\S]+)/i))) return whisper(lastPm, mm[1]);
+  if (chatTab === 'pm') return lastPm ? whisper(lastPm, text) : log('Кому? Напишите /w Имя текст', 'bad');
+  let ch = CH_NAME[chatTab] && chatTab !== 'pm' ? chatTab : 'all';
+  if (text.startsWith('+')) { ch = 'trade'; text = text.slice(1).trim(); }
   if (text) netSend({ t: 'chat', ch, text });
 }
 $('chatin').addEventListener('keydown', (e) => {

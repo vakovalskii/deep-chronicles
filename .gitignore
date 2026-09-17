@@ -8,3 +8,4 @@ server/data/
 tools/models-src/
 .DS_Store
 tools/models-out/
+!public/assets/models/

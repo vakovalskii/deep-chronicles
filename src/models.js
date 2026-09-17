@@ -1,5 +1,6 @@
 // Процедурные модели: персонаж, мобы, NPC. У каждой модели userData.anim(t, state) — простая анимация.
 import * as THREE from 'three';
+import { applyModel, MODEL_OF } from './glb.js';
 import { TEX } from './tex.js';
 
 const tx = (k) => (k && TEX[k] ? TEX[k]() : null);
@@ -222,7 +223,10 @@ export function buildMob(def) {
 }
 
 export function buildHero(cls) {
-  return humanoid(cls.color, { robe: cls === undefined ? false : cls.name === 'Маг', staff: cls.name === 'Маг', weaponColor: 0xa0a0a0 });
+  const g = humanoid(cls.color, { robe: cls === undefined ? false : cls.name === 'Маг', staff: cls.name === 'Маг', weaponColor: 0xa0a0a0 });
+  // если для класса есть сгенерированная модель — подменим её, когда догрузится (иначе останется процедурная)
+  if (MODEL_OF[cls?.name]) applyModel(g, MODEL_OF[cls.name]);
+  return g;
 }
 
 export function buildNpc(color) {

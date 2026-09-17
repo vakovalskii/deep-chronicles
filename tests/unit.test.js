@@ -1,5 +1,6 @@
 // Юнит-тесты данных и генерации мира: npm run test:unit
 import { test } from 'node:test';
+import { sliceGeometry, pivotOf, RIG } from '../src/glb.js';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { CLASSES, SKILLS, ITEMS, MOBS, SHOP, xpToNext, MAX_LEVEL } from '../src/data.js';
@@ -158,4 +159,28 @@ test('перегруз замедляет', () => {
   P.inv.push({ id: 'bone', n: 1000 });
   assert.ok(weightOf(P) > s0.cap);
   assert.ok(calcStats(P).speed < s0.speed);
+});
+
+// --- нарезка сгенерированных моделей на части (src/glb.js) ---
+test('нарезка меша: треугольники расходятся по частям и ничего не теряется', () => {
+  const rig = { height: 2.4, hip: 0.8, shoulder: 1.6, neck: 1.85, armX: 0.5 };
+  // столбик из треугольников по всей высоте и по бокам — грубая «фигура»
+  const pts = [];
+  const tri = (x, y) => pts.push(x, y, 0, x + 0.05, y, 0, x, y + 0.05, 0);
+  for (let y = 0; y < 2.4; y += 0.1) { tri(0, y); tri(-0.8, y); tri(0.8, y); }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+  const parts = sliceGeometry(geo, rig, false);
+  const sum = Object.values(parts).reduce((s, g) => s + g.attributes.position.count / 3, 0);
+  assert.equal(sum, pts.length / 9, 'треугольники не должны теряться');
+  for (const key of ['head', 'torso', 'armL', 'armR', 'legL', 'legR']) assert.ok(parts[key], 'нет части ' + key);
+  // мантия: ноги не режем, они уходят в корпус
+  const skirt = sliceGeometry(geo, rig, true);
+  assert.ok(!skirt.legL && !skirt.legR, 'у мантии ног быть не должно');
+});
+
+test('пивоты частей совпадают с суставами процедурного героя', () => {
+  assert.deepEqual(pivotOf('head', RIG), [0, RIG.neck, 0]);
+  assert.deepEqual(pivotOf('armR', RIG), [RIG.armX, RIG.shoulder, 0]);
+  assert.deepEqual(pivotOf('torso', RIG), [0, 0, 0]);
 });

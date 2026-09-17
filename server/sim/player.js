@@ -5,16 +5,18 @@ import { calcStats, equipFromBag, unequipSlot, migrate, MAX_ENCH } from '../../s
 import { TOWNS, TELEPORTS, heightAt, zoneAt } from '../../src/world-core.js';
 import { sellPrice, crystalsFor, enchSucceeds, xpLossOnDeath, flatDist, clamp } from '../../src/sim.js';
 
-export const SAVE_VERSION = 2; // всё, что старее, пересоздаётся: прогресс до авторитетного сервера не переносим
+export const SAVE_VERSION = 3; // всё, что старее, пересоздаётся (v2 выдавала новичку оружие 8 уровня, надеть его было нельзя)
 const NPC_RANGE = 8; // на каком расстоянии можно говорить с NPC
 
 export function newChar(name, cls) {
   const c = CLASSES[cls] ? cls : 'warrior';
   const t = TOWNS[0];
   const P = {
-    v: SAVE_VERSION, name, cls: c, lvl: 1, xp: 0, coins: 200, kills: 0, pvp: 0,
-    inv: [{ id: 'potion_hp', n: 5 }, { id: 'potion_mp', n: 5 }, { id: c === 'mage' ? 'staff_oak' : 'sword_long', n: 1 }],
-    equip: {}, enc: {}, home: t.id, x: t.x, z: t.z - 12,
+    v: SAVE_VERSION, name, cls: c, lvl: 1, xp: 0, coins: 150, kills: 0, pvp: 0,
+    inv: [{ id: 'potion_hp', n: 5 }, { id: 'scroll_escape', n: 1 }],
+    // новичковый комплект сразу надет: без оружия первые мобы непроходимы
+    equip: { weapon: c === 'mage' ? 'staff_novice' : 'sword_novice', armor: 'armor_cloth', legs: 'legs_cloth' },
+    enc: {}, home: t.id, x: t.x, z: t.z - 12,
   };
   migrate(P);
   const s = calcStats(P);

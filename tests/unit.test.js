@@ -90,7 +90,7 @@ test('уровни мобов соответствуют зонам', () => {
 
 // ---- экипировка, комплекты, заточка ----
 import { SETS, SLOTS } from '../src/data.js';
-import { calcStats, equipFromBag, unequipSlot, enchValue, migrate, weightOf } from '../src/stats.js';
+import { calcStats, equipFromBag, unequipSlot, enchValue, migrate, weightOf, wearError } from '../src/stats.js';
 const hero = (cls = 'warrior', lvl = 30) => migrate({ cls, lvl, xp: 0, inv: [], equip: { weapon: null, armor: null }, kills: 0 });
 const give = (P, id) => { P.inv.push({ id, n: 1 }); return P.inv.length - 1; };
 
@@ -283,5 +283,24 @@ test('ядро мира не тянет за собой three.js', async () => {
   for (const f of ['sim/player.js', 'sim/mobs.js', 'server.js', 'accounts.js']) {
     const s = fs.readFileSync(new URL('../server/' + f, import.meta.url), 'utf8');
     assert.ok(!/from\s+'three/.test(s) && !/world\.js'/.test(s), `server/${f} тянет рендер`);
+  }
+});
+
+test('новичок начинает в экипировке, которую может носить', async () => {
+  const { newChar } = await import('../server/sim/player.js');
+  for (const cls of ['warrior', 'mage']) {
+    const P = newChar('Новичок', cls);
+    assert.ok(P.equip.weapon, `${cls}: начинает без оружия`);
+    for (const [sl, id] of Object.entries(P.equip)) {
+      if (!id) continue;
+      assert.equal(wearError(P, ITEMS[id]), null, `${cls}: не может носить ${id} в слоте ${sl}`);
+    }
+    // и всё, что лежит в сумке, тоже должно быть применимо сразу
+    for (const e of P.inv) {
+      const it = ITEMS[e.id];
+      assert.ok(it, `${cls}: в сумке несуществующий предмет ${e.id}`);
+      if (it.slot) assert.equal(wearError(P, it), null, `${cls}: стартовую вещь ${e.id} нельзя надеть`);
+    }
+    assert.ok(P.hp > 0 && P.mp > 0 && P.coins > 0, `${cls}: пустые начальные значения`);
   }
 });

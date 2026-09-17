@@ -87,6 +87,49 @@
   .cls .on{border-color:var(--gold);background:linear-gradient(#5a4830,#2a2418)}
   #start .go{width:100%;padding:10px;font-size:15px;margin-top:6px}
 
+
+  /* инвентарь */
+  #inv{width:auto;max-height:88vh}
+  .invwrap{display:flex;gap:12px;overflow:auto}
+  .dollbox{width:176px;flex:none}
+  #doll{display:grid;grid-template-columns:repeat(3,52px);gap:6px;justify-content:center;padding:8px 6px;border:1px solid var(--line);border-radius:6px;
+    background:radial-gradient(ellipse 45% 60% at 50% 55%,rgba(224,192,128,.13),transparent 70%),#0d0c0a}
+  .cell{position:relative;width:44px;height:44px;border:1px solid #3a3326;border-radius:4px;background:linear-gradient(#1c1a15,#100f0c);box-sizing:border-box;cursor:pointer;touch-action:none;user-select:none;-webkit-user-select:none}
+  #doll .cell{width:52px;height:52px}
+  .cell svg{position:absolute;inset:6px;width:calc(100% - 12px);height:calc(100% - 12px);filter:drop-shadow(0 1px 1px #000)}
+  .cell.empty{cursor:default;background:#0c0b09;border-color:#231f18}
+  .cell.empty em{position:absolute;inset:0;display:grid;place-items:center;font-style:normal;font-size:9px;color:#5a5446;text-align:center}
+  .cell.blocked{background:repeating-linear-gradient(45deg,#0c0b09 0 5px,#1a1712 5px 10px)}
+  .cell.g-d{border-color:#4a6a8a}.cell.g-c{border-color:#5a8a5a}.cell.g-b{border-color:#9a6ac0}
+  .cell.rare{box-shadow:0 0 6px rgba(255,200,80,.5)}
+  .cell.sel{outline:2px solid var(--gold);outline-offset:-1px}
+  .cell:not(.empty):hover{border-color:var(--gold)}
+  .cell .en{position:absolute;left:2px;top:0;font-size:10px;color:#ffcf50;text-shadow:0 0 3px #000}
+  .cell .cnt{position:absolute;right:2px;bottom:0;font-size:10px;text-shadow:0 0 3px #000,0 0 2px #000}
+  .cell .gr{position:absolute;right:2px;top:0;font-size:9px;font-weight:700;color:#cfc6b0;text-shadow:0 0 3px #000}
+  .cell.ghost{position:fixed;left:0;top:0;z-index:20;pointer-events:none;opacity:.85}
+  #inv-info{margin-top:8px;min-height:90px;font-size:12px}
+  #inv-info small{display:block;color:var(--dim);font-size:11px;margin-top:2px}
+  #inv-info .nm{color:#fff}#inv-info .nm.rare{color:#ffcf50}
+  #inv-info .set span{color:#6a6456}#inv-info .set span.on{color:#9f9}
+  #inv-info .bad{color:#f88}
+  #inv-info .btns{display:flex;gap:4px;margin-top:6px;flex-wrap:wrap}#inv-info .btns button{padding:4px 8px}
+  #inv-info .ench{color:#ffcf50}
+  .bag{display:flex;flex-direction:column;min-width:0}
+  #inv-grid{display:grid;grid-template-columns:repeat(6,44px);gap:3px;align-content:start;max-height:58vh;overflow-y:auto;padding-right:2px}
+  .wrow{display:flex;align-items:center;gap:8px;margin-top:6px}.wrow .bar{flex:1;margin:0}
+  #inv-coins{color:var(--gold);white-space:nowrap}
+  /* персонаж */
+  #char{width:330px}
+  #char .chead{display:flex;gap:10px;align-items:center;margin-bottom:6px}
+  #char .chead .lv{width:34px;height:34px;border-radius:50%;border:1px solid var(--gold);background:#5a4424;display:grid;place-items:center;font-weight:700;color:var(--gold);font-size:16px}
+  #char .chead small{display:block;color:var(--dim)}
+  #char h4{margin:10px 0 4px;color:var(--gold);font-weight:600;font-size:12px;border-bottom:1px solid var(--line);padding-bottom:2px}
+  #char .st{display:flex;justify-content:space-between;gap:8px;padding:2px 0;font-size:12px}
+  #char .st span{color:var(--dim)}#char .st b{font-weight:600;text-align:right}#char .st b.good{color:#9f9}
+  #char .attrs{display:grid;grid-template-columns:repeat(3,1fr);column-gap:14px}
+  #char .cols{display:grid;grid-template-columns:1fr 1fr;column-gap:14px}
+
   /* ===== телефон ===== */
   #joy,#mbtns,#fsbtn{display:none}
   #menu{position:fixed;right:12px;top:232px;display:none;flex-direction:column;gap:4px;z-index:4}
@@ -100,9 +143,9 @@
   .mob #joy{position:fixed;left:calc(18px + env(safe-area-inset-left));bottom:calc(18px + env(safe-area-inset-bottom));width:120px;height:120px;border-radius:50%;background:rgba(0,0,0,.3);border:1px solid var(--line);touch-action:none;z-index:4}
   .mob #joy i{position:absolute;left:50%;top:50%;width:52px;height:52px;margin:-26px;border-radius:50%;background:rgba(224,192,128,.45);border:1px solid var(--gold)}
   .mob.ingame-root #mbtns{display:grid}
-  .mob #mbtns{position:fixed;right:calc(8px + env(safe-area-inset-right));top:calc(176px + env(safe-area-inset-top));display:none;grid-template-columns:repeat(2,52px);gap:5px;z-index:4}
-  .mob #mbtns button{width:52px;height:36px;padding:0;font-size:11px}
-  .mob #mbtns .big{grid-column:span 2;width:auto;height:44px;background:linear-gradient(#7a2a20,#3a120c);border-color:#e08060;font-size:13px;font-weight:600}
+  .mob #mbtns{position:fixed;right:calc(8px + env(safe-area-inset-right));top:calc(176px + env(safe-area-inset-top));display:none;grid-template-columns:repeat(3,44px);gap:5px;z-index:4}
+  .mob #mbtns button{width:44px;height:36px;padding:0;font-size:10px}
+  .mob #mbtns .big{grid-column:span 3;width:auto;height:44px;background:linear-gradient(#7a2a20,#3a120c);border-color:#e08060;font-size:13px;font-weight:600}
   .mob #status{left:calc(8px + env(safe-area-inset-left));top:calc(8px + env(safe-area-inset-top));width:190px;padding:5px 7px}
   .mob #status .bar{height:12px}.mob #status .bar span{line-height:12px}
   .mob #target{top:calc(8px + env(safe-area-inset-top));width:200px;padding:4px 8px}
@@ -117,6 +160,15 @@
   .mob #log{left:calc(150px + env(safe-area-inset-left));bottom:calc(10px + env(safe-area-inset-bottom));width:min(260px,30vw);height:64px;font-size:10px;padding:3px 6px}
   .mob .win{left:0;top:0;right:0;bottom:0;transform:none;width:auto;max-height:none;border-radius:0;padding:calc(10px + env(safe-area-inset-top)) calc(14px + env(safe-area-inset-right)) 10px calc(14px + env(safe-area-inset-left))}
   .mob .win button{min-height:40px}
+  .mob .win{background:rgba(12,14,20,.96)}
+  .mob #doll{grid-template-columns:repeat(3,44px);gap:4px;padding:5px}
+  .mob #doll .cell{width:44px;height:44px}
+  .mob .dollbox{display:flex;gap:10px;width:auto}
+  .mob #inv-info{width:210px;margin-top:0;overflow-y:auto;max-height:calc(100vh - 80px)}
+  .mob #inv-grid{max-height:calc(100vh - 110px)}
+  .mob #char{width:auto}
+  .mob #char-body{columns:2;column-gap:24px}
+  .mob #char h4{break-after:avoid}
   .mob #bigmap-cv{width:min(80vh,90vw);height:min(80vh,90vw);align-self:center}
   .mob .nlabel{font-size:10px}
   .mob #start .box{width:min(380px,92vw);padding:16px;max-height:92vh;overflow:auto}
@@ -137,20 +189,26 @@
   <div id="buffs"></div>
 </div>
 <div id="target" class="panel" hidden><div id="tname"></div><div id="tlvl"></div><div id="tbar" class="bar"><i></i><span></span></div></div>
-<div id="mapbox" class="panel"><canvas id="minimap" width="180" height="180"></canvas><div id="zone"></div><button id="fsbtn" data-act="fs">На весь экран</button>
-  <div class="btns"><button data-open="bigmap">Карта (M)</button><button data-open="inv">Вещи (I)</button></div></div>
+<div id="mapbox" class="panel"><canvas id="minimap" width="180" height="180"></canvas><div id="zone"></div><button id="fsbtn" data-act="fs">На весь экран</button></div>
 <div id="castbar" class="panel bar" hidden><i></i><span></span></div>
 <div id="stats" class="panel"></div>
 <div id="skills" class="panel"></div>
 <div id="log" class="panel"></div>
 <div id="joy"><i></i></div>
-<div id="menu"><button data-act="inv">Инвентарь <kbd>I</kbd></button><button data-act="map">Карта <kbd>M</kbd></button><button data-act="cam">Сброс камеры <kbd>V</kbd></button></div>
-<div id="mbtns"><button class="big" data-act="attack">Атака</button><button data-act="next">Цель</button><button data-act="inv">Вещи</button><button data-act="map">Карта</button><button data-act="cam">Камера</button></div>
+<div id="menu"><button data-act="char">Персонаж <kbd>C</kbd></button><button data-act="inv">Инвентарь <kbd>I</kbd></button><button data-act="map">Карта <kbd>M</kbd></button><button data-act="cam">Сброс камеры <kbd>V</kbd></button></div>
+<div id="mbtns"><button class="big" data-act="attack">Атака</button><button data-act="next">Цель</button><button data-act="inv">Вещи</button><button data-act="char">Перс.</button><button data-act="map">Карта</button><button data-act="cam">Камера</button></div>
 <div id="rotate">Поверни телефон горизонтально</div>
 
 <div id="inv" class="panel win" hidden>
-  <h3>Инвентарь <button data-close>Закрыть</button></h3>
-  <div class="body"><div id="inv-eq"></div><h3 style="margin-top:10px">Сумка <small id="inv-coins" style="color:var(--gold)"></small></h3><div id="inv-list"></div></div>
+  <h3>Инвентарь <span><button data-open="char">Персонаж (C)</button> <button data-close>Закрыть</button></span></h3>
+  <div class="invwrap">
+    <div class="dollbox"><div id="doll"></div><div id="inv-info"></div></div>
+    <div class="bag"><div id="inv-grid"></div><div class="wrow"><div id="wbar" class="bar"><i></i><span></span></div><span id="inv-coins"></span></div></div>
+  </div>
+</div>
+<div id="char" class="panel win" hidden>
+  <h3>Персонаж <span><button data-open="inv">Инвентарь (I)</button> <button data-close>Закрыть</button></span></h3>
+  <div class="body" id="char-body"></div>
 </div>
 <div id="shop" class="panel win" hidden>
   <h3>Торговец <button data-close>Закрыть</button></h3>

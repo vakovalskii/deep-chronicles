@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { CLASSES, SKILLS, ITEMS, MOBS, SHOP, GRADES, xpToNext, MAX_LEVEL } from './data.js';
+import { CLASSES, SKILLS, ITEMS, MOBS, SHOP, GRADES, SLOTS, SETS, xpToNext, MAX_LEVEL } from './data.js';
+import { calcStats, enchValue, equipFromBag, unequipSlot, wearError, migrate, MAX_ENCH, SAFE_ENCH, ENCH_CHANCE } from './stats.js';
 import { buildWorld, heightAt, zoneAt, obstacles, TOWNS, TELEPORTS, CRYPT, DUNGEON, ZONES, MAP } from './world.js';
 import { buildMob, buildHero, buildNpc } from './models.js';
 
@@ -40,7 +41,8 @@ function newChar(name, clsId) {
   return {
     name, cls: clsId, lvl: 1, xp: 0, coins: 150, hp: cls.base.hp, mp: cls.base.mp,
     inv: [{ id: 'potion_hp', n: 5 }, { id: 'scroll_escape', n: 1 }],
-    equip: { weapon: clsId === 'mage' ? 'staff_novice' : 'sword_novice', armor: 'armor_cloth' },
+    equip: { ...Object.fromEntries(SLOTS.map((s) => [s.id, null])), weapon: clsId === 'mage' ? 'staff_novice' : 'sword_novice', armor: 'armor_cloth', legs: 'legs_cloth' },
+    enc: {}, pvp: 0,
     x: t.x + 5, z: t.z + 30, home: t.id, kills: 0,
   };
 }
@@ -50,26 +52,16 @@ addEventListener('beforeunload', save);
 
 // ================= Характеристики =================
 const buffs = []; // { stat, mul, until }
-function stats() {
-  const c = CLASSES[P.cls], L = P.lvl - 1, w = ITEMS[P.equip.weapon] || {}, a = ITEMS[P.equip.armor] || {};
-  const s = {
-    maxHp: Math.round(c.base.hp + c.grow.hp * L), maxMp: Math.round(c.base.mp + c.grow.mp * L),
-    patk: c.base.patk + c.grow.patk * L + (w.patk || 0), matk: c.base.matk + c.grow.matk * L + (w.matk || 0),
-    pdef: c.base.pdef + c.grow.pdef * L + (a.pdef || 0), mdef: c.base.mdef + c.grow.mdef * L + (a.mdef || 0),
-    aspd: c.base.aspd, speed: c.base.speed, crit: c.base.crit, range: c.range,
-  };
-  const now = performance.now();
-  for (const b of buffs) if (b.until > now) s[b.stat] *= b.mul;
-  return s;
-}
+const stats = () => calcStats(P, buffs, performance.now());
 const invCount = (id) => P.inv.find((i) => i.id === id)?.n || 0;
-function addItem(id, n = 1) {
+function addItem(id, n = 1, ench = 0) {
   const it = ITEMS[id];
   const e = it.stack && P.inv.find((i) => i.id === id);
-  if (e) e.n += n; else for (let k = 0; k < (it.stack ? 1 : n); k++) P.inv.push({ id, n: it.stack ? n : 1 });
+  if (e) e.n += n; else for (let k = 0; k < (it.stack ? 1 : n); k++) P.inv.push(ench ? { id, n: 1, e: ench } : { id, n: it.stack ? n : 1 });
 }
 function takeItem(id, n = 1) {
-  const idx = P.inv.findIndex((i) => i.id === id); if (idx < 0) return false;
+  let idx = P.inv.findIndex((i) => i.id === id && !i.e); if (idx < 0) idx = P.inv.findIndex((i) => i.id === id);
+  if (idx < 0) return false;
   const e = P.inv[idx]; if (e.n < n) return false;
   e.n -= n; if (e.n <= 0) P.inv.splice(idx, 1);
   return true;
@@ -86,9 +78,10 @@ function spawnHero() {
   refreshGear();
 }
 function refreshGear() {
-  const w = ITEMS[P.equip.weapon], a = ITEMS[P.equip.armor];
-  hero.userData.setWeapon(w.color, P.equip.weapon.startsWith('staff'));
-  hero.userData.setBody(a.grade === 'none' ? CLASSES[P.cls].color : a.color);
+  const g = (sl) => ITEMS[P.equip[sl]], w = g('weapon'), a = g('armor');
+  hero.userData.setWeapon(w ? w.color : null, !!w?.twoHand, P.enc.weapon || 0);
+  hero.userData.setBody(a && a.grade !== 'none' ? a.color : CLASSES[P.cls].color, !!a?.robe || (P.cls === 'mage' && !a));
+  hero.userData.setGear({ head: g('head')?.color, legs: g('legs')?.color, gloves: g('gloves')?.color, feet: g('feet')?.color, shield: g('shield')?.color, helmKind: g('head')?.set });
 }
 
 // ================= Мобы =================
@@ -136,6 +129,11 @@ function flashFx(pos, color, size = 1) {
   const m = new THREE.Mesh(new THREE.SphereGeometry(0.6 * size, 10, 8), new THREE.MeshBasicMaterial({ color, transparent: true }));
   m.position.copy(pos).add(new THREE.Vector3(0, 1.4, 0)); scene.add(m);
   fx.push({ m, life: 0.35, max: 0.35, grow: true });
+}
+function slashFx(pos, crit) {
+  const m = new THREE.Mesh(new THREE.RingGeometry(0.9, 1.15, 16, 1, 0, Math.PI * 0.9), new THREE.MeshBasicMaterial({ color: crit ? 0xffd040 : 0xffffff, transparent: true, side: THREE.DoubleSide, depthWrite: false }));
+  m.position.copy(pos).add(new THREE.Vector3(0, 1.3, 0)); m.lookAt(camera.position); m.rotateZ(Math.random() * 6.28); scene.add(m);
+  fx.push({ m, life: 0.25, max: 0.25, grow: true });
 }
 const bolts = [];
 function boltFx(from, target, color, onHit) {
@@ -231,6 +229,7 @@ function gainXp(xp) {
 function heroHit(m) {
   if (dead) return;
   const s = stats();
+  if (Math.random() < THREE.MathUtils.clamp(0.05 + (s.eva - (m.def.lvl + 33)) * 0.01, 0.02, 0.3)) return floatText(hero.position, 'Уклонение', '#a0c0ff');
   const { d } = calcDmg(mobDmg(m), s.pdef, 1, 0.05);
   P.hp -= d;
   floatText(hero.position, String(d), '#ff6060');
@@ -267,7 +266,7 @@ function useSkill(id) {
   }
   if (inTown() && sk.kind !== 'heal' && sk.kind !== 'buff') return log('В городе сражаться нельзя', 'bad');
   P.mp -= sk.mp; cds[id] = performance.now() + sk.cd * 1000;
-  if (sk.cast) { cast = { id, t: sk.cast, target }; heroSt.casting = true; dest = null; return; }
+  if (sk.cast) { cast = { id, t: sk.cast / s.cast, total: sk.cast / s.cast, target }; heroSt.casting = true; dest = null; return; }
   applySkill(id, target, s);
 }
 let pendingSkill = null;
@@ -302,21 +301,54 @@ const inTown = () => !!zoneAt(hero.position.x, hero.position.z).town;
 function useItem(id) {
   const it = ITEMS[id]; if (!it) return;
   if (it.slot) {
-    if (it.lvl && P.lvl < it.lvl) return log(`${it.name}: нужен уровень ${it.lvl}`, 'bad');
-    const cls = P.cls, isStaff = id.startsWith('staff'), isRobe = id.startsWith('robe');
-    if (it.slot === 'weapon' && cls === 'warrior' && isStaff) return log('Воин не владеет посохом', 'bad');
-    if (it.slot === 'armor' && cls === 'warrior' && isRobe) return log('Воин не носит мантии', 'bad');
-    const old = P.equip[it.slot];
-    if (!takeItem(id)) return;
-    P.equip[it.slot] = id; if (old) addItem(old);
-    refreshGear(); log(`Экипировано: ${it.name}`, 'good');
+    let idx = P.inv.findIndex((e) => e.id === id && !e.e); if (idx < 0) idx = P.inv.findIndex((e) => e.id === id);
+    if (idx >= 0) equipIdx(idx);
   } else if (it.use && !dead) {
     const s = stats();
     if (it.use === 'hp') { if (!takeItem(id)) return; P.hp = Math.min(s.maxHp, P.hp + it.amount); floatText(hero.position, `+${it.amount}`, '#60ff90'); }
     if (it.use === 'mp') { if (!takeItem(id)) return; P.mp = Math.min(s.maxMp, P.mp + it.amount); floatText(hero.position, `+${it.amount}`, '#6090ff'); }
-    if (it.use === 'escape') { if (!takeItem(id)) return; log('Свиток возврата: перенос через 3 с…'); cast = { id: 'escape', t: 3 }; heroSt.casting = true; }
+    if (it.use === 'escape') { if (!takeItem(id)) return; log('Свиток возврата: перенос через 3 с…'); cast = { id: 'escape', t: 3, total: 3 }; heroSt.casting = true; }
+    if (it.use === 'ench') { enchMode = id; sel = null; $('inv').hidden = false; log(`${it.name}: выберите ${it.ench === 'w' ? 'оружие' : 'броню или украшение'} в инвентаре`); }
   }
   renderInv();
+}
+function equipIdx(idx, want) {
+  const it = ITEMS[P.inv[idx]?.id];
+  const err = equipFromBag(P, idx, want);
+  if (err) return log(err, 'bad');
+  refreshGear(); log(`Экипировано: ${it.name}`, 'good'); sel = null;
+  renderInv(); save();
+}
+function unequip(sl) {
+  if (!P.equip[sl]) return;
+  const it = ITEMS[P.equip[sl]];
+  unequipSlot(P, sl); refreshGear(); log(`Снято: ${it.name}`); sel = null;
+  renderInv(); save();
+}
+// усиление: ref = { bag: индекс } | { slot: id }
+let enchMode = null;
+function enchant(ref, force) {
+  const sc = ITEMS[enchMode]; if (!sc) return;
+  const entry = ref.slot ? null : P.inv[ref.bag];
+  const id = ref.slot ? P.equip[ref.slot] : entry?.id, it = ITEMS[id];
+  if (!it?.slot) return log('Выберите снаряжение', 'bad');
+  if ((sc.ench === 'w') !== (it.slot === 'weapon')) return log(`${sc.name} не подходит для «${it.name}»`, 'bad');
+  if (it.grade === 'none') return log('Вещь без грейда нельзя усилить', 'bad');
+  const cur = ref.slot ? P.enc[ref.slot] || 0 : entry.e || 0;
+  if (cur >= MAX_ENCH) return log('Максимальное усиление', 'bad');
+  if (!takeItem(enchMode)) { enchMode = null; return; }
+  const ok = force ?? (cur < SAFE_ENCH || Math.random() < ENCH_CHANCE);
+  if (ok) {
+    if (ref.slot) P.enc[ref.slot] = cur + 1; else entry.e = cur + 1;
+    log(`Усиление удалось: ${it.name} +${cur + 1}`, 'rare'); ringFx(hero.position, 2.2, sc.color); flashFx(hero.position, sc.color, 1.5);
+    if (ref.slot) refreshGear();
+  } else {
+    if (ref.slot) { P.equip[ref.slot] = null; delete P.enc[ref.slot]; refreshGear(); } else P.inv.splice(P.inv.indexOf(entry), 1);
+    const n = { d: 2, c: 6, b: 15 }[it.grade] * (cur + 1); addItem('crystal', n);
+    log(`Усиление не удалось — ${it.name} +${cur} рассыпается. Получено кристаллов: ${n}`, 'bad'); flashFx(hero.position, 0x606060, 2);
+  }
+  if (!P.inv.some((e) => e.id === enchMode)) enchMode = null;
+  renderInv(); save();
 }
 
 function teleportTo(x, z) {
@@ -436,10 +468,11 @@ addEventListener('keydown', (e) => {
   if (e.code === 'Digit5') useItem('potion_mp');
   if (e.code === 'KeyV') { cam.yaw = hero.rotation.y + Math.PI; cam.pitch = 0.55; cam.dist = 18; }
   if (e.code === 'KeyI') toggle('inv');
+  if (e.code === 'KeyC') toggle('char');
   if (e.code === 'KeyM') toggle('bigmap');
   if (e.code === 'Tab') { e.preventDefault(); nextTarget(); }
   if (e.code === 'KeyF' && target?.def) { attacking = true; dest = null; }
-  if (e.code === 'Escape') { for (const id of ['inv', 'shop', 'tp', 'bigmap']) $(id).hidden = true; target = null; attacking = false; }
+  if (e.code === 'Escape') { for (const id of ['inv', 'char', 'shop', 'tp', 'bigmap']) $(id).hidden = true; enchMode = null; target = null; attacking = false; }
 });
 addEventListener('keyup', (e) => { keys[e.code] = false; });
 function nextTarget() {
@@ -461,6 +494,7 @@ function menuClick(e) {
   if (a === 'attack') { if (target?.def && !target.dead) { attacking = true; dest = null; } else nextTarget(); }
   if (a === 'next') nextTarget();
   if (a === 'inv') toggle('inv');
+  if (a === 'char') toggle('char');
   if (a === 'map') toggle('bigmap');
   if (a === 'cam') { cam.yaw = hero.rotation.y + Math.PI; cam.pitch = 0.55; cam.dist = 18; }
   if (a === 'fs') (document.documentElement.requestFullscreen?.() || Promise.reject()).catch(() => log('На iPhone: «Поделиться» → «На экран Домой» — игра откроется на весь экран'));
@@ -506,8 +540,8 @@ function updateHero(dt) {
   if (dead) return;
   // регенерация (в городе быстрее)
   const reg = inTown() ? 4 : 1;
-  P.hp = Math.min(s.maxHp, P.hp + s.maxHp * 0.006 * reg * dt);
-  P.mp = Math.min(s.maxMp, P.mp + s.maxMp * 0.012 * reg * dt);
+  P.hp = Math.min(s.maxHp, P.hp + s.maxHp * 0.006 * reg * s.regen * dt);
+  P.mp = Math.min(s.maxMp, P.mp + s.maxMp * 0.012 * reg * s.regen * dt);
   // каст
   if (cast) {
     cast.t -= dt;
@@ -549,7 +583,8 @@ function updateHero(dt) {
           if (atkTimer <= 0) {
             atkTimer = 1 / s.aspd;
             if (P.cls === 'mage') { const r = calcDmg(s.matk * 0.6, target.def.pdef, 1, s.crit); const tg = target; boltFx(hero.position, tg, 0x80a0ff, () => hitMob(tg, r.d, r.crit)); heroSt.attackT = 1; }
-            else { const r = calcDmg(s.patk, target.def.pdef, 1, s.crit); heroSt.attackT = 1; hitMob(target, r.d, r.crit); }
+            else if (Math.random() < THREE.MathUtils.clamp(0.06 + (target.def.lvl + 33 - s.acc) * 0.01, 0.01, 0.3)) { heroSt.attackT = 1; floatText(target.obj.position, 'Промах', '#aaaaaa'); if (target.state !== 'chase') { target.state = 'chase'; target.target = 'hero'; } }
+            else { const r = calcDmg(s.patk, target.def.pdef, 1, s.crit); heroSt.attackT = 1; hitMob(target, r.d, r.crit); slashFx(target.obj.position, r.crit); }
           }
         }
       }
@@ -668,7 +703,7 @@ function renderHud() {
   }
   for (const el of document.querySelectorAll('#skills .slot[data-item]')) el.querySelector('.n').textContent = invCount(el.dataset.item);
   $('castbar').hidden = !cast;
-  if (cast) { const total = cast.id === 'escape' ? 3 : SKILLS[cast.id].cast; $('castbar').firstElementChild.style.width = `${(1 - cast.t / total) * 100}%`; $('castbar').lastElementChild.textContent = cast.id === 'escape' ? 'Свиток возврата' : SKILLS[cast.id].name; }
+  if (cast) { const total = cast.total || 3; $('castbar').firstElementChild.style.width = `${(1 - cast.t / total) * 100}%`; $('castbar').lastElementChild.textContent = cast.id === 'escape' ? 'Свиток возврата' : SKILLS[cast.id].name; }
   $('buffs').innerHTML = buffs.filter((b) => b.until > now).map((b) => `<span>${b.name} ${Math.ceil((b.until - now) / 1000)}с</span>`).join('');
 }
 function renderSkills() {
@@ -680,16 +715,176 @@ $('skills').addEventListener('click', (e) => {
   const s = e.target.closest('.slot'); if (!s) return;
   if (s.dataset.skill) useSkill(s.dataset.skill); else useItem(s.dataset.item);
 });
-const itemDesc = (it) => [it.patk && `физ. атака ${it.patk}`, it.matk && `маг. атака ${it.matk}`, it.pdef && `физ. защ. ${it.pdef}`, it.mdef && `маг. защ. ${it.mdef}`, it.lvl && `с ${it.lvl} ур.`, it.grade && `грейд ${GRADES[it.grade]}`].filter(Boolean).join(' · ');
-const sw = (c) => `<i class="sw" style="background:#${c.toString(16).padStart(6, '0')}"></i>`;
+// ---- иконки предметов (SVG, цвет — цвет предмета) ----
+const ICON = {
+  sword: '<path d="M19 2l3 3-11 11-3-3z"/><path d="M6 12l6 6-2 2-1.5-1.5L5 22l-2-2 3.5-3.5L5 15z"/>',
+  staff: '<circle cx="17" cy="6" r="4"/><path d="M14.5 9l1.8 1.8L5.5 21.6 3.7 19.8z"/>',
+  shield: '<path d="M12 2l8 3v6c0 5-3.5 9-8 11-4.5-2-8-6-8-11V5z"/>',
+  head: '<path d="M4 16c0-6 3.6-10 8-10s8 4 8 10v2h-3v-4h-2v5H9v-5H7v4H4z"/>',
+  hat: '<path d="M12 2l5 10 5 3v2H2v-2l5-3z"/>',
+  armor: '<path d="M8 3l4 2 4-2 5 4-3 3v11H6V10L3 7z"/>',
+  robe: '<path d="M9 2h6l2 6 4 14H3L7 8z"/>',
+  legs: '<path d="M6 3h12l-1 18h-4l-1-10-1 10H7z"/>',
+  gloves: '<path d="M7 21V12L4.5 8.5 6 7.5 9 10V4h2v6h1V3h2v7h1V5h2v10l-2 6z"/>',
+  feet: '<path d="M7 3h6v11l7 3v4H4v-4l3-2z"/>',
+  neck: '<path d="M5 2c0 7 3 11 7 11s7-4 7-11h-2c0 5-2 9-5 9S7 7 7 2z"/><path d="M12 13l4 4-4 5-4-5z"/>',
+  ear: '<circle cx="12" cy="5" r="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 9l4.5 6.5L12 22l-4.5-6.5z"/>',
+  ring: '<circle cx="12" cy="14" r="6.5" fill="none" stroke="currentColor" stroke-width="3"/><path d="M8.5 6L12 2l3.5 4L12 8.5z"/>',
+  potion: '<path d="M10 2h4v5l5 6c1.5 4.5-1.5 9-7 9s-8.5-4.5-7-9l5-6z"/>',
+  scroll: '<path d="M7 2h11a3 3 0 010 6h-2v11a3 3 0 01-3 3H5a3 3 0 010-6h2V5a3 3 0 00-1-3z"/>',
+  loot: '<path d="M12 2l7 7-7 13-7-13z"/>',
+};
+const iconKind = (it) => it.slot === 'weapon' ? (it.twoHand ? 'staff' : 'sword') : it.slot === 'armor' ? (it.robe ? 'robe' : 'armor') : it.slot === 'head' ? (it.set === 'apprentice' || it.set === 'mystic' ? 'hat' : 'head')
+  : it.slot || (it.use === 'hp' || it.use === 'mp' ? 'potion' : it.use ? 'scroll' : 'loot');
+const hex = (c) => '#' + c.toString(16).padStart(6, '0');
+const icon = (it) => `<svg viewBox="0 0 24 24" fill="currentColor" style="color:${hex(it.color)}">${ICON[iconKind(it)]}</svg>`;
+const sw = (c, it) => it ? `<i class="sw ico">${icon(it)}</i>` : `<i class="sw" style="background:${hex(c)}"></i>`;
+const STAT_NAMES = { patk: 'Физ. атака', matk: 'Маг. атака', pdef: 'Физ. защита', mdef: 'Маг. защита', hp: 'Здоровье', mp: 'Мана', crit: 'Крит. шанс', speed: 'Скорость', cast: 'Скорость каста' };
+const fmtBonus = (k, v) => `${STAT_NAMES[k]} ${v > 0 ? '+' : ''}${k === 'crit' || k === 'cast' ? Math.round(v * 100) + '%' : v}`;
+const itemDesc = (it, e = 0) => [it.patk && `физ. атака ${enchValue(it, 'patk', e)}`, it.matk && `маг. атака ${enchValue(it, 'matk', e)}`, it.pdef && `физ. защ. ${enchValue(it, 'pdef', e)}`, it.mdef && `маг. защ. ${enchValue(it, 'mdef', e)}`,
+  it.mp && `мана +${it.mp}`, it.crit && `крит +${Math.round(it.crit * 100)}%`, it.lvl && `с ${it.lvl} ур.`, it.grade && `грейд ${GRADES[it.grade]}`].filter(Boolean).join(' · ');
+const SLOT_NAMES = { weapon: 'оружие', shield: 'щит', head: 'шлем', armor: 'доспех', legs: 'поножи', gloves: 'перчатки', feet: 'сапоги', neck: 'ожерелье', ear: 'серьга', ring: 'кольцо' };
+function cellHtml(it, n, e, attrs, extra = '') {
+  return `<div class="cell g-${it.grade || 'x'} ${it.rare ? 'rare' : ''} ${extra}" ${attrs}>${icon(it)}${e ? `<b class="en">+${e}</b>` : ''}${n > 1 ? `<span class="cnt">${n}</span>` : ''}${it.grade && it.grade !== 'none' ? `<span class="gr">${GRADES[it.grade]}</span>` : ''}</div>`;
+}
+// подсказка по предмету
+function itemInfo(it, e, where) {
+  const lines = [`<b class="nm ${it.rare ? 'rare' : ''}">${e ? `+${e} ` : ''}${it.name}</b>`];
+  if (it.slot) lines.push(`<small>${SLOT_NAMES[it.slot]}${it.twoHand ? ', двуручное' : ''}${it.robe ? ', мантия' : ''}${it.full ? ' (закрывает поножи)' : ''}</small>`);
+  const d = itemDesc(it, e); if (d) lines.push(`<small>${d}</small>`);
+  if (it.use === 'hp' || it.use === 'mp') lines.push(`<small>восстанавливает ${it.amount} ${it.use === 'hp' ? 'здоровья' : 'маны'}</small>`);
+  if (it.use === 'ench') lines.push(`<small>до +${SAFE_ENCH} — без риска, дальше шанс ${Math.round(ENCH_CHANCE * 100)}%, при неудаче вещь рассыпается в кристаллы</small>`);
+  if (it.use === 'escape') lines.push('<small>через 3 с переносит в город возрождения</small>');
+  if (it.loot) lines.push('<small>трофей — продать торговцу</small>');
+  if (it.set) {
+    const st = SETS[it.set], worn = new Set(Object.values(P.equip));
+    lines.push(`<small class="set">${st.name}: ${st.parts.map((x) => `<span class="${worn.has(x) ? 'on' : ''}">${ITEMS[x].name}</span>`).join(', ')}<br>Полный комплект: ${Object.entries(st.bonus).map(([k, v]) => fmtBonus(k, v)).join(', ')}</small>`);
+  }
+  const err = it.slot && where !== 'slot' ? wearError(P, it) : null;
+  if (err && it.slot) lines.push(`<small class="bad">${err}</small>`);
+  lines.push(`<small>вес ${it.w || 0}</small>`);
+  return lines.join('');
+}
+let sel = null; // { bag: i } | { slot: id }
 function renderInv() {
   if (!P) return;
-  $('inv-eq').innerHTML = ['weapon', 'armor'].map((sl) => { const it = ITEMS[P.equip[sl]]; return `<div class="row">${sw(it.color)}<div><b>${it.name}</b><small>${itemDesc(it)}</small></div></div>`; }).join('');
-  $('inv-list').innerHTML = P.inv.map((e) => { const it = ITEMS[e.id]; return `<div class="row ${it.rare ? 'rare' : ''}">${sw(it.color)}<div><b>${it.name}${e.n > 1 ? ` ×${e.n}` : ''}</b><small>${itemDesc(it) || (it.loot ? 'трофей — продать торговцу' : '')}</small></div>${it.slot || it.use ? `<button data-use="${e.id}">${it.slot ? 'Надеть' : 'Исп.'}</button>` : ''}</div>`; }).join('') || '<small>пусто</small>';
-  $('inv-coins').textContent = `${P.coins.toLocaleString('ru')} монет`;
+  const s = stats();
+  $('doll').innerHTML = SLOTS.map((sl) => {
+    const id = P.equip[sl.id], it = ITEMS[id];
+    const on = sel?.slot === sl.id ? 'sel' : '';
+    const blocked = !id && ((sl.id === 'shield' && ITEMS[P.equip.weapon]?.twoHand) || (sl.id === 'legs' && ITEMS[P.equip.armor]?.full));
+    return it ? cellHtml(it, 1, P.enc[sl.id], `data-slot="${sl.id}" title="${it.name}"`, on)
+      : `<div class="cell empty ${blocked ? 'blocked' : ''}" data-slot="${sl.id}"><em>${sl.name}</em></div>`;
+  }).join('');
+  const N = Math.max(30, Math.ceil((P.inv.length + 1) / 6) * 6);
+  let h = '';
+  for (let i = 0; i < N; i++) { const e = P.inv[i]; h += e ? cellHtml(ITEMS[e.id], e.n, e.e, `data-bag="${i}"`, sel?.bag === i ? 'sel' : '') : '<div class="cell empty" data-bag="-1"></div>'; }
+  $('inv-grid').innerHTML = h;
+  // выбранный предмет
+  let info = '';
+  if (enchMode) info = `<div class="ench">${ITEMS[enchMode].name} (${invCount(enchMode)}): нажмите на ${ITEMS[enchMode].ench === 'w' ? 'оружие' : 'броню или украшение'}. <button data-cmd="noench">Отмена</button></div>`;
+  else if (sel) {
+    const e = sel.slot ? { id: P.equip[sel.slot], e: P.enc[sel.slot] } : P.inv[sel.bag];
+    const it = ITEMS[e?.id];
+    if (it) {
+      const btns = sel.slot ? '<button data-cmd="off">Снять</button>'
+        : [it.slot && '<button data-cmd="on">Надеть</button>', it.use && '<button data-cmd="use">Использовать</button>', !it.rare && '<button data-cmd="drop">Выбросить</button>'].filter(Boolean).join('');
+      info = itemInfo(it, e.e || 0, sel.slot ? 'slot' : 'bag') + `<div class="btns">${btns}</div>`;
+    } else sel = null;
+  }
+  $('inv-info').innerHTML = info || `<small>${MOBILE ? 'Нажмите на предмет, чтобы увидеть описание.' : 'Двойной щелчок — надеть или использовать, перетаскивание — на куклу и обратно.'}</small>`;
+  $('inv-info').classList.toggle('on', !!info);
+  const k = s.load / s.cap;
+  $('wbar').firstElementChild.style.width = `${Math.min(100, k * 100)}%`;
+  $('wbar').firstElementChild.style.background = k > 0.7 ? 'linear-gradient(#e04a3a,#8a1a12)' : 'linear-gradient(#a0a0a0,#505050)';
+  $('wbar').lastElementChild.textContent = `Вес ${s.load} / ${s.cap}${k > 0.7 ? ' — перегруз' : ''}`;
+  $('inv-coins').textContent = `${P.coins.toLocaleString('ru')} мон.`;
+  if (!$('char').hidden) renderChar();
 }
-$('inv').addEventListener('click', (e) => { const b = e.target.closest('[data-use]'); if (b) useItem(b.dataset.use); });
-function toggle(id) { $(id).hidden = !$(id).hidden; if (id === 'inv') renderInv(); if (id === 'bigmap') drawMap($('bigmap-cv'), 1); }
+function renderChar() {
+  const s = stats(), c = CLASSES[P.cls], A = s.attr;
+  const r = (k, v, hint = '') => `<div class="st" title="${hint}"><span>${k}</span><b>${v}</b></div>`;
+  const need = xpToNext(P.lvl);
+  $('char-body').innerHTML = `
+    <div class="chead"><div class="lv">${P.lvl}</div><div><b>${P.name}</b><small>${c.name} · ${TOWNS.find((t) => t.id === P.home)?.name || ''}</small></div></div>
+    ${r('Здоровье', `${Math.round(P.hp)} / ${s.maxHp}`)}${r('Мана', `${Math.round(P.mp)} / ${s.maxMp}`)}${r('Опыт', P.lvl >= MAX_LEVEL ? 'максимум' : `${P.xp} / ${need} (${((P.xp / need) * 100).toFixed(1)}%)`)}
+    <h4>Основные</h4>
+    <div class="attrs">${r('СИЛ', A.str, 'Сила — физическая атака')}${r('ЛОВ', A.dex, 'Ловкость — скорость атаки, крит, точность, уклонение, бег')}${r('ВЫН', A.con, 'Выносливость — здоровье, переносимый вес')}${r('ИНТ', A.int, 'Интеллект — магическая атака')}${r('МДР', A.wit, 'Мудрость — скорость каста')}${r('ДУХ', A.men, 'Дух — мана, магическая защита')}</div>
+    <h4>Боевые</h4>
+    <div class="cols">
+      ${r('Физ. атака', Math.round(s.patk))}${r('Маг. атака', Math.round(s.matk))}
+      ${r('Физ. защита', Math.round(s.pdef))}${r('Маг. защита', Math.round(s.mdef))}
+      ${r('Точность', Math.round(s.acc))}${r('Уклонение', Math.round(s.eva))}
+      ${r('Крит. шанс', `${(s.crit * 100).toFixed(1)}%`)}${r('Скор. атаки', s.aspd.toFixed(2))}
+      ${r('Скор. каста', `${Math.round(s.cast * 100)}%`)}${r('Скорость', Math.round(s.speed))}
+      ${r('Дальность', s.range)}${r('Вес', `${s.load} / ${s.cap}`)}
+    </div>
+    <h4>Прочее</h4>
+    <div class="cols">${r('Убито мобов', P.kills)}${r('PvP', P.pvp || 0)}</div>
+    ${s.sets.length ? `<h4>Комплекты</h4>${s.sets.map((st) => `<div class="st"><span>${st.name} ${st.have}/${st.parts.length}</span><b class="${st.have === st.parts.length ? 'good' : ''}">${Object.entries(st.bonus).map(([k, v]) => fmtBonus(k, v)).join(', ')}</b></div>`).join('')}` : ''}`;
+}
+// выбор, двойной щелчок, перетаскивание
+const refOf = (el) => el?.dataset.slot ? { slot: el.dataset.slot } : el?.dataset.bag !== undefined ? { bag: +el.dataset.bag } : null;
+const hasItem = (ref) => ref && (ref.slot ? !!P.equip[ref.slot] : ref.bag >= 0 && !!P.inv[ref.bag]);
+function activate(ref) {
+  if (ref.slot) return unequip(ref.slot);
+  const e = P.inv[ref.bag], it = ITEMS[e.id];
+  if (it.slot) equipIdx(ref.bag); else if (it.use) useItem(e.id);
+}
+let drag = null;
+$('inv').addEventListener('pointerdown', (e) => {
+  const cell = e.target.closest('.cell'); const ref = refOf(cell);
+  if (!hasItem(ref) || enchMode) return;
+  drag = { ref, x: e.clientX, y: e.clientY, el: null, cell };
+});
+addEventListener('pointermove', (e) => {
+  if (!drag) return;
+  if (!drag.el && Math.hypot(e.clientX - drag.x, e.clientY - drag.y) > 6) {
+    drag.el = drag.cell.cloneNode(true); drag.el.classList.add('ghost'); document.body.append(drag.el);
+  }
+  if (drag.el) drag.el.style.transform = `translate(${e.clientX - 22}px,${e.clientY - 22}px)`;
+});
+addEventListener('pointerup', (e) => {
+  if (!drag) return;
+  const d = drag; drag = null;
+  if (!d.el) return;
+  d.el.remove();
+  const over = refOf(document.elementFromPoint(e.clientX, e.clientY)?.closest('.cell'));
+  const onGrid = document.elementFromPoint(e.clientX, e.clientY)?.closest('#inv-grid');
+  if (d.ref.bag !== undefined && over?.slot) equipIdx(d.ref.bag, over.slot);
+  else if (d.ref.slot && (onGrid || over?.bag !== undefined)) unequip(d.ref.slot);
+  else if (d.ref.slot && over?.slot && over.slot !== d.ref.slot && P.equip[d.ref.slot] && d.ref.slot.slice(0, -1) === over.slot.slice(0, -1)) {
+    const a = d.ref.slot, b = over.slot; [P.equip[a], P.equip[b]] = [P.equip[b], P.equip[a]]; [P.enc[a], P.enc[b]] = [P.enc[b], P.enc[a]];
+    for (const x of [a, b]) if (!P.enc[x]) delete P.enc[x];
+    renderInv();
+  }
+  d.cell.dataset.dragged = '1'; setTimeout(() => delete d.cell.dataset.dragged, 0);
+});
+$('inv').addEventListener('click', (e) => {
+  const cmd = e.target.closest('[data-cmd]')?.dataset.cmd;
+  if (cmd) {
+    if (cmd === 'noench') enchMode = null;
+    else if (sel && hasItem(sel)) {
+      if (cmd === 'off') unequip(sel.slot);
+      if (cmd === 'on') equipIdx(sel.bag);
+      if (cmd === 'use') useItem(P.inv[sel.bag].id);
+      if (cmd === 'drop') { const it = ITEMS[P.inv[sel.bag].id]; P.inv.splice(sel.bag, 1); log(`Выброшено: ${it.name}`); sel = null; save(); }
+    }
+    return renderInv();
+  }
+  const cell = e.target.closest('.cell'); if (!cell || cell.dataset.dragged) return;
+  const ref = refOf(cell);
+  if (!hasItem(ref)) { sel = null; return renderInv(); }
+  if (enchMode) return enchant(ref);
+  sel = ref; renderInv();
+});
+$('inv').addEventListener('dblclick', (e) => { const ref = refOf(e.target.closest('.cell')); if (hasItem(ref) && !enchMode) activate(ref); });
+function toggle(id) {
+  $(id).hidden = !$(id).hidden;
+  if (id === 'inv') { if ($(id).hidden) enchMode = null; sel = null; renderInv(); }
+  if (id === 'char' && !$(id).hidden) renderChar();
+  if (id === 'bigmap') drawMap($('bigmap-cv'), 1);
+}
 for (const b of document.querySelectorAll('[data-close]')) b.addEventListener('click', () => { b.closest('.win').hidden = true; });
 for (const b of document.querySelectorAll('[data-open]')) b.addEventListener('click', () => toggle(b.dataset.open));
 
@@ -712,8 +907,8 @@ let shopTab = 'buy';
 function renderShop(tab = shopTab) {
   shopTab = tab;
   for (const b of document.querySelectorAll('#shop [data-tab]')) b.classList.toggle('on', b.dataset.tab === tab);
-  if (tab === 'buy') $('shop-list').innerHTML = SHOP.map((id) => { const it = ITEMS[id]; return `<div class="row">${sw(it.color)}<div><b>${it.name}</b><small>${itemDesc(it)}</small></div><button data-buy="${id}" ${P.coins < it.price ? 'disabled' : ''}>${it.price} мон.</button></div>`; }).join('');
-  else $('shop-list').innerHTML = P.inv.filter((e) => ITEMS[e.id].price || ITEMS[e.id].rare).map((e) => { const it = ITEMS[e.id], pr = Math.round((it.price || 4000) * (it.loot ? 1 : 0.4)); return `<div class="row">${sw(it.color)}<div><b>${it.name}${e.n > 1 ? ` ×${e.n}` : ''}</b></div><button data-sell="${e.id}">+${pr}</button>${e.n > 1 ? `<button data-sellall="${e.id}">все</button>` : ''}</div>`; }).join('') || '<small>нечего продать</small>';
+  if (tab === 'buy') $('shop-list').innerHTML = SHOP.map((id) => { const it = ITEMS[id]; return `<div class="row">${sw(it.color, it)}<div><b>${it.name}</b><small>${itemDesc(it)}${it.slot ? ` · ${SLOT_NAMES[it.slot]}` : ''}</small></div><button data-buy="${id}" ${P.coins < it.price ? 'disabled' : ''}>${it.price} мон.</button></div>`; }).join('');
+  else $('shop-list').innerHTML = P.inv.filter((e) => ITEMS[e.id].price || ITEMS[e.id].rare).map((e) => { const it = ITEMS[e.id], pr = Math.round((it.price || 4000) * (it.loot ? 1 : 0.4)); return `<div class="row">${sw(it.color, it)}<div><b>${e.e ? `+${e.e} ` : ''}${it.name}${e.n > 1 ? ` ×${e.n}` : ''}</b></div><button data-sell="${e.id}">+${pr}</button>${e.n > 1 ? `<button data-sellall="${e.id}">все</button>` : ''}</div>`; }).join('') || '<small>нечего продать</small>';
   $('shop-coins').textContent = `${P.coins.toLocaleString('ru')} монет`;
 }
 $('shop').addEventListener('click', (e) => {
@@ -728,6 +923,7 @@ $('shop').addEventListener('click', (e) => {
   }
   renderShop(); renderInv(); save();
 });
+setInterval(() => { if (P && !$('char').hidden) renderChar(); }, 500);
 $('respawn').onclick = respawn;
 
 // ================= Карта =================
@@ -793,13 +989,13 @@ loop();
 
 // ================= Старт =================
 function start(p) {
-  P = p;
+  P = migrate(p);
   $('start').remove();
   document.body.classList.add('ingame'); document.documentElement.classList.add('ingame-root');
   spawnHero();
   teleportTo(P.x, P.z);
   renderSkills(); renderInv();
-  log(`Добро пожаловать, ${P.name}! ЛКМ — идти/выбрать цель (второй клик — атака), ПКМ или два пальца — камера, щипок/колесо — зум, V — сброс камеры, 1–3 — умения, 4–5 — зелья, Tab — цель, I — инвентарь, M — карта.`);
+  log(`Добро пожаловать, ${P.name}! ЛКМ — идти/выбрать цель (второй клик — атака), ПКМ или два пальца — камера, щипок/колесо — зум, V — сброс камеры, 1–3 — умения, 4–5 — зелья, Tab — цель, I — инвентарь, C — персонаж, M — карта.`);
   log('Поговорите с Хранителем врат, чтобы перенестись в зону охоты, и с Торговцем — за снаряжением.');
 }
 const saved = loadSave();
@@ -812,4 +1008,4 @@ $('start-new').onclick = () => {
   start(newChar(name.slice(0, 16), pickCls));
 };
 // хук для автотестов: dev-сервер или ?test
-if (import.meta.env.DEV || location.search.includes('test')) window.__g = { get P() { return P; }, mobs, get hero() { return hero; }, cam, teleportTo, gainXp, useSkill, joy, useItem, openNpc, npcs, respawn, get dead() { return dead; }, get target() { return target; }, set target(v) { target = v; }, attack() { attacking = true; } };
+if (import.meta.env.DEV || location.search.includes('test')) window.__g = { get P() { return P; }, mobs, get hero() { return hero; }, cam, teleportTo, gainXp, useSkill, joy, useItem, openNpc, equipIdx, unequip, enchant, stats, get enchMode() { return enchMode; }, renderInv, npcs, respawn, get dead() { return dead; }, get target() { return target; }, set target(v) { target = v; }, attack() { attacking = true; } };

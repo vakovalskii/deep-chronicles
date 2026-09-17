@@ -85,3 +85,77 @@ test('уровни мобов соответствуют зонам', () => {
   const lv = { meadow: [1, 9], forest: [10, 17], waste: [18, 25] };
   for (const z of ZONES) for (const [m] of z.mobs) { const l = MOBS[m].lvl; assert.ok(l >= lv[z.id][0] - 1 && l <= lv[z.id][1], `${m} ${l} в ${z.id}`); }
 });
+
+// ---- экипировка, комплекты, заточка ----
+import { SETS, SLOTS } from '../src/data.js';
+import { calcStats, equipFromBag, unequipSlot, enchValue, migrate, weightOf } from '../src/stats.js';
+const hero = (cls = 'warrior', lvl = 30) => migrate({ cls, lvl, xp: 0, inv: [], equip: { weapon: null, armor: null }, kills: 0 });
+const give = (P, id) => { P.inv.push({ id, n: 1 }); return P.inv.length - 1; };
+
+test('комплекты и слоты ссылаются на существующие предметы', () => {
+  const types = new Set(SLOTS.map((s) => s.type));
+  for (const [id, it] of Object.entries(ITEMS)) {
+    if (it.slot) assert.ok(types.has(it.slot), `${id}: неизвестный слот ${it.slot}`);
+    if (it.set) assert.ok(SETS[it.set]?.parts.includes(id), `${id}: нет в комплекте ${it.set}`);
+    assert.ok(typeof it.w === 'number', `${id}: нет веса`);
+  }
+  for (const [id, st] of Object.entries(SETS)) {
+    for (const p of st.parts) assert.equal(ITEMS[p]?.set, id, `${id}: часть ${p}`);
+    assert.equal(new Set(st.parts.map((p) => ITEMS[p].slot)).size, st.parts.length, `${id}: две части в одном слоте`);
+  }
+});
+
+test('экипировка: надеть, снять, парные слоты', () => {
+  const P = hero();
+  assert.equal(equipFromBag(P, give(P, 'ring_bronze')), null);
+  assert.equal(equipFromBag(P, give(P, 'ring_silver')), null);
+  assert.equal(P.equip.ring1, 'ring_bronze'); assert.equal(P.equip.ring2, 'ring_silver');
+  assert.ok(equipFromBag(P, give(P, 'ear_bronze'), 'ring1'), 'серьга в кольцо');
+  unequipSlot(P, 'ring1');
+  assert.equal(P.equip.ring1, null); assert.ok(P.inv.some((e) => e.id === 'ring_bronze'));
+});
+
+test('двуручное снимает щит, мантия — поножи; ограничения класса', () => {
+  const P = hero('mage');
+  equipFromBag(P, give(P, 'shield_wood')); equipFromBag(P, give(P, 'legs_leather'));
+  equipFromBag(P, give(P, 'staff_oak'));
+  assert.equal(P.equip.shield, null); assert.equal(P.equip.weapon, 'staff_oak');
+  equipFromBag(P, give(P, 'robe_mystic'));
+  assert.equal(P.equip.legs, null); assert.equal(P.equip.armor, 'robe_mystic');
+  const W = hero('warrior');
+  assert.ok(equipFromBag(W, give(W, 'robe_mystic')), 'воин в мантии');
+  assert.ok(equipFromBag(W, give(W, 'staff_oak')), 'воин с посохом');
+  const low = hero('warrior', 5);
+  assert.ok(equipFromBag(low, give(low, 'helm_chain')), 'уровень не проверен');
+});
+
+test('заточка переносится вместе с вещью и растит характеристику', () => {
+  const P = hero();
+  P.inv.push({ id: 'sword_long', n: 1, e: 5 });
+  const before = calcStats(P).patk;
+  equipFromBag(P, P.inv.length - 1);
+  assert.equal(P.enc.weapon, 5);
+  assert.equal(Math.round(calcStats(P).patk - before), enchValue(ITEMS.sword_long, 'patk', 5));
+  assert.ok(enchValue(ITEMS.sword_long, 'patk', 5) > enchValue(ITEMS.sword_long, 'patk', 3));
+  unequipSlot(P, 'weapon');
+  assert.equal(P.inv.at(-1).e, 5);
+});
+
+test('полный комплект даёт бонус, неполный — нет', () => {
+  const P = hero();
+  const parts = SETS.chain.parts;
+  for (const p of parts.slice(0, -1)) equipFromBag(P, give(P, p));
+  const part = calcStats(P);
+  equipFromBag(P, give(P, parts.at(-1)));
+  const full = calcStats(P);
+  assert.equal(full.maxHp - part.maxHp, SETS.chain.bonus.hp);
+  assert.equal(Math.round(full.pdef - part.pdef), ITEMS[parts.at(-1)].pdef + SETS.chain.bonus.pdef);
+});
+
+test('перегруз замедляет', () => {
+  const P = hero();
+  const s0 = calcStats(P);
+  P.inv.push({ id: 'bone', n: 1000 });
+  assert.ok(weightOf(P) > s0.cap);
+  assert.ok(calcStats(P).speed < s0.speed);
+});

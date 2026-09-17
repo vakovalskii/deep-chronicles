@@ -105,11 +105,36 @@ try {
     expect(!(await page.$eval('[data-skill=heal]', (e) => e.classList.contains('locked'))), 'исцеление заблокировано');
   });
 
-  await step('инвентарь: экипировка оружия', async () => {
-    await G(() => { const g = window.__g; g.P.inv.push({ id: 'staff_oak', n: 1 }); g.P.lvl = Math.max(g.P.lvl, 8); g.useItem('staff_oak'); });
+  await step('инвентарь: кукла, надеть и снять, окно персонажа', async () => {
+    await G(() => { const g = window.__g; g.P.inv.push({ id: 'staff_oak', n: 1 }, { id: 'ring_bronze', n: 1 }); g.P.lvl = Math.max(g.P.lvl, 8); g.useItem('staff_oak'); });
     expect((await G(() => window.__g.P.equip.weapon)) === 'staff_oak', 'посох не надет');
     await page.keyboard.press('KeyI');
-    expect((await page.textContent('#inv-eq')).includes('Дубовый жезл'), 'нет в окне экипировки');
+    expect((await page.getAttribute('#doll [data-slot=weapon]', 'title')) === 'Дубовый жезл', 'нет на кукле');
+    // перетаскивание кольца из сумки на куклу
+    const idx = await G(() => window.__g.P.inv.findIndex((e) => e.id === 'ring_bronze'));
+    const from = await page.locator(`#inv-grid [data-bag="${idx}"]`).boundingBox(), to = await page.locator('#doll [data-slot=ring2]').boundingBox();
+    await page.mouse.move(from.x + 20, from.y + 20); await page.mouse.down();
+    await page.mouse.move(to.x + 20, to.y + 20, { steps: 6 }); await page.mouse.up();
+    expect((await G(() => window.__g.P.equip.ring2)) === 'ring_bronze', 'перетаскивание не надело кольцо');
+    // выбор и снятие кнопкой
+    await page.click('#doll [data-slot=ring2]');
+    expect((await page.textContent('#inv-info')).includes('Бронзовое кольцо'), 'нет описания');
+    await page.click('#inv-info [data-cmd=off]');
+    expect((await G(() => window.__g.P.equip.ring2)) === null, 'кольцо не снято');
+    // окно персонажа
+    await page.keyboard.press('KeyC');
+    expect((await page.textContent('#char-body')).includes('Маг. атака'), 'нет характеристик');
+    await page.keyboard.press('Escape');
+    expect(!(await page.isVisible('#char')), 'окно персонажа не закрылось');
+  });
+
+  await step('усиление: безопасная заточка до +3', async () => {
+    const r = await G(() => {
+      const g = window.__g; g.P.inv.push({ id: 'scroll_ench_w', n: 3 });
+      for (let i = 0; i < 3; i++) { g.useItem('scroll_ench_w'); g.enchant({ slot: 'weapon' }); }
+      return { e: g.P.enc.weapon, left: g.P.inv.filter((x) => x.id === 'scroll_ench_w').length, mode: g.enchMode };
+    });
+    expect(r.e === 3 && r.left === 0 && !r.mode, JSON.stringify(r));
     await page.keyboard.press('Escape');
   });
 
@@ -118,6 +143,9 @@ try {
     expect(await page.isVisible('#inv'), 'инвентарь не открылся кнопкой');
     await page.click('#menu [data-act=inv]');
     expect(!(await page.isVisible('#inv')), 'инвентарь не закрылся кнопкой');
+    await page.click('#menu [data-act=char]');
+    expect(await page.isVisible('#char'), 'персонаж не открылся кнопкой');
+    await page.keyboard.press('Escape');
     await page.click('#menu [data-act=map]');
     expect(await page.isVisible('#bigmap'), 'карта не открылась кнопкой');
     await page.keyboard.press('Escape');

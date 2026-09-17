@@ -2,3 +2,4 @@ node_modules
 dist
 .env
 tests/last-*.png
+tests/tmp/

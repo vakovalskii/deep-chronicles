@@ -12,38 +12,75 @@ const G = {
 };
 const skin = lam(0xe0b090);
 
-// гуманоид: тело, голова, руки (правая — с оружием), ноги
+// гуманоид: тело, голова, руки (правая — с оружием), ноги; шлем, перчатки, сапоги, щит — по экипировке
 function humanoid(color, { robe = false, scale = 1, weaponColor = 0xa0a0a0, staff = false, skull = false } = {}) {
   const g = new THREE.Group();
   const body = lam(color);
-  const torso = part(robe ? G.cone : G.box, body, 0, robe ? 1.05 : 1.25, 0);
-  if (robe) torso.scale.set(1.1, 1.5, 1.1); else torso.scale.set(0.8, 0.9, 0.45);
+  const torso = part(G.box, body, 0, 1.25, 0);
+  const setTorso = (r) => {
+    torso.geometry = r ? G.cone : G.box;
+    if (r) torso.scale.set(1.1, 1.5, 1.1); else torso.scale.set(0.8, 0.9, 0.45);
+    torso.userData.y = r ? 1.05 : 1.25;
+    legL.visible = legR.visible = !r;
+  };
   const head = part(G.sph, skull ? lam(0xeeeadc) : skin, 0, 2.0, 0); head.scale.setScalar(0.55);
   const legL = new THREE.Group(), legR = new THREE.Group();
   legL.position.set(-0.2, 0.8, 0); legR.position.set(0.2, 0.8, 0);
-  if (!robe) {
-    const lm = lam(0x3a3028);
-    const l1 = part(G.box, lm, 0, -0.4, 0); l1.scale.set(0.28, 0.8, 0.3); legL.add(l1);
-    const l2 = part(G.box, lm, 0, -0.4, 0); l2.scale.set(0.28, 0.8, 0.3); legR.add(l2);
+  const legM = lam(0x3a3028), footM = lam(0x2a221c);
+  for (const leg of [legL, legR]) {
+    const l = part(G.box, legM, 0, -0.4, 0); l.scale.set(0.28, 0.8, 0.3); leg.add(l);
+    const f = part(G.box, footM, 0, -0.76, 0.06); f.scale.set(0.3, 0.14, 0.42); leg.add(f);
   }
   const armL = new THREE.Group(), armR = new THREE.Group();
   armL.position.set(-0.55, 1.6, 0); armR.position.set(0.55, 1.6, 0);
-  const a1 = part(G.box, body, 0, -0.35, 0); a1.scale.set(0.22, 0.75, 0.22); armL.add(a1);
-  const a2 = part(G.box, body, 0, -0.35, 0); a2.scale.set(0.22, 0.75, 0.22); armR.add(a2);
+  const handM = skin.clone();
+  for (const arm of [armL, armR]) {
+    const a = part(G.box, body, 0, -0.33, 0); a.scale.set(0.22, 0.66, 0.22); arm.add(a);
+    const h = part(G.box, handM, 0, -0.7, 0); h.scale.set(0.2, 0.16, 0.2); arm.add(h);
+  }
+  // шлем / капюшон
+  const helm = new THREE.Group(); helm.position.y = 2.0; helm.visible = false;
+  const helmM = lam(0x808080);
+  const cap = part(G.sph, helmM, 0, 0.06, 0); cap.scale.set(0.62, 0.5, 0.62);
+  const brim = part(G.cyl, helmM, 0, -0.02, 0); brim.scale.set(0.66, 0.06, 0.66);
+  const hat = part(G.cone, helmM, 0, 0.45, 0); hat.scale.set(0.6, 0.7, 0.6);
+  helm.add(cap, brim, hat);
+  // щит
+  const shield = part(G.box, lam(0x808080), -0.16, -0.45, 0.05); shield.scale.set(0.08, 0.75, 0.6); shield.visible = false;
+  armL.add(shield);
   // оружие
   const weapon = new THREE.Group(); weapon.position.set(0, -0.72, 0.1); armR.add(weapon);
-  const setWeapon = (wc, isStaff) => {
+  const setWeapon = (wc, isStaff, ench = 0) => {
     weapon.clear();
-    if (wc === null) return;
-    const wm = lam(wc, { emissive: wc, emissiveIntensity: 0.15 });
-    if (isStaff) { const s = part(G.cyl, lam(0x5a3a1a), 0, 0, 0.5); s.scale.set(0.08, 2.2, 0.08); s.rotation.x = Math.PI / 2; weapon.add(s); const orb = part(G.sph, wm, 0, 0, 1.6); orb.scale.setScalar(0.3); weapon.add(orb); }
-    else { const b = part(G.box, wm, 0, 0, 0.75); b.scale.set(0.08, 0.05, 1.4); weapon.add(b); const h = part(G.box, lam(0x4a3a2a), 0, 0, 0); h.scale.set(0.35, 0.08, 0.08); weapon.add(h); }
+    if (wc === null || wc === undefined) return;
+    const glow = ench >= 4 ? Math.min(1.6, 0.4 + (ench - 4) * 0.15) : 0.15;
+    const wm = lam(wc, { emissive: ench >= 4 ? 0xffffff : wc, emissiveIntensity: ench >= 4 ? glow * 0.35 : 0.15 });
+    let blade;
+    if (isStaff) { const st = part(G.cyl, lam(0x5a3a1a), 0, 0, 0.5); st.scale.set(0.08, 2.2, 0.08); st.rotation.x = Math.PI / 2; weapon.add(st); blade = part(G.sph, wm, 0, 0, 1.6); blade.scale.setScalar(0.3); }
+    else { blade = part(G.box, wm, 0, 0, 0.75); blade.scale.set(0.08, 0.05, 1.4); const h = part(G.box, lam(0x4a3a2a), 0, 0, 0); h.scale.set(0.35, 0.08, 0.08); weapon.add(h); }
+    weapon.add(blade);
+    // заточка +7 и выше — светящийся ореол
+    if (ench >= 7) {
+      const aura = new THREE.Mesh(blade.geometry, new THREE.MeshBasicMaterial({ color: ench >= 12 ? 0xff60ff : ench >= 10 ? 0xffa030 : 0x60c0ff, transparent: true, opacity: 0.35, blending: THREE.AdditiveBlending, depthWrite: false }));
+      aura.position.copy(blade.position); aura.scale.copy(blade.scale).multiply(new THREE.Vector3(isStaff ? 1.6 : 3.2, isStaff ? 1.6 : 4, isStaff ? 1.6 : 1.08));
+      aura.userData.aura = true; weapon.add(aura);
+    }
   };
   setWeapon(weaponColor, staff);
-  g.add(torso, head, legL, legR, armL, armR);
+  setTorso(robe);
+  g.add(torso, head, helm, legL, legR, armL, armR);
   g.scale.setScalar(scale);
   g.userData.setWeapon = setWeapon;
-  g.userData.setBody = (c) => { body.color.setHex(c); };
+  g.userData.setBody = (c, r) => { body.color.setHex(c); if (r !== undefined) setTorso(r); };
+  g.userData.setGear = ({ head: hc, legs, gloves, feet, shield: sc, helmKind }) => {
+    helm.visible = hc !== undefined; if (hc !== undefined) helmM.color.setHex(hc);
+    const soft = helmKind === 'apprentice' || helmKind === 'mystic';
+    cap.visible = true; brim.visible = soft; hat.visible = soft;
+    legM.color.setHex(legs ?? 0x3a3028);
+    handM.color.setHex(gloves ?? 0xe0b090);
+    footM.color.setHex(feet ?? 0x2a221c);
+    shield.visible = sc !== undefined; if (sc !== undefined) shield.material.color.setHex(sc);
+  };
   g.userData.anim = (t, st) => {
     const walk = st.moving ? Math.sin(t * 9) : 0;
     legL.rotation.x = walk * 0.6; legR.rotation.x = -walk * 0.6;
@@ -51,7 +88,8 @@ function humanoid(color, { robe = false, scale = 1, weaponColor = 0xa0a0a0, staf
     if (st.attackT > 0) armR.rotation.x = -2.2 * Math.sin(Math.min(1, st.attackT) * Math.PI);
     else if (st.casting) armR.rotation.x = -1.4 + Math.sin(t * 10) * 0.1;
     else armR.rotation.x = walk * 0.5;
-    torso.position.y = (robe ? 1.05 : 1.25) + Math.abs(walk) * 0.05;
+    torso.position.y = torso.userData.y + Math.abs(walk) * 0.05;
+    for (const a of weapon.children) if (a.userData.aura) a.material.opacity = 0.25 + Math.sin(t * 4) * 0.1;
   };
   return g;
 }

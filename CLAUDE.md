@@ -9,6 +9,10 @@ three.js r170 + Vite. Простые формы + пиксельные текс�
 - `bash deploy/deploy.sh` — **сначала `npm test`**, потом rsync `dist/` на `$DEPLOY_HOST:/opt/realms/dist` (адрес сервера — в переменной окружения, в репозиторий не коммитим), `server/` → `/opt/realms/server` и рестарт systemd `realms-ws` (порт 8790). Прод: https://realms.neuraldeep.ru (nginx `deploy/nginx-realms.conf`: статика + `/ws`, certbot).
 - Добавил механику — добавь шаг в E2E или проверку в юнит-тесты.
 
+## Открытый код
+- Публичная копия: https://github.com/vakovalskii/khroniki-glubin (AGPL-3.0, чистая история). Этот репозиторий (deep-chronicles) — рабочий, приватный.
+- После выкладки: `bash tools/sync-oss.sh "что изменилось"` — переносит файлы из git, стопорится, если нашёл IP или ключи. Адреса серверов и секреты в репозиторий не кладём (`DEPLOY_HOST`, `.env`).
+
 ## Структура
 - `src/data.js` — классы (атрибуты СИЛ/ЛОВ/ВЫН/ИНТ/МДР/ДУХ), умения, `SLOTS` (12 слотов куклы), предметы (грейды, вес `w`, `set`, `twoHand`, `robe`, `full`), `SETS`, мобы, магазин, опыт.
 - `src/stats.js` — без DOM: `calcStats` (атрибуты, экипировка, заточка `enchValue`, комплекты, перегруз), `equipFromBag`/`unequipSlot`, `wearError`, `migrate` (старые сохранения). Покрыт юнит-тестами.

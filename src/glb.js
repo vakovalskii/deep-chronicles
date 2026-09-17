@@ -130,12 +130,14 @@ export function rigModel(scene, { height = RIG.height } = {}) {
 // Пока модель едет (или если её нет) — на экране процедурный герой, игра не ждёт.
 export async function applyModel(group, id, { base = MODELS_URL, height = RIG.height } = {}) {
   if (!id) return false;
+  // снимок делаем сразу: пока модель грузится, игра успевает навесить на группу своё
+  // (табличку с именем, флаг PvP) — это трогать нельзя, прячем только процедурные части
+  const own = [...group.children];
   try {
     const scene = await loadModel(id, base);
     const rigged = rigModel(scene.clone(true), { height });
     if (!rigged) return false;
-    const keep = group.userData.keep || [];
-    for (const child of [...group.children]) if (!keep.includes(child)) group.remove(child);
+    for (const child of own) child.visible = false;
     group.add(rigged);
     group.userData.anim = rigged.userData.anim;
     group.userData.model = id;

@@ -359,10 +359,32 @@ renderer.domElement.addEventListener('pointerdown', (e) => {
 addEventListener('pointerup', (e) => { if (e.button === 2) rmb = false; });
 addEventListener('pointermove', (e) => {
   if (!rmb) return;
-  cam.yaw -= (e.clientX - lastX) * 0.006; cam.pitch = THREE.MathUtils.clamp(cam.pitch + (e.clientY - lastY) * 0.005, 0.08, 1.35);
+  cam.yaw -= (e.clientX - lastX) * 0.006; cam.pitch = THREE.MathUtils.clamp(cam.pitch + (e.clientY - lastY) * 0.005, -0.35, 1.5);
   lastX = e.clientX; lastY = e.clientY;
 });
-renderer.domElement.addEventListener('wheel', (e) => { e.preventDefault(); cam.dist = THREE.MathUtils.clamp(cam.dist * Math.exp(e.deltaY * 0.001), 5, 60); }, { passive: false });
+// трекпад: два пальца — орбита, щипок (приходит как Ctrl+колесо) — зум; колесо мыши — зум
+let orbDX = 0, orbDY = 0, zoomAcc = 0;
+renderer.domElement.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const k = e.deltaMode === 1 ? 16 : 1;
+  const mouseWheel = e.deltaMode === 1 || (e.deltaX === 0 && Math.abs(e.deltaY) >= 50 && Number.isInteger(e.deltaY));
+  if (e.ctrlKey) zoomAcc += e.deltaY * k * 0.01;
+  else if (mouseWheel) zoomAcc += e.deltaY * k * 0.0012;
+  else { orbDX += e.deltaX * k; orbDY += e.deltaY * k; }
+}, { passive: false });
+// накопленные дельты расходуем плавно — события трекпада приходят пачками
+function applyCamInput(dt) {
+  const kk = 1 - Math.exp(-dt * 22);
+  const dx = orbDX * kk, dy = orbDY * kk, dz = zoomAcc * kk;
+  orbDX -= dx; orbDY -= dy; zoomAcc -= dz;
+  cam.yaw -= dx * 0.005;
+  cam.pitch = THREE.MathUtils.clamp(cam.pitch - dy * 0.004, -0.35, 1.5);
+  cam.dist = THREE.MathUtils.clamp(cam.dist * Math.exp(dz), 4, 70);
+}
+// Safari: щипок приходит жестами
+let gs = 1;
+addEventListener('gesturestart', (e) => { e.preventDefault(); gs = e.scale; });
+addEventListener('gesturechange', (e) => { e.preventDefault(); zoomAcc += Math.log(gs / e.scale); gs = e.scale; });
 addEventListener('keydown', (e) => {
   if (!P || e.target.tagName === 'INPUT') return;
   keys[e.code] = true;
@@ -370,6 +392,7 @@ addEventListener('keydown', (e) => {
   if (e.code in map) useSkill(CLASSES[P.cls].skills[map[e.code]]);
   if (e.code === 'Digit4') useItem('potion_hp');
   if (e.code === 'Digit5') useItem('potion_mp');
+  if (e.code === 'KeyV') { cam.yaw = hero.rotation.y + Math.PI; cam.pitch = 0.55; cam.dist = 18; }
   if (e.code === 'KeyI') toggle('inv');
   if (e.code === 'KeyM') toggle('bigmap');
   if (e.code === 'Tab') { e.preventDefault(); nextTarget(); }
@@ -674,6 +697,7 @@ function loop() {
   selRing.visible = !!target && (!target.def || !target.dead);
   if (selRing.visible) { const o = target.obj.position; selRing.position.set(o.x, o.y + 0.15, o.z); selRing.scale.setScalar(target.radius || 1); selRing.material.color.set(target.def ? 0xff5050 : 0x60c0ff); }
   if (bannerT > 0) { bannerT -= dt; if (bannerT <= 0) $('banner').style.opacity = '0'; }
+  applyCamInput(dt);
   placeCamera(hero.position, cam.dist);
   sun.position.copy(hero.position).add(new THREE.Vector3(60, 110, 40)); sun.target.position.copy(hero.position);
   updateLabels();
@@ -686,7 +710,7 @@ function placeCamera(p, dist) {
   camera.position.copy(p).add(off).add(new THREE.Vector3(0, 2, 0));
   // камера не уходит под землю
   const gh = camera.position.x > DUNGEON.x0 - 100 ? 0.5 : heightAt(camera.position.x, camera.position.z) + 1;
-  if (camera.position.y < gh) camera.position.y = gh;
+  if (camera.position.y < gh + 0.3) camera.position.y = gh + 0.3;
   camera.lookAt(p.x, p.y + 1.8, p.z);
 }
 loop();
@@ -699,7 +723,7 @@ function start(p) {
   spawnHero();
   teleportTo(P.x, P.z);
   renderSkills(); renderInv();
-  log(`Добро пожаловать, ${P.name}! ЛКМ — идти/выбрать цель (второй клик — атака), ПКМ — камера, 1–3 — умения, 4–5 — зелья, Tab — цель, I — инвентарь, M — карта.`);
+  log(`Добро пожаловать, ${P.name}! ЛКМ — идти/выбрать цель (второй клик — атака), ПКМ или два пальца — камера, щипок/колесо — зум, V — сброс камеры, 1–3 — умения, 4–5 — зелья, Tab — цель, I — инвентарь, M — карта.`);
   log('Поговорите с Хранителем врат, чтобы перенестись в зону охоты, и с Торговцем — за снаряжением.');
 }
 const saved = loadSave();
@@ -712,4 +736,4 @@ $('start-new').onclick = () => {
   start(newChar(name.slice(0, 16), pickCls));
 };
 // хук для автотестов: dev-сервер или ?test
-if (import.meta.env.DEV || location.search.includes('test')) window.__g = { get P() { return P; }, mobs, get hero() { return hero; }, teleportTo, gainXp, useSkill, useItem, openNpc, npcs, respawn, get dead() { return dead; }, get target() { return target; }, set target(v) { target = v; }, attack() { attacking = true; } };
+if (import.meta.env.DEV || location.search.includes('test')) window.__g = { get P() { return P; }, mobs, get hero() { return hero; }, cam, teleportTo, gainXp, useSkill, useItem, openNpc, npcs, respawn, get dead() { return dead; }, get target() { return target; }, set target(v) { target = v; }, attack() { attacking = true; } };

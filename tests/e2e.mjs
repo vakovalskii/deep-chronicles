@@ -49,6 +49,20 @@ try {
     expect(Math.hypot(after.x - before.x, after.z - before.z) > 1, 'персонаж не сдвинулся');
   });
 
+  await step('камера: два пальца вращают, щипок зумит', async () => {
+    const c0 = await G(() => ({ ...window.__g.cam }));
+    await page.mouse.move(640, 400);
+    for (let i = 0; i < 10; i++) await page.mouse.wheel(12, 6);
+    await wait(400);
+    const c1 = await G(() => ({ ...window.__g.cam }));
+    expect(Math.abs(c1.yaw - c0.yaw) > 0.1 && Math.abs(c1.pitch - c0.pitch) > 0.02, `орбита ${JSON.stringify([c0, c1])}`);
+    await page.keyboard.down('Control'); for (let i = 0; i < 5; i++) await page.mouse.wheel(0, 8); await page.keyboard.up('Control');
+    await wait(400);
+    const c2 = await G(() => ({ ...window.__g.cam }));
+    expect(c2.dist > c1.dist * 1.2, `зум ${c1.dist} → ${c2.dist}`);
+    await page.keyboard.press('KeyV');
+  });
+
   await step('торговец: покупка зелья', async () => {
     await G(() => { const g = window.__g; g.P.coins = 500; g.openNpc(g.npcs.find((n) => n.role === 'merchant')); });
     expect(await page.isVisible('#shop'), 'окно торговца не открылось');

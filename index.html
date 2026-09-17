@@ -98,6 +98,10 @@
   .cls button small{display:block;color:var(--dim);font-size:11px}
   .cls .on{border-color:var(--gold);background:linear-gradient(#5a4830,#2a2418)}
   #start .go{width:100%;padding:10px;font-size:15px;margin-top:6px}
+  #start .link{background:none;border:none;color:var(--dim);text-decoration:underline;margin-top:4px}
+  #start .imp{display:flex;gap:6px;align-items:flex-start;text-align:left;font-size:12px;color:var(--gold);margin:4px 0 6px}
+  #start .imp input{width:auto;margin:2px 0 0}
+  #start-msg{min-height:18px;margin-top:8px;font-size:12px;color:var(--dim)}#start-msg.bad{color:#f88}
 
 
   /* инвентарь */
@@ -245,13 +249,19 @@
     <h1>ХРОНИКИ ГЛУБИН</h1>
     <p>Браузерная MMORPG от NeuralDeep · прототип мира</p>
     <button id="start-cont" class="go" hidden></button>
-    <div style="margin:16px 0 8px;color:var(--dim)">Новый персонаж</div>
-    <input id="cname" placeholder="Имя персонажа" maxlength="16" />
+    <button id="start-logout" class="link" hidden>Другой аккаунт</button>
+    <div style="margin:14px 0 8px;color:var(--dim)">Вход или новый аккаунт</div>
+    <input id="cname" placeholder="Имя персонажа (оно же логин)" maxlength="16" autocomplete="username" />
+    <input id="cpass" type="password" placeholder="Пароль" maxlength="64" autocomplete="current-password" />
+    <button id="start-login" class="go">Войти</button>
+    <div style="margin:14px 0 8px;color:var(--dim)">Нет аккаунта? Выберите класс</div>
     <div class="cls">
       <button data-cls="warrior" class="on"><b>Воин</b><small>ближний бой, много здоровья, вихрь по толпе</small></button>
       <button data-cls="mage"><b>Маг</b><small>огонь издалека, исцеление, ледяная волна</small></button>
     </div>
-    <button id="start-new" class="go">Создать и войти</button>
+    <label id="start-import" class="imp" hidden><input type="checkbox" checked /> <span></span></label>
+    <button id="start-new" class="go">Создать аккаунт и войти</button>
+    <div id="start-msg"></div>
   </div>
 </div>
 <script type="module" src="./src/main.js"></script>

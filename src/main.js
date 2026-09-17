@@ -51,9 +51,17 @@ function newChar(name, clsId) {
     x: t.x + 5, z: t.z + 30, home: t.id, kills: 0,
   };
 }
-function save() { if (!P) return; P.x = hero.position.x; P.z = hero.position.z; try { localStorage.setItem(SAVE_KEY, JSON.stringify(P)); } catch { /* */ } }
+let saveTimer = 0, lastNetSave = 0;
+function save() {
+  if (!P) return;
+  P.x = hero.position.x; P.z = hero.position.z;
+  try { localStorage.setItem(SAVE_KEY, JSON.stringify(P)); } catch { /* */ }
+  const wait = lastNetSave + 3000 - Date.now();
+  if (wait <= 0) { lastNetSave = Date.now(); netSend({ t: 'save', p: P }); }
+  else if (!saveTimer) saveTimer = setTimeout(() => { saveTimer = 0; save(); }, wait);
+}
 setInterval(save, 10000);
-addEventListener('beforeunload', save);
+addEventListener('beforeunload', () => { lastNetSave = 0; save(); });
 
 // ================= Характеристики =================
 const buffs = []; // { stat, mul, until }
@@ -500,24 +508,50 @@ function teleportTo(x, z) {
 // ================= Сеть: другие игроки, онлайн, чат =================
 const net = { ws: null, ok: false, id: 0, online: 0, retry: 1000, lastSt: 0 };
 const WS_URL = new URLSearchParams(location.search).get('ws') || (import.meta.env.DEV ? `ws://${location.hostname}:8790` : `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
-const netSend = (m) => { if (net.ok) net.ws.send(JSON.stringify(m)); };
+const netSend = (m) => { if (net.ok && (net.authed || m.t === 'auth' || m.t === 'login' || m.t === 'register')) net.ws.send(JSON.stringify(m)); };
 function sendLook() { if (P) netSend({ t: 'look', look: lookOf() }); }
+const AUTH_KEY = 'l2w-auth';
+const loadAuth = () => { try { return JSON.parse(localStorage.getItem(AUTH_KEY)); } catch { return null; } };
+let authReq = null; // что отправить при подключении (вход/регистрация со стартового экрана)
 function netConnect() {
   const ws = new WebSocket(WS_URL);
   net.ws = ws;
-  ws.onopen = () => { net.ok = true; net.retry = 1000; netSend({ t: 'hello', name: P.name, look: lookOf() }); };
+  ws.onopen = () => {
+    net.ok = true; net.retry = 1000;
+    // переподключение в игре — входим по токену молча
+    const au = loadAuth();
+    if (P && au?.token) net.ws.send(JSON.stringify({ t: 'auth', token: au.token }));
+    else startReady();
+  };
   ws.onclose = () => {
     if (net.ws !== ws) return;
-    net.ok = false;
+    net.ok = false; net.authed = false;
     for (const r of remotes.values()) scene.remove(r.obj);
     remotes.clear();
+    if (net.kicked) return;
+    if (!P) startReady();
     setTimeout(netConnect, net.retry); net.retry = Math.min(15000, net.retry * 2);
   };
   ws.onmessage = (ev) => { let m; try { m = JSON.parse(ev.data); } catch { return; } onNet(m); };
 }
 const remotes = new Map(); // id → { obj, name, look, to, a, hp, seen, st }
 function onNet(m) {
-  if (m.t === 'welcome') { net.id = m.id; net.online = m.online; }
+  if (m.t === 'hi') net.online = m.online;
+  if (m.t === 'authok') {
+    net.id = m.id; net.online = m.online; net.authed = true;
+    const au = loadAuth();
+    if (m.token) try { localStorage.setItem(AUTH_KEY, JSON.stringify({ name: m.name, token: m.token })); } catch { /* */ }
+    else if (au && au.name !== m.name) try { localStorage.setItem(AUTH_KEY, JSON.stringify({ ...au, name: m.name })); } catch { /* */ }
+    if (!P) start(m.save);
+    else { sendLook(); lastNetSave = 0; save(); }
+  }
+  if (m.t === 'autherr') {
+    if (P) { log(`Сервер: ${m.reason}`, 'bad'); return; }
+    if (m.kind === 'auth') { try { localStorage.removeItem(AUTH_KEY); } catch { /* */ } startReady(); }
+    startMsg(m.reason, true);
+  }
+  if (m.t === 'kicked') { net.kicked = true; log('Вход в этот аккаунт выполнен с другого устройства. Перезагрузите страницу, чтобы вернуться.', 'bad'); banner('Вход с другого устройства'); }
+  if (m.t === 'saveerr') log('Сервер не принял сохранение', 'bad');
   if (m.t === 'online') net.online = m.n;
   if (m.t === 'look') {
     let r = remotes.get(m.id);
@@ -1269,7 +1303,7 @@ function placeCamera(p, dist) {
 }
 loop();
 
-// ================= Старт =================
+// ================= Старт: вход и регистрация =================
 function start(p) {
   P = migrate(p);
   $('start').remove();
@@ -1277,18 +1311,52 @@ function start(p) {
   spawnHero();
   teleportTo(P.x, P.z);
   renderSkills(); renderInv(); setChatTab('all');
-  netConnect();
+  sendLook();
   log(`Добро пожаловать, ${P.name}! ЛКМ — идти/выбрать цель (второй клик — атака), ПКМ или два пальца — камера, щипок/колесо — зум, V — сброс камеры, 1–3 — умения, 4–5 — зелья, Tab — цель, I — инвентарь, C — персонаж, M — карта, Enter — чат.`);
   log('Поговорите с Хранителем врат, чтобы перенестись в зону охоты, и с Торговцем — за снаряжением.');
+  try { localStorage.setItem(SAVE_KEY, JSON.stringify(P)); } catch { /* */ }
 }
-const saved = loadSave();
-if (saved) { $('start-cont').hidden = false; $('start-cont').textContent = `Продолжить: ${saved.name} (${CLASSES[saved.cls].name}, ${saved.lvl} ур.)`; $('start-cont').onclick = () => start(saved); }
+const localChar = loadSave(); // персонаж из этого браузера (до аккаунтов) — переносится при регистрации
+function startMsg(text, bad) { const el = $('start-msg'); if (el) { el.textContent = text || ''; el.classList.toggle('bad', !!bad); } }
+function startBusy(on) { for (const id of ['start-new', 'start-login', 'start-cont']) if ($(id)) $(id).disabled = on || !net.ok; }
+function startReady() {
+  if (P || !$('start')) return;
+  startBusy(false);
+  const au = loadAuth();
+  $('start-cont').hidden = !au?.token;
+  if (au?.token) $('start-cont').textContent = `Продолжить: ${au.name}`;
+  $('start-logout').hidden = !au?.token;
+  startMsg(net.ok ? '' : 'Подключение к серверу…');
+}
+function sendAuth(m) {
+  if (!net.ok) return startMsg('Нет связи с сервером, пробуем снова…', true);
+  startBusy(true); startMsg('Вход…');
+  net.ws.send(JSON.stringify(m));
+  setTimeout(() => { if (!P) startBusy(false); }, 1500);
+}
 let pickCls = 'warrior';
 for (const b of document.querySelectorAll('[data-cls]')) b.addEventListener('click', () => { pickCls = b.dataset.cls; for (const x of document.querySelectorAll('[data-cls]')) x.classList.toggle('on', x === b); });
+if (localChar) {
+  $('start-import').hidden = false;
+  $('start-import').querySelector('span').textContent = `Перенести персонажа из этого браузера: ${localChar.name} (${CLASSES[localChar.cls]?.name}, ${localChar.lvl} ур.)`;
+  $('cname').value = localChar.name;
+}
+const creds = () => ({ name: $('cname').value.trim(), pass: $('cpass').value });
 $('start-new').onclick = () => {
-  const name = $('cname').value.trim() || 'Странник';
-  if (saved && !confirm('Начать заново? Текущий персонаж будет удалён.')) return;
-  start(newChar(name.slice(0, 16), pickCls));
+  const c = creds();
+  const imp = localChar && $('start-import').querySelector('input').checked;
+  sendAuth({ t: 'register', ...c, save: imp ? { ...localChar, name: c.name } : newChar(c.name, pickCls) });
 };
+$('start-login').onclick = () => sendAuth({ t: 'login', ...creds() });
+$('cpass').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('start-login').click(); });
+$('start-cont').onclick = () => sendAuth({ t: 'auth', token: loadAuth()?.token });
+$('start-logout').onclick = () => {
+  const au = loadAuth();
+  if (au?.token && net.ok) net.ws.send(JSON.stringify({ t: 'logout', token: au.token }));
+  try { localStorage.removeItem(AUTH_KEY); } catch { /* */ }
+  startReady();
+};
+startReady();
+netConnect();
 // хук для автотестов: dev-сервер или ?test
 if (import.meta.env.DEV || location.search.includes('test')) window.__g = { get P() { return P; }, mobs, get hero() { return hero; }, cam, teleportTo, gainXp, useSkill, joy, useItem, openNpc, equipIdx, unequip, enchant, stats, get enchMode() { return enchMode; }, renderInv, remotes, net, npcs, respawn, get dead() { return dead; }, get target() { return target; }, set target(v) { target = v; }, attack() { attacking = true; } };

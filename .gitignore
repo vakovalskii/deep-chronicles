@@ -3,3 +3,5 @@ dist
 .env
 tests/last-*.png
 tests/tmp/
+public/assets/tex/raw/
+server/data/

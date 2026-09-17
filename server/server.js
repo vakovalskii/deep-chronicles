@@ -1,6 +1,11 @@
-// WS-сервер «Хроник Глубин»: присутствие игроков (позиции 10 Гц), онлайн, чат с каналами.
-// Запуск: node server/server.js (PORT, по умолчанию 8790). Прод: systemd realms-ws, nginx /ws.
+// WS-сервер «Хроник Глубин»: аккаунты и сохранения, присутствие игроков (позиции 10 Гц), онлайн, чат с каналами.
+// Запуск: node server/server.js (PORT — 8790, DB — файл SQLite). Прод: systemd realms-ws, nginx /ws.
 import { WebSocketServer } from 'ws';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { openDb } from './accounts.js';
+
+const acc = openDb(process.env.DB || path.join(path.dirname(fileURLToPath(import.meta.url)), 'data', 'realms.db'));
 
 const PORT = Number(process.env.PORT) || 8790;
 const VIEW = 220;  // м — кого видно
@@ -11,7 +16,6 @@ const players = new Map();
 let seq = 0;
 
 const num = (v, lim = 1e5) => (Number.isFinite(+v) ? Math.max(-lim, Math.min(lim, +v)) : 0);
-const cleanName = (s) => String(s || '').replace(/[^\p{L}\p{N} _-]/gu, '').trim().slice(0, 16) || 'Странник';
 const cleanText = (s) => String(s || '').replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 160);
 const send = (p, m) => { if (p.ws.readyState === 1) p.ws.send(typeof m === 'string' ? m : JSON.stringify(m)); };
 const d2 = (a, b) => Math.hypot(a.st.x - b.st.x, a.st.z - b.st.z);
@@ -27,21 +31,47 @@ function cleanLook(l) {
     gear: { head: c(g.head), legs: c(g.legs), gloves: c(g.gloves), feet: c(g.feet), shield: c(g.shield), helmKind: kind(g.helmKind), shieldKind: kind(g.shieldKind), legKind: kind(g.legKind) },
   };
 }
-const online = () => [...players.values()].filter((p) => p.name).length;
-const broadcast = (m) => { const s = JSON.stringify(m); for (const p of players.values()) if (p.name) send(p, s); };
+const online = () => [...players.values()].filter((p) => p.key).length;
+const broadcast = (m) => { const s = JSON.stringify(m); for (const p of players.values()) if (p.key) send(p, s); };
 
-wss.on('connection', (ws) => {
-  const p = { id: ++seq, ws, name: null, look: null, st: null, known: new Set(), lastChat: {}, stN: 0, stT: 0 };
+// попытки входа: не больше 12 в минуту с адреса
+const tries = new Map();
+const tooMany = (ip) => {
+  const now = Date.now(), t = tries.get(ip) || { n: 0, at: now };
+  if (now - t.at > 60_000) { t.n = 0; t.at = now; }
+  tries.set(ip, t);
+  return ++t.n > 12;
+};
+setInterval(() => { const now = Date.now(); for (const [ip, t] of tries) if (now - t.at > 60_000) tries.delete(ip); }, 60_000);
+
+wss.on('connection', (ws, req) => {
+  const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
+  const p = { id: ++seq, ws, name: null, key: null, look: null, st: null, known: new Set(), lastChat: {}, stN: 0, stT: 0, saveT: 0 };
   players.set(p.id, p);
+  send(p, { t: 'hi', online: online() });
   ws.on('message', (raw) => {
     let m; try { m = JSON.parse(raw); } catch { return; }
-    if (m.t === 'hello') {
-      p.name = cleanName(m.name); p.look = cleanLook(m.look);
-      send(p, { t: 'welcome', id: p.id, online: online() });
+    if (m.t === 'auth' || m.t === 'login' || m.t === 'register') {
+      if (p.key) return;
+      if (m.t !== 'auth' && tooMany(ip)) return send(p, { t: 'autherr', reason: 'Слишком много попыток, подождите минуту' });
+      const r = m.t === 'auth' ? acc.byToken(m.token) : m.t === 'login' ? acc.login(m.name, m.pass) : acc.register(m.name, m.pass, m.save);
+      if (r.err) return send(p, { t: 'autherr', reason: r.err, kind: m.t });
+      // тот же аккаунт с другого устройства — старое соединение закрываем
+      for (const q of players.values()) if (q !== p && q.key === r.key) { send(q, { t: 'kicked' }); q.key = null; q.ws.close(); }
+      p.key = r.key; p.name = r.name; p.look = null;
+      send(p, { t: 'authok', id: p.id, name: r.name, token: r.token, save: r.save, online: online() });
       broadcast({ t: 'online', n: online() });
       return;
     }
-    if (!p.name) return;
+    if (!p.key) return;
+    if (m.t === 'save') {
+      const now = Date.now();
+      if (now - p.saveT < 2000) return; // не чаще раза в 2 с
+      p.saveT = now;
+      if (!acc.store(p.key, m.p)) send(p, { t: 'saveerr' });
+      return;
+    }
+    if (m.t === 'logout') { if (m.token) acc.logout(m.token); return; }
     if (m.t === 'st') {
       const now = Date.now();
       if (now - p.stT > 1000) { p.stT = now; p.stN = 0; }
@@ -62,7 +92,7 @@ wss.on('connection', (ws) => {
       p.lastChat[ch] = Date.now();
       const s = JSON.stringify({ t: 'chat', ch, from: p.name, id: p.id, text });
       for (const q of players.values()) {
-        if (!q.name) continue;
+        if (!q.key) continue;
         if (ch === 'near' && q !== p && (!q.st || !p.st || d2(p, q) > NEAR)) continue;
         send(q, s);
       }
@@ -71,12 +101,13 @@ wss.on('connection', (ws) => {
   ws.on('close', () => {
     players.delete(p.id);
     if (p.name) { broadcast({ t: 'leave', id: p.id }); broadcast({ t: 'online', n: online() }); }
+    p.key = null;
   });
 });
 
 // снапшоты: каждому — соседи в радиусе видимости
 setInterval(() => {
-  const list = [...players.values()].filter((p) => p.name && p.st);
+  const list = [...players.values()].filter((p) => p.key && p.st);
   for (const p of list) {
     const o = [];
     for (const q of list) {
@@ -91,4 +122,4 @@ setInterval(() => {
 }, 100);
 // пинг, чтобы nginx не рвал простаивающие соединения
 setInterval(() => { for (const p of players.values()) if (p.ws.readyState === 1) p.ws.ping(); }, 25000);
-console.log(`realms-ws :${PORT}`);
+console.log(`realms-ws :${PORT}, аккаунтов: ${acc.count()}`);

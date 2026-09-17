@@ -62,7 +62,7 @@ const addObs = (x, z, r) => obstacles.push({ x, z, r });
 const mat = (color, o = {}) => new THREE.MeshLambertMaterial({ color, ...o });
 const MATS = {};
 // kind — пиксельная текстура поверхности (см. tex.js), scale — плиток на метр
-const KIND_SCALE = { brick: 0.5, cobble: 0.35, roof: 0.6, house: 0.25, wood: 0.5, bark: 0.6, leaves: 0.3, stone: 0.35, plain: 0.5 };
+const KIND_SCALE = { brick: 0.4, cobble: 0.3, roof: 0.4, house: 0.2, wood: 0.4, bark: 0.45, leaves: 0.22, stone: 0.25, plain: 0.5 };
 const M = (c, kind = 'plain') => (MATS[c + kind] ||= mat(c, TEX[kind] ? { map: TEX[kind]() } : {}));
 
 // кладём геометрию в «ведро» по цвету → потом сливаем: весь статичный мир — десяток вызовов отрисовки
@@ -106,12 +106,12 @@ function buildTerrain(scene) {
   geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
   geo.computeVertexNormals();
   const uv = geo.attributes.uv;
-  for (let i = 0; i < pos.count; i++) uv.setXY(i, pos.getX(i) / 3, pos.getZ(i) / 3);
+  for (let i = 0; i < pos.count; i++) uv.setXY(i, pos.getX(i) / 6, pos.getZ(i) / 6);
   const m = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true, map: TEX.ground() }));
   m.receiveShadow = true; m.name = 'ground';
   scene.add(m);
   // вода в низинах
-  const wmap = TEX.water(); if (wmap) { wmap.repeat.set((MAP + 400) / 6, (MAP + 400) / 6); }
+  const wmap = TEX.water(); if (wmap) { wmap.repeat.set((MAP + 400) / 10, (MAP + 400) / 10); }
   const water = new THREE.Mesh(new THREE.PlaneGeometry(MAP + 400, MAP + 400).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ color: 0x3a6a9a, transparent: true, opacity: 0.8, map: wmap }));
   water.position.y = -6.5; water.name = 'water'; scene.add(water);
   return m;

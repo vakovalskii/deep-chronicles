@@ -6,8 +6,21 @@ let seed = 1;
 const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
 const cache = {};
 
+// сгенерированные тайлы 64×64 (tools/gen-textures.mjs) — если файл есть, берём его вместо процедурного
+export const GEN = ['bark', 'bone', 'brick', 'chain', 'cobble', 'fur', 'ground', 'house', 'leaves', 'plate', 'robe', 'roof', 'stone', 'water', 'wood'];
+const loader = typeof document !== 'undefined' ? new THREE.TextureLoader() : null;
+function setup(t, repeat) {
+  t.magFilter = THREE.NearestFilter;
+  t.minFilter = THREE.NearestMipmapLinearFilter;
+  t.anisotropy = 4;
+  if (repeat) t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
 function make(name, size, draw, { color = false, repeat = true } = {}) {
-  if (cache[name]) return cache[name];
+  if (cache[name] !== undefined) return cache[name];
+  if (GEN.includes(name)) return (cache[name] = loader ? setup(loader.load(`${import.meta.env?.BASE_URL ?? '/'}assets/tex/${name}.png`), true) : null);
   seed = [...name].reduce((a, c) => a * 31 + c.charCodeAt(0), 7) % 2147483647 || 1;
   const w = Array.isArray(size) ? size[0] : size, h = Array.isArray(size) ? size[1] : size;
   const cv = typeof document !== 'undefined' ? document.createElement('canvas') : null;
@@ -20,13 +33,7 @@ function make(name, size, draw, { color = false, repeat = true } = {}) {
   };
   const fill = (v) => { for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) px(i, j, v + (rnd() - 0.5) * 0.08); };
   draw({ x, px, fill, w, h });
-  const t = new THREE.CanvasTexture(cv);
-  t.magFilter = THREE.NearestFilter;
-  t.minFilter = THREE.NearestMipmapLinearFilter;
-  t.anisotropy = 4;
-  if (repeat) t.wrapS = t.wrapT = THREE.RepeatWrapping;
-  t.colorSpace = THREE.SRGBColorSpace;
-  return (cache[name] = t);
+  return (cache[name] = setup(new THREE.CanvasTexture(cv), repeat));
 }
 
 export const TEX = {

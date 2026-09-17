@@ -4,7 +4,12 @@ import { spawn } from 'node:child_process';
 
 const PORT = 5199, WS = 8791, URL = `http://localhost:${PORT}/?ws=ws://localhost:${WS}`;
 const server = spawn('npx', ['vite', '--port', String(PORT), '--strictPort'], { stdio: 'pipe' });
-const wsServer = spawn('node', ['server/server.js'], { stdio: 'pipe', env: { ...process.env, PORT: String(WS) } });
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+const DBDIR = fs.mkdtempSync(path.join(os.tmpdir(), 'realms-e2e-'));
+const wsServer = spawn('node', ['--no-warnings', 'server/server.js'], { stdio: 'pipe', env: { ...process.env, PORT: String(WS), DB: path.join(DBDIR, 'e2e.db') } });
+wsServer.stderr.on('data', (d) => process.stderr.write('[ws] ' + d));
 const results = [];
 let failed = 0;
 async function step(name, fn) {
@@ -28,12 +33,12 @@ try {
 
   await step('стартовый экран открывается', async () => {
     await page.goto(URL);
-    await page.waitForSelector('#start-new', { timeout: 15000 });
+    await page.waitForSelector('#start-new:not([disabled])', { timeout: 15000 });
     expect(await page.isVisible('[data-cls=mage]'), 'нет выбора класса');
   });
 
   await step('создание персонажа (маг)', async () => {
-    await page.fill('#cname', 'Автотест');
+    await page.fill('#cname', 'Автотест'); await page.fill('#cpass', 'пароль1');
     await page.click('[data-cls=mage]');
     await page.click('#start-new');
     await page.waitForFunction(() => window.__g?.P && document.body.classList.contains('ingame'), null, { timeout: 10000 });
@@ -175,8 +180,11 @@ try {
 
   await step('сохранение переживает перезагрузку', async () => {
     await page.evaluate(() => dispatchEvent(new Event('beforeunload')));
+    await wait(500);
+    // локальную копию стираем — прогресс должен прийти с сервера
+    await page.evaluate(() => localStorage.removeItem('l2w-save1'));
     await page.reload();
-    await page.waitForSelector('#start-cont:not([hidden])', { timeout: 10000 });
+    await page.waitForSelector('#start-cont:not([hidden]):not([disabled])', { timeout: 10000 });
     expect((await page.textContent('#start-cont')).includes('Автотест'), 'нет кнопки продолжения');
     await page.click('#start-cont');
     await page.waitForFunction(() => window.__g?.hero, null, { timeout: 10000 });
@@ -189,8 +197,8 @@ try {
   const PG = (fn, arg) => phone.evaluate(fn, arg);
   await step('телефон: создание персонажа, мобильный интерфейс', async () => {
     await phone.goto(URL + '&touch');
-    await phone.waitForSelector('#start-new');
-    await phone.fill('#cname', 'Телефон'); await phone.tap('#start-new');
+    await phone.waitForSelector('#start-new:not([disabled])');
+    await phone.fill('#cname', 'Телефон'); await phone.fill('#cpass', 'пароль2'); await phone.tap('#start-new');
     await phone.waitForFunction(() => window.__g?.P, null, { timeout: 10000 });
     expect(await phone.isVisible('#joy'), 'нет джойстика');
     expect(await phone.isVisible('#mbtns [data-act=attack]'), 'нет кнопки атаки');
@@ -245,12 +253,28 @@ try {
     await page.waitForFunction(() => [...document.querySelectorAll('#logbox .c-trade')].some((d) => d.textContent.includes('Продам меч')), null, { timeout: 5000 });
   });
 
+  await step('аккаунт: занятое имя, неверный пароль, вход с другого устройства', async () => {
+    const other = await (await browser.newContext({ viewport: { width: 1000, height: 700 } })).newPage();
+    other.on('pageerror', (e) => errors.push('другое устройство: ' + e.message));
+    await other.goto(URL);
+    await other.waitForSelector('#start-new:not([disabled])');
+    const msg = (t) => other.waitForFunction((t) => document.getElementById('start-msg').textContent.includes(t), t, { timeout: 5000 });
+    await other.fill('#cname', 'автотест'); await other.fill('#cpass', 'чужой');
+    await other.click('#start-new'); await msg('занято');
+    await other.click('#start-login'); await msg('Неверное');
+    await other.fill('#cpass', 'пароль1'); await other.click('#start-login');
+    await other.waitForFunction(() => window.__g?.P, null, { timeout: 8000 });
+    expect((await other.evaluate(() => window.__g.P.equip.weapon)) === 'staff_oak', 'на другом устройстве не тот персонаж');
+    await page.waitForFunction(() => document.getElementById('logbox').textContent.includes('другого устройства'), null, { timeout: 5000 });
+    await other.close();
+  });
+
   await step('нет ошибок в консоли', async () => { expect(!errors.length, errors.slice(0, 3).join(' | ')); });
   await browser.close();
 } catch (e) {
   failed++; results.push(`  ✗ запуск: ${e.message}`);
 } finally {
-  server.kill(); wsServer.kill();
+  server.kill(); wsServer.kill(); fs.rmSync(DBDIR, { recursive: true, force: true });
 }
 console.log(`E2E:\n${results.join('\n')}\n${failed ? `ПРОВАЛЕНО: ${failed}` : 'всё прошло'}`);
 process.exit(failed ? 1 : 0);

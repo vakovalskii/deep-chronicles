@@ -4,12 +4,14 @@ import { buildWorld, heightAt, zoneAt, obstacles, TOWNS, TELEPORTS, CRYPT, DUNGE
 import { buildMob, buildHero, buildNpc } from './models.js';
 
 const $ = (id) => document.getElementById(id);
+export const MOBILE = new URLSearchParams(location.search).has('touch') || matchMedia('(pointer: coarse)').matches;
+if (MOBILE) document.documentElement.classList.add('mob');
 const rand = (a, b) => a + Math.random() * (b - a);
 const irand = (a, b) => Math.floor(rand(a, b + 1));
 
 // ================= Рендер =================
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+renderer.setPixelRatio(Math.min(devicePixelRatio, MOBILE ? 1.25 : 1.5));
 renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -21,7 +23,7 @@ scene.fog = new THREE.Fog(SKY.clone(), 150, 620);
 const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.3, 2000);
 const hemi = new THREE.HemisphereLight(0xdfefff, 0x4a4030, 1.3);
 const sun = new THREE.DirectionalLight(0xfff0d8, 2.2);
-sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048);
+sun.castShadow = true; sun.shadow.mapSize.set(MOBILE ? 1024 : 2048, MOBILE ? 1024 : 2048);
 Object.assign(sun.shadow.camera, { left: -60, right: 60, top: 60, bottom: -60, near: 1, far: 300 });
 scene.add(hemi, sun, sun.target);
 addEventListener('resize', () => { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); });
@@ -336,14 +338,17 @@ const cam = { yaw: Math.PI, pitch: 0.55, dist: 18 };
 const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
 let rmb = false, lastX = 0, lastY = 0;
 renderer.domElement.addEventListener('contextmenu', (e) => e.preventDefault());
-renderer.domElement.addEventListener('pointerdown', (e) => {
-  if (!P) return;
-  if (e.button === 2) { rmb = true; lastX = e.clientX; lastY = e.clientY; return; }
-  if (e.button !== 0 || dead) return;
-  ndc.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+function pickAt(cx, cy) {
+  ndc.set((cx / innerWidth) * 2 - 1, -(cy / innerHeight) * 2 + 1);
   ray.setFromCamera(ndc, camera);
   const pickables = [...mobs.filter((m) => !m.dead && m.obj.visible && flatDist(m.obj.position, hero.position) < 120).map((m) => m.obj), ...npcs.map((n) => n.obj)];
-  const hit = ray.intersectObjects(pickables, true)[0];
+  let hit = ray.intersectObjects(pickables, true)[0];
+  // на телефоне палец толще модели — ищем ближайшего к точке касания моба в радиусе 36 px
+  if (!hit && MOBILE) {
+    let best = null, bd = 36;
+    for (const m of mobs) if (!m.dead && m.obj.visible && flatDist(m.obj.position, hero.position) < 80) { const p = toScreen(_v.copy(m.obj.position).setY(m.obj.position.y + 1)); const d = Math.hypot(p.x - cx, p.y - cy); if (p.vis && d < bd) { bd = d; best = m; } }
+    if (best) hit = { object: best.obj };
+  }
   if (hit) {
     const m = hit.object.userData.mob, n = hit.object.userData.npc;
     if (m) { if (target === m) { attacking = true; dest = null; } else { target = m; attacking = false; } }
@@ -355,7 +360,45 @@ renderer.domElement.addEventListener('pointerdown', (e) => {
   // катакомбы: пол — плоскость y=0
   if (hero.position.x > DUNGEON.x0 - 100) { const t = -ray.ray.origin.y / ray.ray.direction.y; if (t > 0) p = ray.ray.at(t, new THREE.Vector3()); }
   if (p) { dest = p.clone(); attacking = false; talkTo = null; pendingSkill = null; clickMark(p); }
+}
+// касания: тап — выбор/ходьба, один палец — орбита, два — щипок-зум и орбита
+let orbDX = 0, orbDY = 0, zoomAcc = 0;
+const touches = new Map();
+let touchDrag = false, pinch0 = 0, mid0 = null;
+renderer.domElement.addEventListener('pointerdown', (e) => {
+  if (!P) return;
+  if (e.pointerType === 'touch') {
+    touches.set(e.pointerId, { x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY, t0: performance.now() });
+    try { renderer.domElement.setPointerCapture(e.pointerId); } catch { /* */ }
+    if (touches.size === 2) { const [a, b] = [...touches.values()]; pinch0 = Math.hypot(a.x - b.x, a.y - b.y); mid0 = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }; touchDrag = true; }
+    else touchDrag = false;
+    return;
+  }
+  if (e.button === 2) { rmb = true; lastX = e.clientX; lastY = e.clientY; return; }
+  if (e.button !== 0 || dead) return;
+  pickAt(e.clientX, e.clientY);
 });
+renderer.domElement.addEventListener('pointermove', (e) => {
+  const t = touches.get(e.pointerId); if (!t) return;
+  const px = t.x, py = t.y; t.x = e.clientX; t.y = e.clientY;
+  if (touches.size === 1) {
+    if (Math.hypot(t.x - t.x0, t.y - t.y0) > 10) touchDrag = true;
+    if (touchDrag) { orbDX += (px - t.x) * 1.4; orbDY += (py - t.y) * 1.4; }
+  } else if (touches.size === 2) {
+    const [a, b] = [...touches.values()], d = Math.hypot(a.x - b.x, a.y - b.y), mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    if (pinch0 > 0 && d > 0) zoomAcc += Math.log(pinch0 / d);
+    orbDX += (mid0.x - mid.x) * 1.4; orbDY += (mid0.y - mid.y) * 1.4;
+    pinch0 = d; mid0 = mid;
+  }
+});
+const touchEnd = (e) => {
+  const t = touches.get(e.pointerId); if (!t) return;
+  touches.delete(e.pointerId);
+  if (!touchDrag && touches.size === 0 && e.type === 'pointerup' && performance.now() - t.t0 < 450 && !dead) pickAt(t.x, t.y);
+  if (touches.size === 0) touchDrag = false;
+};
+renderer.domElement.addEventListener('pointerup', touchEnd);
+renderer.domElement.addEventListener('pointercancel', touchEnd);
 addEventListener('pointerup', (e) => { if (e.button === 2) rmb = false; });
 addEventListener('pointermove', (e) => {
   if (!rmb) return;
@@ -363,7 +406,6 @@ addEventListener('pointermove', (e) => {
   lastX = e.clientX; lastY = e.clientY;
 });
 // трекпад: два пальца — орбита, щипок (приходит как Ctrl+колесо) — зум; колесо мыши — зум
-let orbDX = 0, orbDY = 0, zoomAcc = 0;
 renderer.domElement.addEventListener('wheel', (e) => {
   e.preventDefault();
   const k = e.deltaMode === 1 ? 16 : 1;
@@ -412,6 +454,36 @@ function clickMark(p) { marker.position.copy(p).add(new THREE.Vector3(0, 0.2, 0)
 const selRing = new THREE.Mesh(new THREE.RingGeometry(1, 1.2, 32).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xff5050, transparent: true, opacity: 0.8 }));
 scene.add(selRing);
 
+// ================= Телефон: джойстик и кнопки =================
+const joy = { x: 0, y: 0 };
+if (MOBILE) {
+  const pad = $('joy'), knob = pad.firstElementChild;
+  let jid = null, cx = 0, cy = 0;
+  pad.addEventListener('pointerdown', (e) => { e.preventDefault(); jid = e.pointerId; try { pad.setPointerCapture(jid); } catch { /* синтетическое касание */ } const r = pad.getBoundingClientRect(); cx = r.left + r.width / 2; cy = r.top + r.height / 2; moveJoy(e); });
+  const moveJoy = (e) => {
+    if (e.pointerId !== jid) return;
+    let dx = (e.clientX - cx) / 50, dy = (e.clientY - cy) / 50; const L = Math.hypot(dx, dy); if (L > 1) { dx /= L; dy /= L; }
+    joy.x = dx; joy.y = dy; knob.style.transform = `translate(${dx * 38}px,${dy * 38}px)`;
+  };
+  pad.addEventListener('pointermove', moveJoy);
+  const end = (e) => { if (e.pointerId !== jid) return; jid = null; joy.x = joy.y = 0; knob.style.transform = ''; };
+  pad.addEventListener('pointerup', end); pad.addEventListener('pointercancel', end);
+  $('fsbtn').onclick = () => (document.documentElement.requestFullscreen?.() || Promise.reject()).catch(() => log('На iPhone: «Поделиться» → «На экран Домой» — игра откроется на весь экран'));
+  $('mbtns').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-act]'); if (!b || !P) return;
+    const a = b.dataset.act;
+    if (a === 'attack') { if (target?.def && !target.dead) { attacking = true; dest = null; } else nextTarget(); }
+    if (a === 'next') nextTarget();
+    if (a === 'inv') toggle('inv');
+    if (a === 'map') toggle('bigmap');
+    if (a === 'cam') { cam.yaw = hero.rotation.y + Math.PI; cam.pitch = 0.55; cam.dist = 18; }
+    if (a === 'fs') (document.documentElement.requestFullscreen?.() || Promise.reject()).catch(() => log('На iPhone: «Поделиться» → «На экран Домой» — игра откроется на весь экран'));
+  });
+  // Safari: не масштабировать страницу
+  for (const ev of ['gesturestart', 'gesturechange']) document.addEventListener(ev, (e) => e.preventDefault(), { passive: false });
+  document.addEventListener('dblclick', (e) => e.preventDefault(), { passive: false });
+}
+
 // ================= Движение =================
 function moveEntity(pos, dir, dist, radius) {
   pos.x += dir.x * dist; pos.z += dir.z * dist;
@@ -444,12 +516,13 @@ function updateHero(dt) {
     return;
   }
   // WASD — прямое управление относительно камеры
-  const kx = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0), kz = (keys.KeyS ? 1 : 0) - (keys.KeyW ? 1 : 0);
-  if (kx || kz) {
+  const kx = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0) + joy.x, kz = (keys.KeyS ? 1 : 0) - (keys.KeyW ? 1 : 0) + joy.y;
+  if (Math.abs(kx) + Math.abs(kz) > 0.15) {
     dest = null; attacking = false; talkTo = null;
     const f = new THREE.Vector3(Math.sin(cam.yaw + Math.PI), 0, Math.cos(cam.yaw + Math.PI)), r = new THREE.Vector3(-f.z, 0, f.x);
+    const amt = Math.min(1, Math.hypot(kx, kz));
     const dir = f.multiplyScalar(-kz).add(r.multiplyScalar(kx)).normalize();
-    moveEntity(hero.position, dir, s.speed * dt, 0.6); hero.rotation.y = Math.atan2(dir.x, dir.z); heroSt.moving = true;
+    moveEntity(hero.position, dir, s.speed * amt * dt, 0.6); hero.rotation.y = Math.atan2(dir.x, dir.z); heroSt.moving = true;
   }
   // разговор с NPC
   if (talkTo) {
@@ -719,7 +792,7 @@ loop();
 function start(p) {
   P = p;
   $('start').remove();
-  document.body.classList.add('ingame');
+  document.body.classList.add('ingame'); document.documentElement.classList.add('ingame-root');
   spawnHero();
   teleportTo(P.x, P.z);
   renderSkills(); renderInv();
@@ -736,4 +809,4 @@ $('start-new').onclick = () => {
   start(newChar(name.slice(0, 16), pickCls));
 };
 // хук для автотестов: dev-сервер или ?test
-if (import.meta.env.DEV || location.search.includes('test')) window.__g = { get P() { return P; }, mobs, get hero() { return hero; }, cam, teleportTo, gainXp, useSkill, useItem, openNpc, npcs, respawn, get dead() { return dead; }, get target() { return target; }, set target(v) { target = v; }, attack() { attacking = true; } };
+if (import.meta.env.DEV || location.search.includes('test')) window.__g = { get P() { return P; }, mobs, get hero() { return hero; }, cam, teleportTo, gainXp, useSkill, joy, useItem, openNpc, npcs, respawn, get dead() { return dead; }, get target() { return target; }, set target(v) { target = v; }, attack() { attacking = true; } };

@@ -141,6 +141,54 @@ try {
     expect((await page.textContent('#start-cont')).includes('Автотест'), 'нет кнопки продолжения');
   });
 
+  // ===== телефон =====
+  const phone = await (await browser.newContext({ viewport: { width: 844, height: 390 }, hasTouch: true, isMobile: true, deviceScaleFactor: 2 })).newPage();
+  phone.on('pageerror', (e) => errors.push('телефон: ' + e.message));
+  const PG = (fn, arg) => phone.evaluate(fn, arg);
+  await step('телефон: создание персонажа, мобильный интерфейс', async () => {
+    await phone.goto(URL + '?touch');
+    await phone.waitForSelector('#start-new');
+    await phone.fill('#cname', 'Телефон'); await phone.tap('#start-new');
+    await phone.waitForFunction(() => window.__g?.P, null, { timeout: 10000 });
+    expect(await phone.isVisible('#joy'), 'нет джойстика');
+    expect(await phone.isVisible('#mbtns [data-act=attack]'), 'нет кнопки атаки');
+    const over = await PG(() => { const r = (id) => document.getElementById(id).getBoundingClientRect(); const a = r('skills'), b = r('log'); return a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom; });
+    expect(!over, 'панель умений перекрывает лог');
+    const clipped = await PG(() => [...document.querySelectorAll('#mbtns button, #skills .slot')].filter((b) => { const r = b.getBoundingClientRect(); return r.bottom > innerHeight || r.right > innerWidth || r.top < 0; }).map((b) => b.textContent));
+    expect(!clipped.length, `за краем экрана: ${clipped.join(', ')}`);
+    const hit = await PG(() => { const r = (id) => document.getElementById(id).getBoundingClientRect(), a = r('mbtns'); return ['skills', 'mapbox'].filter((id) => { const b = r(id); return a.left < b.right && b.left < a.right && a.top < b.bottom + 4 && b.top < a.bottom + 4; }).join(','); });
+    expect(!hit, `кнопки налезают на: ${hit}`);
+    await phone.waitForTimeout(1500);
+    await phone.screenshot({ path: 'tests/last-phone.png' });
+  });
+  await step('телефон: тап по земле — идти', async () => {
+    const a = await PG(() => window.__g.hero.position.clone());
+    await phone.touchscreen.tap(560, 230);
+    await phone.waitForTimeout(1500);
+    const b = await PG(() => window.__g.hero.position.clone());
+    expect(Math.hypot(a.x - b.x, a.z - b.z) > 1, 'не пошёл');
+  });
+  await step('телефон: джойстик двигает персонажа', async () => {
+    const a = await PG(() => window.__g.hero.position.clone());
+    await PG(() => { const pad = document.getElementById('joy'), r = pad.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+      const ev = (t, x, y) => pad.dispatchEvent(new PointerEvent(t, { bubbles: true, pointerId: 9, pointerType: 'touch', clientX: x, clientY: y }));
+      ev('pointerdown', cx, cy); ev('pointermove', cx, cy - 60); setTimeout(() => ev('pointerup', cx, cy - 60), 1200); });
+    await phone.waitForTimeout(1500);
+    const b = await PG(() => window.__g.hero.position.clone());
+    expect(Math.hypot(a.x - b.x, a.z - b.z) > 5, `сдвиг ${Math.hypot(a.x - b.x, a.z - b.z).toFixed(1)}`);
+    expect((await PG(() => window.__g.joy.x + window.__g.joy.y)) === 0, 'джойстик не отпустился');
+  });
+  await step('телефон: кнопки атаки и вещей', async () => {
+    await PG(() => { const g = window.__g; const m = g.mobs.find((x) => x.id === 'rabbit' && !x.dead); g.teleportTo(m.obj.position.x + 5, m.obj.position.z); });
+    const k0 = await PG(() => window.__g.P.kills);
+    await phone.tap('#mbtns [data-act=attack]'); await phone.tap('#mbtns [data-act=attack]');
+    await phone.waitForFunction((k) => window.__g.P.kills > k || window.__g.target, k0, { timeout: 8000 });
+    await phone.tap('#mbtns [data-act=inv]');
+    const full = await PG(() => { const r = document.getElementById('inv').getBoundingClientRect(); return r.width >= innerWidth - 2; });
+    expect(full, 'инвентарь не на весь экран');
+    await phone.tap('#inv [data-close]');
+  });
+
   await step('нет ошибок в консоли', async () => { expect(!errors.length, errors.slice(0, 3).join(' | ')); });
   await browser.close();
 } catch (e) {

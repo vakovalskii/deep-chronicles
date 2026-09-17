@@ -112,6 +112,15 @@ export function rigModel(scene, { height = RIG.height } = {}) {
 
   const { head, armL, armR, legL, legR, torso } = nodes;
   g.userData.parts = nodes;
+  // кисть — нижняя точка геометрии руки: туда цепляем оружие и щит
+  g.userData.handY = {};
+  for (const key of ['armL', 'armR']) {
+    const node = nodes[key];
+    if (!node) continue;
+    // геометрия части уже сдвинута в пивот, поэтому берём её собственный bbox
+    node.children[0].geometry.computeBoundingBox();
+    g.userData.handY[key] = node.children[0].geometry.boundingBox.min.y * 0.9;
+  }
   // та же схема, что у процедурного героя: шаг, замах, покачивание
   g.userData.anim = (t, st = {}) => {
     const w = st.moving ? Math.sin(t * 9) : 0;
@@ -139,6 +148,17 @@ export async function applyModel(group, id, { base = MODELS_URL, height = RIG.he
     if (!rigged) return false;
     for (const child of own) child.visible = false;
     group.add(rigged);
+    // оружие и щит переносим из спрятанных процедурных рук в кисти модели
+    const hands = group.userData.hands;
+    if (hands) {
+      for (const [key, item] of [['armR', hands.weapon], ['armL', hands.shield]]) {
+        const node = rigged.userData.parts[key];
+        if (!node || !item) continue;
+        item.position.set(0, rigged.userData.handY[key] ?? -0.6, 0.1);
+        item.visible = true;
+        node.add(item);
+      }
+    }
     group.userData.anim = rigged.userData.anim;
     group.userData.model = id;
     return true;

@@ -87,6 +87,8 @@ function humanoid(color, { robe = false, scale = 1, weaponColor = 0xa0a0a0, staf
   g.scale.setScalar(scale);
   const off = Math.random() * 6.28;
   g.userData.setWeapon = setWeapon;
+  // кисти: за них цепляется оружие и щит, в том числе когда процедурное тело подменяется моделью
+  g.userData.hands = { armL, armR, weapon, shield };
   g.userData.setBody = (c, r, kind) => { body.color.setHex(c); if (r !== undefined) setTorso(r); setMap(body, r ? 'robe' : kind || bodyKind); };
   g.userData.setGear = ({ head: hc, legs, gloves, feet, shield: sc, helmKind, shieldKind, legKind }) => {
     setMap(helmM, helmKind === 'apprentice' || helmKind === 'mystic' ? 'cloth' : helmKind === 'leather' ? 'leather' : 'plate');

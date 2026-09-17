@@ -9,7 +9,10 @@
     "test:e2e": "node tests/e2e.mjs",
     "test": "npm run test:unit && npm run test:server && npm run build && npm run test:e2e",
     "server": "node --no-warnings server/server.js",
-    "test:server": "node --no-warnings --test tests/server.test.js"
+    "test:server": "node --no-warnings --test tests/server.test.js",
+    "deploy": "bash deploy/deploy.sh",
+    "deploy:quick": "bash deploy/quick.sh",
+    "test:e2e:show": "HEADED=1 SLOW=120 node tests/e2e.mjs"
   },
   "dependencies": {
     "three": "^0.170.0",

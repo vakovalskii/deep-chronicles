@@ -21,7 +21,7 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
 
 try {
   for (let i = 0; i < 50; i++) { try { if ((await fetch(URL)).ok) break; } catch { /* ждём */ } await new Promise((r) => setTimeout(r, 200)); }
-  const browser = await chromium.launch({ channel: process.env.PW_CHANNEL || 'chrome', headless: process.env.HEADED ? false : true, args: ['--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
+  const browser = await chromium.launch({ channel: process.env.PW_CHANNEL || 'chrome', headless: process.env.HEADED ? false : true, slowMo: Number(process.env.SLOW || 0), args: ['--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
   const page = await (await browser.newContext({ viewport: { width: 1280, height: 800 } })).newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));

@@ -13,6 +13,10 @@ const G = {
   caps: new THREE.CapsuleGeometry(0.35, 0.8, 4, 8),
 };
 const skin = lam(0xe0b090, {}, 'face');
+const GOLD = new THREE.MeshLambertMaterial({ color: 0xe0b040, emissive: 0x402800 });
+// конус мантии: радиус 0.55 внизу (y = 0.30), сужается на 0.55 за 1.5 м
+const coneR = (y) => 0.55 * (1 - (y - 0.3) / 1.5) + 0.012;
+const TRIM_GEO = [[0.3, 0.4], [0.47, 0.5]].map(([a, b]) => new THREE.CylinderGeometry(coneR(b), coneR(a), b - a, 8, 1, true).translate(0, (a + b) / 2, 0));
 const setMap = (m, kind) => { const t = tx(kind); if (m.map !== t) { m.map = t; m.needsUpdate = true; } };
 
 // гуманоид: тело, голова, руки (правая — с оружием), ноги; шлем, перчатки, сапоги, щит — по экипировке
@@ -26,7 +30,11 @@ function humanoid(color, { robe = false, scale = 1, weaponColor = 0xa0a0a0, staf
     torso.userData.sx = torso.scale.x; torso.position.y = r ? 1.05 : 1.25;
     torso.userData.y = r ? 1.05 : 1.25;
     legL.visible = legR.visible = !r;
+    trim.visible = r;
   };
+  // золотая кайма по низу мантии (повторяет конус)
+  const trim = new THREE.Group();
+  trim.add(part(TRIM_GEO[0], GOLD), part(TRIM_GEO[1], GOLD));
   const head = part(G.sph, skull ? lam(0xeeeadc, {}, 'bone') : skin.clone(), 0, 2.0, 0); head.scale.setScalar(0.55);
   const legL = new THREE.Group(), legR = new THREE.Group();
   legL.position.set(-0.2, 0.8, 0); legR.position.set(0.2, 0.8, 0);
@@ -73,7 +81,7 @@ function humanoid(color, { robe = false, scale = 1, weaponColor = 0xa0a0a0, staf
   setWeapon(weaponColor, staff);
   setTorso(robe);
   const upper = new THREE.Group();
-  upper.add(torso, head, helm, armL, armR);
+  upper.add(torso, trim, head, helm, armL, armR);
   g.add(upper, legL, legR);
   g.scale.setScalar(scale);
   const off = Math.random() * 6.28;

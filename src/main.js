@@ -571,10 +571,18 @@ function onNet(m) {
   }
   if (m.t === 'snap') {
     const now = performance.now();
+    // смещение часов сервера: берём минимальную задержку (самые быстрые пакеты), медленно отпускаем
+    const d = Date.now() - (m.ts || Date.now());
+    net.off = net.off == null ? d : d < net.off ? d : net.off + (d - net.off) * 0.02;
     for (const [id, x, y, z, ry, a, hp] of m.o) {
       const r = remotes.get(id); if (!r) continue;
-      if (!r.obj.visible || Math.hypot(r.obj.position.x - x, r.obj.position.z - z) > 30) { r.obj.position.set(x, y, z); r.obj.rotation.y = ry; }
-      r.to = { x, y, z, r: ry };
+      r.buf ??= [];
+      const last = r.buf[r.buf.length - 1];
+      // телепорт или первое появление — без интерполяции
+      if (!r.obj.visible || (last && Math.hypot(last.x - x, last.z - z) > 30)) { r.buf.length = 0; r.obj.position.set(x, y, z); r.obj.rotation.y = ry; }
+      r.buf.push({ t: m.ts || Date.now(), x, y, z, r: ry });
+      if (r.buf.length > 30) r.buf.shift();
+      r.to = true;
       if (a & 2 && !(r.a & 2)) r.st.attackT = 1;
       r.a = a; r.hp = hp; r.seen = now; r.obj.visible = true;
     }
@@ -592,13 +600,23 @@ function onNet(m) {
   if (m.t === 'chatwait') log(`${CH_NAME[m.ch]}: можно писать через ${Math.ceil(m.wait / 1000)} с`, 'bad');
 }
 function updateRemotes(dt, t) {
-  const now = performance.now(), k = 1 - Math.exp(-dt * 12);
+  const now = performance.now();
+  // интерполяция: рисуем чужих на 150 мс в прошлом между двумя снапшотами, при пропуске — по инерции до 250 мс
+  const rt = Date.now() - (net.off || 0) - 150;
   for (const r of remotes.values()) {
     if (now - r.seen > 1500) r.obj.visible = false;
-    if (!r.obj.visible || !r.to) continue;
-    const o = r.obj;
-    o.position.x += (r.to.x - o.position.x) * k; o.position.y += (r.to.y - o.position.y) * k; o.position.z += (r.to.z - o.position.z) * k;
-    let dr = r.to.r - o.rotation.y; dr = Math.atan2(Math.sin(dr), Math.cos(dr)); o.rotation.y += dr * k;
+    if (!r.obj.visible || !r.buf?.length) continue;
+    const o = r.obj, B = r.buf;
+    while (B.length > 2 && B[1].t <= rt) B.shift();
+    let x, y, z, ang;
+    const a = B[0], b = B[1];
+    if (b && rt >= a.t) {
+      const span = Math.max(1, b.t - a.t), k = Math.min((rt - a.t) / span, 1 + 250 / span);
+      x = a.x + (b.x - a.x) * k; y = a.y + (b.y - a.y) * Math.min(k, 1); z = a.z + (b.z - a.z) * k;
+      let dr = b.r - a.r; dr = Math.atan2(Math.sin(dr), Math.cos(dr)); ang = a.r + dr * Math.min(k, 1);
+    } else { x = a.x; y = a.y; z = a.z; ang = a.r; }
+    o.position.set(x, y, z);
+    let dr = ang - o.rotation.y; dr = Math.atan2(Math.sin(dr), Math.cos(dr)); o.rotation.y += dr * Math.min(1, dt * 15);
     r.st.moving = !!(r.a & 1); r.st.casting = !!(r.a & 4);
     r.st.attackT = Math.max(0, r.st.attackT - dt * 3);
     o.rotation.z += ((r.a & 8 ? Math.PI / 2 : 0) - o.rotation.z) * Math.min(1, dt * 8);

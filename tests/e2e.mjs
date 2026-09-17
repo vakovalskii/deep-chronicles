@@ -270,7 +270,7 @@ try {
   await step('аккаунт: занятое имя, неверный пароль, вход с другого устройства', async () => {
     const other = await (await browser.newContext({ viewport: { width: 1000, height: 700 } })).newPage();
     other.on('pageerror', (e) => errors.push('другое устройство: ' + e.message));
-    await other.goto(URL);
+    await other.goto(URL, { waitUntil: 'domcontentloaded' });
     await other.waitForSelector('#start-new:not([disabled])');
     const msg = (t) => other.waitForFunction((t) => document.getElementById('start-msg').textContent.includes(t), t, { timeout: 5000 });
     await other.fill('#cname', 'автотест'); await other.fill('#cpass', 'чужой');

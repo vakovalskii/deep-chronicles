@@ -129,7 +129,7 @@ setInterval(() => {
       const s = q.st; o.push([q.id, +s.x.toFixed(2), +s.y.toFixed(2), +s.z.toFixed(2), +s.r.toFixed(2), s.a, s.hp]);
     }
     for (const id of p.known) if (!players.has(id)) p.known.delete(id);
-    if (o.length || p.hadSnap) send(p, { t: 'snap', o });
+    if (o.length || p.hadSnap) send(p, { t: 'snap', ts: Date.now(), o });
     p.hadSnap = o.length > 0;
   }
 }, 100);

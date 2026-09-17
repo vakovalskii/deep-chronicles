@@ -6,8 +6,13 @@ let seed = 1;
 const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
 const cache = {};
 
-// сгенерированные тайлы 64×64 (tools/gen-textures.mjs) — если файл есть, берём его вместо процедурного
-export const GEN = ['bark', 'bone', 'brick', 'chain', 'cobble', 'fur', 'ground', 'house', 'leaves', 'plate', 'robe', 'roof', 'stone', 'water', 'wood'];
+// сгенерированные тайлы 64–128 px (tools/gen-textures.mjs) — если файл есть, берём его вместо процедурного
+export const GEN = ['bark', 'bone', 'brick', 'chain', 'cobble', 'dbrick', 'dfloor', 'fur', 'ground', 'house', 'leather', 'leaves', 'plate', 'robe', 'roof', 'roof_blue', 'roof_red',
+  'sandstone', 'stone', 't_dirt', 't_forest', 't_grass', 't_rock', 't_sand', 't_snow', 'water', 'wood'];
+// цветные тайлы (материал белый, цвет — из текстуры)
+export const COLOR_TEX = new Set(['cobble', 'dbrick', 'dfloor', 'roof_blue', 'roof_red', 'sandstone', 'water', 't_dirt', 't_forest', 't_grass', 't_rock', 't_sand', 't_snow']);
+// тайл, которого может не быть среди сгенерированных: иначе — процедурная замена
+const gen = (name, fallback) => () => (GEN.includes(name) ? make(name) : TEX[fallback]());
 const loader = typeof document !== 'undefined' ? new THREE.TextureLoader() : null;
 function setup(t, repeat) {
   t.magFilter = THREE.NearestFilter;
@@ -37,6 +42,10 @@ function make(name, size, draw, { color = false, repeat = true } = {}) {
 }
 
 export const TEX = {
+  roof_red: gen('roof_red', 'roof'), roof_blue: gen('roof_blue', 'roof'), sandstone: gen('sandstone', 'stone'),
+  dbrick: gen('dbrick', 'brick'), dfloor: gen('dfloor', 'cobble'),
+  t_grass: gen('t_grass', 'ground'), t_forest: gen('t_forest', 'ground'), t_sand: gen('t_sand', 'ground'),
+  t_dirt: gen('t_dirt', 'ground'), t_rock: gen('t_rock', 'stone'), t_snow: gen('t_snow', 'ground'),
   // земля: крапинки, камушки, травинки
   ground: () => make('ground', 16, ({ px, fill }) => {
     fill(0.86);

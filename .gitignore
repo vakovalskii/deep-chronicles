@@ -14,3 +14,5 @@ godot/generated/
 godot/builds/
 godot/export_credentials.cfg
 .native-run/
+.gitmark/
+.claude/scheduled_tasks.lock

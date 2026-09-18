@@ -3,7 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 
-export const sourcePaths = ['.github', '.nvmrc', 'package.json', 'package-lock.json', 'godot/project.godot', 'godot/export_presets.cfg', 'godot/scripts', 'godot/scenes', 'godot/resources', 'godot/shaders', 'godot/assets', 'godot/tests', 'tools/godot', 'tools/site', 'site', 'deploy', 'tests', 'src', 'server', 'public/assets'];
+export const sourcePaths = ['.github', '.gitattributes', '.nvmrc', 'package.json', 'package-lock.json', 'godot/project.godot', 'godot/export_presets.cfg', 'godot/scripts', 'godot/scenes', 'godot/resources', 'godot/shaders', 'godot/assets', 'godot/tests', 'tools/godot', 'tools/site', 'site', 'deploy', 'tests', 'src', 'server', 'public/assets'];
 export const releaseSteps = ['pipeline', 'rules', 'server', 'client-server', 'touch-client-server', 'weapons', 'economy', 'build-macos', 'build-windows', 'packaged-client', 'site-build', 'site-check'];
 export const digest = (root, file) => crypto.createHash('sha256').update(fs.readFileSync(path.join(root, file))).digest('hex');
 export function snapshotInputs(root) {

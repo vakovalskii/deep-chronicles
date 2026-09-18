@@ -168,7 +168,7 @@ function onAuth(p, m, ip) {
   const r = m.t === 'auth' ? acc.byToken(m.token) : m.t === 'login' ? acc.login(m.name, m.pass) : acc.register(m.name, m.pass, m.cls);
   if (r.err) return send(p, { t: 'autherr', reason: r.err, kind: m.t });
   // тот же аккаунт с другого устройства — старое соединение закрываем
-  for (const q of players.values()) if (q !== p && q.key === r.key) { store(q); send(q, { t: 'kicked' }); q.key = null; q.ws.close(); }
+  for (const q of players.values()) if (q !== p && q.key === r.key) { store(q); send(q, { t: 'kicked' }); q.key = null; q.ws.close(4001, 'session replaced'); }
   p.key = r.key; p.name = r.name;
   const P = PL.loadChar(r.name, r.save);
   p.a = PL.newActor(p.id, r.name, P);

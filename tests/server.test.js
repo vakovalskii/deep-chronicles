@@ -252,9 +252,10 @@ test('вход с другого устройства вытесняет пер�
   const a = client(); await a.open();
   a.send({ t: 'login', name: 'Тестер', pass: 'secret1' }); await a.wait('authok');
   const b = client(); await b.open();
+  const closedCode = new Promise(resolve => a.ws.once('close', resolve));
   b.send({ t: 'login', name: 'Тестер', pass: 'secret1' }); await b.wait('authok');
   assert.equal((await a.wait('kicked')).t, 'kicked');
-  await a.closed();
+  assert.equal(await closedCode, 4001, 'закрытие должно отличаться от временной потери сети');
   b.ws.close(); await b.closed();
 });
 

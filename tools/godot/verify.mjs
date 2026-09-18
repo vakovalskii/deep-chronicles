@@ -71,7 +71,9 @@ try {
     const files = { macos: 'macos/Хроники Глубин.zip', windows: 'windows/Хроники Глубин.exe', android: 'android/khroniki-glubin.apk', ios: 'ios/khroniki-glubin.zip' };
     const file = `godot/builds/${files[target]}`; report.outputs[file] = digest(file);
   }
-  if (JSON.stringify(snapshotInputs(root)) !== JSON.stringify(report.inputs)) throw Error('Source files changed during verification; rerun on a stable tree');
+  const finalInputs = snapshotInputs(root);
+  report.changedInputs = [...new Set([...Object.keys(report.inputs), ...Object.keys(finalInputs)])].filter(file => report.inputs[file] !== finalInputs[file]);
+  if (report.changedInputs.length) throw Error(`Source files changed during verification: ${report.changedInputs.join(', ')}; rerun on a stable tree`);
   report.ok = true;
 } catch (error) {
   report.ok = false; report.error = error.message; process.exitCode = 1; console.error(error.message);

@@ -70,23 +70,7 @@ func _process(_dt):
 			status_changed.emit("Подключено · %s" % endpoint); connected.emit()
 			_record("connected")
 			if socket != current: return
-		while current.get_available_packet_count() > 0:
-			var data = JSON.parse_string(current.get_packet().get_string_from_utf8())
-			if not data is Dictionary: continue
-			last_packet_at = Time.get_ticks_msec()
-			if data.get("t") == "hi": heartbeat_supported = int(data.get("features", {}).get("heartbeat", 0)) >= 1
-			if data.get("t") == "authok":
-				authed = true
-				_record("authenticated")
-				if data.has("token"):
-					session = {"endpoint": endpoint, "name": data.name, "token": data.token}
-					sessions[endpoint] = session; _save_sessions()
-			if data.get("t") in ["hi", "authok"]: online_count = int(data.get("online", 0))
-			if data.get("t") == "online": online_count = int(data.n)
-			if data.get("t") == "autherr" and data.get("kind") == "auth": forget_session()
-			if data.get("t") == "kicked": stopped = true; authed = false
-			message.emit(data)
-			if socket != current or stopped: return
+		if not _drain(current): return
 		if now - opened_at >= 10000: retry_delay = 1000
 		# JSON heartbeat also works at the login screen, through NAT and proxies.
 		if heartbeat_supported and now - last_ping_at >= 10000:
@@ -95,12 +79,37 @@ func _process(_dt):
 		if (authed or heartbeat_supported) and now - last_packet_at > 45000:
 			current.close(1001, "server timeout"); _disconnected("server_timeout")
 	elif state == WebSocketPeer.STATE_CLOSED:
+		if not _drain(current): return
+		if current.get_close_code() == 4001:
+			stopped = true; online = false; authed = false
+			_record("session_replaced", {"code": 4001}); message.emit({"t": "kicked"}); return
 		_disconnected("closed", current.get_close_code())
 	elif state == WebSocketPeer.STATE_CONNECTING and now - connecting_at > 15000:
 		current.close(); _disconnected("connect_timeout")
 	elif state == WebSocketPeer.STATE_CLOSING:
+		if not _drain(current): return
 		if closing_at == 0: closing_at = now
 		elif now - closing_at > 3000: _disconnected("close_timeout")
+
+func _drain(current: WebSocketPeer) -> bool:
+	while current.get_available_packet_count() > 0:
+		var data = JSON.parse_string(current.get_packet().get_string_from_utf8())
+		if not data is Dictionary: continue
+		last_packet_at = Time.get_ticks_msec()
+		if data.get("t") == "hi": heartbeat_supported = int(data.get("features", {}).get("heartbeat", 0)) >= 1
+		if data.get("t") == "authok":
+			authed = true
+			_record("authenticated")
+			if data.has("token"):
+				session = {"endpoint": endpoint, "name": data.name, "token": data.token}
+				sessions[endpoint] = session; _save_sessions()
+		if data.get("t") in ["hi", "authok"]: online_count = int(data.get("online", 0))
+		if data.get("t") == "online": online_count = int(data.n)
+		if data.get("t") == "autherr" and data.get("kind") == "auth": forget_session()
+		if data.get("t") == "kicked": stopped = true; authed = false
+		message.emit(data)
+		if socket != current or stopped: return false
+	return true
 
 func _disconnected(reason = "closed", code = -1):
 	last_disconnect = {"reason": reason, "code": code, "authenticated": authed, "uptime_ms": Time.get_ticks_msec() - opened_at if opened_at else 0}

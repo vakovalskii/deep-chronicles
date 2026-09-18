@@ -1,9 +1,10 @@
 // Validate the exact tested input/output hashes, then stage and promote atomically per component.
 import fs from 'node:fs';
 import path from 'node:path';
-import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { root } from '../tools/godot/runtime.mjs';
+import { validateRelease } from '../tools/godot/release-contract.mjs';
+for (const arg of process.argv.slice(2)) if (arg !== '--verified') throw Error(`Unknown deploy option: ${arg}`);
 const host = process.env.DEPLOY_HOST;
 if (!host || host.startsWith('-') || /[\s\x00-\x1f]/.test(host)) throw Error('Set DEPLOY_HOST in .env or the environment');
 const safe = value => String(value).replaceAll(host, '[deployment host]').replaceAll(host.split('@').at(-1), '[deployment host]');
@@ -15,15 +16,7 @@ async function run(command, args) {
 }
 if (!process.argv.includes('--verified')) await run(process.execPath, ['tools/godot/verify.mjs', '--headless', '--offline', '--release']);
 const report = JSON.parse(fs.readFileSync(path.join(root, '.native-run/verification/report.json'), 'utf8'));
-if (!report.ok || ['rules', 'server', 'client-server', 'weapons', 'economy', 'build-macos', 'build-windows', 'site-build', 'site-check'].some(name => !report.steps.some(s => s.name === name && s.ok))) throw Error('A complete passing native + download-site verification report is required');
-const hash = file => crypto.createHash('sha256').update(fs.readFileSync(path.join(root, file))).digest('hex');
-for (const [file, expected] of Object.entries({ ...report.inputs, ...report.outputs })) if (!fs.existsSync(path.join(root, file)) || hash(file) !== expected) throw Error(`Changed after verification: ${file}`);
-// Check for new source files as well, so an untested addition cannot enter the release.
-for (const dir of ['server', 'src', 'dist']) for (const file of fs.readdirSync(path.join(root, dir), { recursive: true })) {
-  const name = `${dir}/${file}`;
-  if (dir === 'server' && file.startsWith('data/')) continue;
-  if (fs.statSync(path.join(root, name)).isFile() && !(name in report.inputs) && !(name in report.outputs)) throw Error(`Untested release file: ${name}`);
-}
+validateRelease(root, report);
 const id = `${report.commit.slice(0, 12)}-${new Date().toISOString().replace(/[-:.]/g, '')}`;
 const remote = `/opt/realms/releases/${id}`;
 await run('ssh', ['-o', 'BatchMode=yes', host, `mkdir -p '${remote}'`]);

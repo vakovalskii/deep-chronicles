@@ -1,4 +1,14 @@
-extends SceneTree
+extends Node
+var root: Window:
+	get: return get_tree().root
+var process_frame: Signal:
+	get: return get_tree().process_frame
+var current_scene: Node:
+	get: return get_tree().current_scene
+	set(value): get_tree().current_scene = value
+
+func create_timer(seconds: float): return get_tree().create_timer(seconds)
+func quit(code: int): get_tree().quit(code)
 var game
 var net
 var data
@@ -10,7 +20,7 @@ var peer_inbox: Array = []
 var peer_id = 0
 var artifacts = ""
 
-func _initialize():
+func _ready():
 	_run.call_deferred()
 
 func check(condition: bool, description: String):
@@ -109,7 +119,8 @@ func _run():
 	game.hud.assign_slot(0, "pickup"); game.hud.hotbar_locked = false; game.hud.swap_slots(0, 8)
 	game.hud.assign_slot(8, "potion_hp")
 	check(game.hud.hotbar_bindings[8] == "potion_hp" and game.hud.Settings.read_value("hotbar", "warrior", [])[8] == "potion_hp", "custom action bindings are saved")
-	game.hud.hotbar_bindings = game.hud.default_bindings(); game.hud._save_hotbar()
+	game.hud.hotbar_bindings = game.hud.default_bindings(); game.hud._save_hotbar(); game.hud.set_hotbar_locked(true)
+	await _test_hotbar_drag()
 	check(game.hud.pickup_button.visible and game.hud.pickup_button.text.contains("Поднять"), "pickup has an explicit permanent action button")
 	await _screenshot("chat-actions.png")
 	var start = game.hero.position
@@ -244,6 +255,7 @@ func _run():
 	check(not game.hud.chat.log_view.get_parsed_text().contains("native public chat"), "private chat tab filters public messages")
 	game.hud.chat.select_channel("all")
 	check(game.hud.chat.log_view.get_parsed_text().contains("native public chat"), "public history is retained across tabs")
+	await _test_chat_channels()
 	game.hud.chat.set_preference("sys", false); game.hud.log_line("hidden system notice")
 	check(not game.hud.chat.log_view.get_parsed_text().contains("hidden system notice"), "chat settings filter system messages")
 	game.hud.chat.set_preference("sys", true)
@@ -251,10 +263,18 @@ func _run():
 	check(game.hud.chat.log_view.get_parsed_text().contains("native public chat"), "combat spam cannot erase ordinary chat history")
 	game.hud.chat.set_preference("combat", false)
 	check(not game.hud.chat.system_view.get_parsed_text().contains("battle message"), "system log combat filter is independent")
+	await _test_chat_scroll()
 	check(await wait_for(func(): return game.hud.minimap.player_markers.size() > 0 and net.online_count == 2), "server online count and remote players appear in the HUD and minimap")
 	var saved_level = game.profile.lvl
-	net.start()
-	check(await wait_for(func(): return net.authed and game.profile.lvl == saved_level and game.profile.equip.weapon == "sword_long"), "token reconnect retains progression and equipment")
+	var reconnects = net.reconnect_count
+	var original_socket = net.socket
+	net.last_packet_at = Time.get_ticks_msec() - 11000
+	net._notification(Node.NOTIFICATION_APPLICATION_RESUMED)
+	check(net.socket == original_socket, "returning focus does not replace a healthy connection")
+	net.socket.close(1001, "test interrupted connection")
+	check(await wait_for(func(): return net.reconnect_count > reconnects and net.authed), "transport loss automatically reconnects without a manual start")
+	check(game.profile.lvl == saved_level and game.profile.equip.weapon == "sword_long", "token reconnect retains progression and equipment")
+	check(game.hud.chat.history.any(func(entry): return entry.text == "native public chat"), "reconnect preserves social chat history")
 	# Change class with a separate test account and test imported mage animation and casting.
 	game._return_to_login(true)
 	await wait_for(func(): return net.online)
@@ -335,3 +355,88 @@ func _wheel(pos: Vector2, direction: int):
 	var event = InputEventMouseButton.new(); event.position = pos; event.global_position = pos; event.button_index = direction; event.pressed = true
 	root.push_input(event, true)
 	event = event.duplicate(); event.pressed = false; root.push_input(event, true)
+
+func _drag(source: Control, destination: Control):
+	var start = source.get_global_rect().get_center()
+	var finish = destination.get_global_rect().get_center()
+	var motion = InputEventMouseMotion.new(); motion.position = start; motion.global_position = start; root.push_input(motion, true)
+	var press = InputEventMouseButton.new(); press.position = start; press.global_position = start; press.button_index = MOUSE_BUTTON_LEFT; press.pressed = true
+	root.push_input(press, true); await process_frame
+	for point in [start + Vector2(16, 0), finish]:
+		motion = InputEventMouseMotion.new(); motion.position = point; motion.global_position = point; motion.relative = point - start; motion.button_mask = MOUSE_BUTTON_MASK_LEFT
+		root.push_input(motion, true); await process_frame
+	press = press.duplicate(); press.position = finish; press.global_position = finish; press.pressed = false; root.push_input(press, true)
+	await process_frame
+
+func _test_hotbar_drag():
+	game.hud.set_hotbar_locked(false); game.hud.assign_slot(8, "empty")
+	game.hud.show_window("skills"); await process_frame; await process_frame
+	var icons = game.hud.window.find_children("*", "TextureRect", true, false)
+	var icon
+	for candidate in icons:
+		if candidate.get_meta("skill_icon", "") == "power_strike": icon = candidate
+	check(is_instance_valid(icon), "skills card exposes a draggable icon")
+	if is_instance_valid(icon):
+		await _drag(icon, game.hud.skill_buttons[8])
+		check(game.hud.hotbar_bindings[8] == "power_strike", "real mouse drag assigns a learned skill from K to an empty hotbar cell")
+	game.hud.close_window(); await process_frame
+	await _drag(game.hud.skill_buttons[8], game.hud.skill_buttons[7])
+	check(game.hud.hotbar_bindings[7] == "power_strike" and game.hud.hotbar_bindings[8] == "talk", "real mouse drag swaps action cells")
+	game.hud.set_hotbar_locked(true); await process_frame
+	await _drag(game.hud.skill_buttons[7], game.hud.skill_buttons[6])
+	check(game.hud.hotbar_bindings[7] == "power_strike" and game.hud.hotbar_bindings[6] == "target", "locked hotbar rejects mouse drag")
+	game.hud.hotbar_bindings = game.hud.default_bindings(); game.hud._save_hotbar()
+
+func _test_chat_channels():
+	var chat = game.hud.chat
+	chat.select_channel("trade"); chat.input.text = "native trade channel"; chat.submit()
+	check(await wait_for(func(): return peer_inbox.any(func(m): return m.t == "chat" and m.get("ch") == "trade" and m.text == "native trade channel")), "trade channel reaches the real second client")
+	check(await wait_for(func(): return chat.log_view.get_parsed_text().contains("native trade channel")), "trade tab renders its server echo")
+	chat.input.text = "trade cooldown attempt"; chat.submit()
+	check(await wait_for(func(): return received.any(func(m): return m.t == "chatwait" and m.ch == "trade")), "trade cooldown is shown from the server")
+	chat.select_channel("all"); chat.set_preference("trade", false)
+	check(not chat.log_view.get_parsed_text().contains("native trade channel"), "All tab honors trade filter")
+	chat.set_preference("trade", true)
+	check(chat.log_view.get_parsed_text().contains("native trade channel"), "enabling trade restores retained messages")
+	peer.send_text(JSON.stringify({"t": "dev", "x": game.hero.position.x, "z": game.hero.position.z})); await create_timer(0.25).timeout
+	chat.select_channel("near"); chat.input.text = "native nearby channel"; chat.submit()
+	check(await wait_for(func(): return peer_inbox.any(func(m): return m.t == "chat" and m.get("ch") == "near" and m.text == "native nearby channel")), "near channel reaches a nearby player")
+	peer.send_text(JSON.stringify({"t": "chat", "ch": "all", "text": "peer incoming public"}))
+	check(await wait_for(func(): return chat.history.any(func(m): return m.text == "peer incoming public")), "incoming public chat is retained while another tab is active")
+	check(not chat.log_view.get_parsed_text().contains("peer incoming public") and chat.unread.all > 0, "inactive tab filters messages and shows unread count")
+	chat.select_channel("all"); check(chat.unread.all == 0, "reading a tab clears its unread count")
+	chat.select_channel("pm"); chat.recipient.text = ""; chat.input.text = '"NativePeer quoted whisper'; chat.submit()
+	check(await wait_for(func(): return peer_inbox.any(func(m): return m.t == "pm" and m.text == "quoted whisper")), "quoted recipient command works from an empty PM tab")
+	await create_timer(0.45).timeout
+	peer.send_text(JSON.stringify({"t": "pm", "to": "NativeTest", "text": "peer reply"}))
+	check(await wait_for(func(): return chat.log_view.get_parsed_text().contains("peer reply")), "incoming whisper is shown in the PM tab")
+	chat.input.text = "/r native answer"; chat.submit()
+	check(await wait_for(func(): return peer_inbox.any(func(m): return m.t == "pm" and m.text == "native answer")), "reply command selects the last correspondent")
+	await create_timer(0.45).timeout
+	chat.input.text = "/w Nobody no recipient online"; chat.submit()
+	check(await wait_for(func(): return chat.system_view.get_parsed_text().contains("Nobody: не в сети")), "offline recipient error appears in the system pane")
+	chat.select_channel("all")
+	await _screenshot("chat-channels.png")
+
+func _test_chat_scroll():
+	var chat = game.hud.chat
+	for i in 80: chat.add_message({"ch": "all", "from": "Проверка", "text": "scroll history %s" % i})
+	await process_frame; await process_frame
+	var scroll = chat.log_view.get_v_scroll_bar()
+	scroll.value = scroll.max_value * 0.3
+	await process_frame
+	var before = scroll.value
+	chat.add_message({"ch": "all", "from": "Проверка", "text": "new while reading"})
+	await process_frame; await process_frame
+	check(absf(scroll.value - before) < 2, "incoming chat does not jump while reading old messages")
+	var cam = game.camera_distance
+	_wheel(chat.log_view.get_global_rect().get_center(), MOUSE_BUTTON_WHEEL_UP)
+	await process_frame
+	check(scroll.value < before and is_equal_approx(cam, game.camera_distance), "wheel scrolls actual chat history without zooming camera")
+	chat.set_preference("rewards", false); game.hud.log_line("hidden reward marker", "rewards")
+	check(not chat.system_view.get_parsed_text().contains("hidden reward marker"), "reward filter does not alter social history")
+	chat.set_preference("rewards", true); chat.set_preference("combat", true)
+	var was_authed = net.authed; net.authed = false
+	chat.input.text = "draft during disconnect"; chat.submit()
+	check(chat.input.text == "draft during disconnect", "disconnected chat preserves unsent draft")
+	net.authed = was_authed; chat.input.clear()

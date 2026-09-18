@@ -5,9 +5,12 @@ import net from 'node:net';
 import { spawn } from 'node:child_process';
 import { godotBinary, root, run } from './runtime.mjs';
 
-const binary = godotBinary();
-await run(process.execPath, ['tools/godot/export.mjs']);
-await run(binary, ['--headless', '--path', 'godot', '--editor', '--import', '--quit']);
+const built = process.argv.includes('--built');
+const binary = built ? path.join(root, process.platform === 'win32' ? 'godot/builds/windows/Хроники Глубин.exe' : 'godot/builds/macos/Хроники Глубин.app/Contents/MacOS/Хроники Глубин') : godotBinary();
+if (!built) {
+  await run(process.execPath, ['tools/godot/export.mjs']);
+  await run(binary, ['--headless', '--path', 'godot', '--editor', '--import', '--quit']);
+}
 const probe = net.createServer();
 await new Promise(resolve => probe.listen(0, '127.0.0.1', resolve));
 const port = probe.address().port;
@@ -25,7 +28,7 @@ try {
   const flags = process.argv.includes('--headless') ? ['--headless'] : [];
   const artifacts = path.join(root, '.native-run', process.argv.includes('--touch') ? 'test-touch-artifacts' : 'test-artifacts');
   fs.mkdirSync(artifacts, { recursive: true });
-  godot = spawn(binary, [...flags, '--path', 'godot', '--max-fps', '60', '--script', 'res://tests/smoke.gd', '--', '--test-mode', `--server=ws://127.0.0.1:${port}`, `--artifacts=${artifacts}`, ...(process.argv.includes('--touch') ? ['--touch'] : [])], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
+  godot = spawn(binary, [...flags, ...(!built ? ['--path', 'godot'] : []), '--max-fps', '60', '--', '--test-mode', '--self-test', `--server=ws://127.0.0.1:${port}`, `--artifacts=${artifacts}`, ...(process.argv.includes('--touch') ? ['--touch'] : [])], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
   let output = '';
   for (const stream of [godot.stdout, godot.stderr]) stream.on('data', b => { output += b; process.stdout.write(b); });
   const code = await new Promise((resolve, reject) => {

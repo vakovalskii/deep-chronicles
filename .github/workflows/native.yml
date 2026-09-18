@@ -1,0 +1,43 @@
+name: Native client and server
+on:
+  push:
+    branches: [main, server-authoritative]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: native-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: windows
+          - os: macos-latest
+            target: macos
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: node tools/godot/bootstrap.mjs
+      - run: npm run native:verify -- --headless --offline --build=${{ matrix.target }}
+      - run: npm run test:native -- --headless --built
+      - run: npm run native:probe -- --built --seconds=65
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: native-${{ matrix.target }}-${{ github.sha }}
+          include-hidden-files: true
+          path: |
+            .native-run/verification/
+            .native-run/test.log
+            godot/builds/${{ matrix.target }}/*.zip

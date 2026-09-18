@@ -51,6 +51,19 @@ var pvp_enabled = false
 var initial_camera = true
 
 func _ready():
+	var args = OS.get_cmdline_user_args()
+	# Export templates cannot run arbitrary --script/--path overrides. Exercise
+	# the packaged application through an explicit, isolated acceptance mode.
+	if "--test-mode" in args and not get_tree().root.has_meta("acceptance_running"):
+		var runner = ""
+		if "--self-test" in args and Network.endpoint.begins_with("ws://127.0.0.1:"): runner = "res://tests/smoke.gd"
+		elif "--network-probe" in args: runner = "res://tests/server_probe.gd"
+		if not runner.is_empty():
+			Engine.print_to_stdout = true; Engine.print_error_messages = true
+			get_tree().root.set_meta("acceptance_running", true)
+			process_mode = Node.PROCESS_MODE_DISABLED
+			var test = load(runner).new(); test.process_mode = Node.PROCESS_MODE_ALWAYS; add_child(test)
+			return
 	for a in OS.get_cmdline_user_args():
 		if a == "--quick-start": quick_start = true
 		if a == "--resume": resume_on_start = true
@@ -100,6 +113,7 @@ func _login(data: Dictionary):
 func _message(m: Dictionary):
 	match m.get("t", ""):
 		"authok":
+			var same_character = profile.get("name", "") == m.name
 			auth_ready_at = Time.get_ticks_msec()
 			own_id = int(m.id)
 			_clear_entities()
@@ -110,7 +124,9 @@ func _message(m: Dictionary):
 			hero.apply_look(_look_of(profile)); hero.dead = profile.get("dead", false)
 			buffs.clear(); cooldowns.clear(); cast_time = 0; has_destination = false; attacking = false
 			initial_camera = true
-			hud.login_pass.clear(); hud.chat.clear_history(); hud.enter(profile)
+			hud.login_pass.clear()
+			if not same_character: hud.chat.clear_history()
+			hud.enter(profile)
 			hud.log_line("Добро пожаловать, %s! Хранитель врат перенесёт вас в зону охоты." % profile.name)
 			print("NATIVE_AUTH_OK")
 		"autherr":

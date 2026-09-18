@@ -48,7 +48,7 @@ func _ready():
 	for title in ["Мир", "Рядом", "Торг", "ЛС"]: channel.add_item(title)
 	channel.add_theme_font_size_override("font_size", 12); row.add_child(channel)
 	channel.item_selected.connect(func(i): select_channel(["all", "near", "trade", "pm"][i]))
-	input = LineEdit.new(); input.placeholder_text = "Enter — чат"; input.max_length = 180; input.size_flags_horizontal = Control.SIZE_EXPAND_FILL; row.add_child(input)
+	input = LineEdit.new(); input.placeholder_text = "Enter — чат"; input.max_length = 160; input.size_flags_horizontal = Control.SIZE_EXPAND_FILL; row.add_child(input)
 	input.text_submitted.connect(func(_text): submit())
 	var send = Button.new(); send.text = "→"; send.tooltip_text = "Отправить"; row.add_child(send); send.pressed.connect(submit)
 	input.gui_input.connect(func(event):
@@ -57,7 +57,9 @@ func _ready():
 
 func submit():
 	if input.text.strip_edges().is_empty(): return
-	if channel.selected == 3 and recipient.text.strip_edges().is_empty() and not input.text.begins_with("/"):
+	if not Network.authed:
+		add_message({"ch": "sys", "category": "info", "text": "Сообщение не отправлено: нет связи с сервером. Текст сохранён в поле ввода."}); return
+	if channel.selected == 3 and recipient.text.strip_edges().is_empty() and not input.text.begins_with("/") and not input.text.begins_with('"'):
 		recipient.grab_focus(); return
 	submitted.emit(input.text); input.clear(); input.release_focus()
 

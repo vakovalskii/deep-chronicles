@@ -6,8 +6,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import WebSocket from 'ws';
+import net from 'node:net';
 
-const PORT = 8792, DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'realms-')), DB = path.join(DIR, 'test.db');
+const portProbe = net.createServer();
+await new Promise(resolve => portProbe.listen(0, '127.0.0.1', resolve));
+const PORT = portProbe.address().port;
+await new Promise(resolve => portProbe.close(resolve));
+const DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'realms-')), DB = path.join(DIR, 'test.db');
 let srv;
 before(async () => {
   srv = spawn('node', ['--no-warnings', 'server/server.js'], { env: { ...process.env, PORT: String(PORT), DB, DEV_CMD: '1', AUTH_TRIES: '1000' }, stdio: 'pipe' });
@@ -42,6 +47,34 @@ async function untilP(c, cond, what = 'условие профиля') {
 }
 // встать в точку и дать серверу её принять
 const at = async (c, x, z) => { c.send({ t: 'dev', x, z }); await pause(250); c.send({ t: 'st', x, y: 0, z, r: 0, a: 0 }); await pause(150); };
+
+test('heartbeat работает до входа и не создаёт аккаунт', async () => {
+  const a = client(); await a.open();
+  try {
+    const hi = await a.wait('hi'); assert.equal(hi.features.heartbeat, 1);
+    a.send({ t: 'ping' }); assert.equal((await a.wait('pong')).t, 'pong');
+    a.send(null); await pause(30); assert.equal(a.ws.readyState, WebSocket.OPEN);
+  } finally { a.ws.close(); await a.closed(); }
+});
+
+test('Рядом ограничен расстоянием, Торг глобальный; каналы не принимают prototype-ключи', async () => {
+  const a = client(), b = client(); await Promise.all([a.open(), b.open()]);
+  try {
+    a.send({ t: 'register', name: 'КаналыА', pass: 'secret1', cls: 'warrior' });
+    b.send({ t: 'register', name: 'КаналыБ', pass: 'secret1', cls: 'warrior' });
+    await Promise.all([a.wait('authok'), b.wait('authok')]);
+    await at(a, -430, 400); await at(b, -230, 400);
+    const messages = []; b.ws.on('message', raw => { const m = JSON.parse(raw); if (m.t === 'chat') messages.push(m); });
+    a.send({ t: 'chat', ch: 'near', text: 'местный' }); await a.wait('chat'); await pause(150);
+    assert.equal(messages.length, 0, 'далёкий игрок не должен слышать Рядом');
+    a.send({ t: 'chat', ch: 'trade', text: 'торговля' });
+    assert.equal((await b.wait('chat')).ch, 'trade');
+    a.send({ t: 'chat', ch: 'trade', text: 'повтор' });
+    assert.equal((await a.wait('chatwait')).ch, 'trade');
+    a.send({ t: 'chat', ch: '__proto__', text: '[b]просто текст[/b]' });
+    const fallback = await b.wait('chat'); assert.equal(fallback.ch, 'all'); assert.equal(fallback.text, '[b]просто текст[/b]');
+  } finally { a.ws.close(); b.ws.close(); await Promise.all([a.closed(), b.closed()]); }
+});
 
 test('регистрация: персонажа создаёт сервер, класс — по выбору', async () => {
   const a = client(); await a.open();

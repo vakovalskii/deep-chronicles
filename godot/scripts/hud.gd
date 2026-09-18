@@ -64,6 +64,7 @@ const Settings = preload("res://scripts/interface_settings.gd")
 var hotbar_bindings: Array = []
 var hotbar_class = ""
 var hotbar_locked = true
+var hotbar_lock: CheckButton
 var chat_frame: Control
 var autoloot_button: CheckButton
 var pickup_button: Button
@@ -235,6 +236,8 @@ func _game_hud():
 	autoloot_button = CheckButton.new(); autoloot_button.text = "Автолут"; actions.add_child(autoloot_button)
 	autoloot_button.toggled.connect(func(value): action.emit("autoloot", value))
 	_button(actions, "Панель…", func(): toggle("actions"))
+	hotbar_lock = CheckButton.new(); hotbar_lock.text = "Замок"; hotbar_lock.tooltip_text = "Снимите замок, чтобы перетащить навыки из K и поменять ячейки местами"; actions.add_child(hotbar_lock)
+	hotbar_lock.toggled.connect(set_hotbar_locked)
 	var hotbar_panel = PanelContainer.new(); bottom.add_child(hotbar_panel)
 	var hotbar = _row(hotbar_panel); hotbar.add_theme_constant_override("separation", 2)
 	for i in 10:
@@ -242,6 +245,8 @@ func _game_hud():
 		var button = load("res://scripts/hotbar_slot.gd").new(); button.index = i
 		button.custom_minimum_size = Vector2(48 if not touch else 50, 44 if not touch else 48); button.expand_icon = true; button.add_theme_constant_override("icon_max_width", 30)
 		hotbar.add_child(button); button.pressed.connect(func(): activate_slot(index)); button.swap_requested.connect(swap_slots)
+		button.binding_requested.connect(func(slot, id):
+			if not hotbar_locked and int(profile.get("skills", {}).get(id, 0)) > 0: assign_slot(slot, id))
 		button.add_theme_font_size_override("font_size", 10)
 		var number = _label(button, str(i + 1) if i < 9 else "0", 9); number.position = Vector2(3, 0); number.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		skill_buttons.append(button); hotbar_labels.append(number)
@@ -311,16 +316,19 @@ func update_values(p: Dictionary, s: Dictionary, pos: Vector3, target, cooldowns
 	cast_text.visible = cast_time > 0; cast_text.text = "%s · %.1f с" % [cast_name, cast_time]
 	for i in hotbar_bindings.size():
 		var id = str(hotbar_bindings[i]); var button = skill_buttons[i]
-		button.disabled = not Network.authed or p.get("dead", false) or id == "empty"
+		var unavailable = not Network.authed or p.get("dead", false) or id == "empty"
 		if id in GameData.catalog.SKILLS:
 			var remaining = maxf(0, (cooldowns.get(id, 0) - Time.get_ticks_msec()) / 1000.0)
 			button.text = "%.1f" % remaining if remaining > 0 else ""
-			button.disabled = button.disabled or int(p.get("skills", {}).get(id, 0)) == 0 or remaining > 0
+			unavailable = unavailable or int(p.get("skills", {}).get(id, 0)) == 0 or remaining > 0
 		elif id in GameData.catalog.ITEMS:
 			var count = 0
 			for item in p.inv:
 				if item.id == id: count += int(item.n)
-			button.text = str(count); button.disabled = button.disabled or count == 0
+			button.text = str(count); unavailable = unavailable or count == 0
+		# Editing must also work on empty cells and skills on cooldown.
+		button.disabled = unavailable and hotbar_locked
+		button.modulate = Color(0.55, 0.55, 0.55) if unavailable and not hotbar_locked else Color.WHITE
 	autoloot_button.disabled = not Network.authed
 	pickup_button.disabled = not Network.authed or p.get("dead", false)
 	chat_frame.offset_top = chat_frame.offset_bottom - int(chat.preferences.height)
@@ -413,7 +421,13 @@ func _home_name() -> String:
 	return "Светлая Гавань"
 
 func _item_row(parent, id: String, text: String) -> HBoxContainer:
-	var row = _row(parent); var tex = TextureRect.new(); tex.texture = GameData.icon(id)
+	var row = _row(parent)
+	var tex = load("res://scripts/skill_icon.gd").new() if GameData.catalog.SKILLS.has(id) else TextureRect.new()
+	tex.texture = GameData.icon(id)
+	if GameData.catalog.SKILLS.has(id):
+		tex.skill_id = id; tex.learned = int(profile.get("skills", {}).get(id, 0)) > 0
+		tex.set_meta("skill_icon", id); tex.mouse_filter = Control.MOUSE_FILTER_STOP
+		tex.tooltip_text = "Перетащите на разблокированную панель" if tex.learned else "Сначала изучите навык"
 	tex.custom_minimum_size = Vector2(36, 36); tex.expand_mode = TextureRect.EXPAND_IGNORE_SIZE; tex.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED; row.add_child(tex)
 	var label = _wrapped(row, text, 15); label.tooltip_text = _skill_description(id) if GameData.catalog.SKILLS.has(id) else _item_description(id)
 	return row
@@ -610,6 +624,7 @@ func _skill_description(id: String) -> String:
 func _skills(list):
 	_label(list, "Очки навыков: %s SP" % _money(int(profile.get("sp", 0))), 17)
 	_wrapped(list, "SP накапливаются за убийства. Новые ранги открываются на указанных уровнях и изучаются здесь. Базовая атака первого уровня уже изучена.", 12)
+	_wrapped(list, "Снимите «Замок» над панелью и перетащите иконку изученного навыка в нужную ячейку.", 12)
 	for id in GameData.catalog.CLASSES[profile.cls].skills:
 		var ranks = GameData.catalog.UI_RULES.skillRanks[id]; var learned = int(profile.get("skills", {}).get(id, 0))
 		var row = _item_row(list, id, "%s · Ранг %s/%s" % [GameData.catalog.SKILLS[id].name, learned, ranks.size()])
@@ -640,6 +655,8 @@ func _settings(list):
 	_label(list, "Изображение", 20)
 	_button(list, "Полный экран / окно", func(): action.emit("fullscreen", null))
 	_button(list, "Вернуть камеру за спину", func(): action.emit("camera", null))
+	_button(list, "Открыть сетевой журнал", func(): OS.shell_open(ProjectSettings.globalize_path("user://network.jsonl")))
+	_wrapped(list, "При разрыве связи журнал записывает причину и код ошибки без паролей, токенов и переписки.", 12)
 	_wrapped(list, "Настройки чата сохраняются на этом устройстве. Персонаж и весь игровой прогресс сохраняются на сервере.", 14)
 
 func pointer_over_ui(pos: Vector2) -> bool:
@@ -660,6 +677,7 @@ func binding_name(id: String) -> String:
 
 func activate_slot(index: int):
 	if index < 0 or index >= hotbar_bindings.size(): return
+	if not hotbar_locked or not Network.authed or profile.get("dead", false): return
 	var id = str(hotbar_bindings[index])
 	if id in GameData.catalog.SKILLS: action.emit("skill", id)
 	elif id in GameData.catalog.ITEMS: action.emit("use", id)
@@ -678,6 +696,7 @@ func _save_hotbar():
 	if window_kind == "actions": show_window("actions", true)
 
 func _refresh_hotbar():
+	hotbar_lock.set_pressed_no_signal(hotbar_locked)
 	for i in hotbar_bindings.size():
 		var id = str(hotbar_bindings[i]); var button = skill_buttons[i]
 		button.locked = hotbar_locked; button.icon = GameData.icon(id)
@@ -689,7 +708,7 @@ func _refresh_hotbar():
 func _actions_settings(list):
 	_wrapped(list, "Выберите содержимое ячеек. Клавиши 1–9 и 0 повторяют панель. После снятия блокировки ячейки можно менять местами перетаскиванием.", 12)
 	var lock_button = CheckButton.new(); lock_button.text = "Заблокировать перетаскивание"; lock_button.button_pressed = hotbar_locked; list.add_child(lock_button)
-	lock_button.toggled.connect(func(value): hotbar_locked = value; Settings.write_value("hotbar", "locked", value); _refresh_hotbar())
+	lock_button.toggled.connect(set_hotbar_locked)
 	var choices = binding_choices()
 	for i in 10:
 		var index = i; var row = _row(list); _label(row, "Ячейка %s" % (str(i + 1) if i < 9 else "0")).custom_minimum_size.x = 88
@@ -697,6 +716,10 @@ func _actions_settings(list):
 		for id in choices: select.add_item(binding_name(id))
 		select.select(choices.find(hotbar_bindings[i])); select.item_selected.connect(func(choice): assign_slot(index, choices[choice]))
 	_button(list, "Вернуть исходную панель", func(): hotbar_bindings = default_bindings(); _save_hotbar())
+
+func set_hotbar_locked(value: bool):
+	hotbar_locked = value; Settings.write_value("hotbar", "locked", value); _refresh_hotbar()
+	quick_hint.text = "F — атака · Tab — цель · Z — подбор · E — разговор" if value else "Редактирование: перетащите навык из K · включите «Замок» для боя"
 
 func _craft(list):
 	_label(list, "Монеты: %s" % _money(int(profile.coins)), 16)

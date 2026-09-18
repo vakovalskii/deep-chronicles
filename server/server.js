@@ -71,9 +71,14 @@ wss.on('connection', (ws, req) => {
   const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
   const p = { id: ++seq, ws, name: null, key: null, a: null, known: new Set(), knownMobs: new Set(), lastChat: {}, stN: 0, stT: 0 };
   players.set(p.id, p);
-  send(p, { t: 'hi', online: online(), features: { groundLoot: 1, progression: 1, autoloot: 1, crafting: 1, nativeOnly: 1 } });
+  send(p, { t: 'hi', online: online(), features: { groundLoot: 1, progression: 1, autoloot: 1, crafting: 1, nativeOnly: 1, heartbeat: 1 } });
   ws.on('message', (raw) => {
     let m; try { m = JSON.parse(raw); } catch { return; }
+    if (!m || typeof m !== 'object') return;
+    if (m.t === 'ping') {
+      if (Date.now() - (p.lastPing || 0) >= 1000) { p.lastPing = Date.now(); send(p, { t: 'pong' }); }
+      return;
+    }
     if (m.t === 'auth' || m.t === 'login' || m.t === 'register') return onAuth(p, m, ip);
     if (!p.key) return;
     const a = p.a, now = Date.now();
@@ -153,6 +158,8 @@ wss.on('connection', (ws, req) => {
     if (p.name) { broadcast({ t: 'leave', id: p.id }); broadcast({ t: 'online', n: online() }); }
     p.key = null;
   });
+  // A reset TCP socket must not become an unhandled EventEmitter error.
+  ws.on('error', error => console.warn('WS_ERROR', error.code || 'transport'));
 });
 
 function onAuth(p, m, ip) {
@@ -398,7 +405,7 @@ function onPm(p, m) {
   if (q !== p) send(p, msg);
 }
 function onChat(p, m) {
-  const ch = CHAT[m.ch] ? m.ch : 'all';
+  const ch = Object.hasOwn(CHAT, m.ch) ? m.ch : 'all';
   const text = cleanText(m.text);
   if (!text) return;
   const wait = (p.lastChat[ch] || 0) + CHAT[ch].cd - Date.now();

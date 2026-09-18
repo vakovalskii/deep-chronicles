@@ -90,6 +90,15 @@ func _run():
 	check(game.profile.cls == "warrior" and game.profile.lvl == 1, "server creates the player")
 	check(await wait_for(func(): return game.hud.status_label.text.contains("Игроков онлайн: 1")), "HUD shows the live server player count")
 	check(game.hero.animator != null and game.hero.animator.has_animation("walk"), "native animated hero imported")
+	var saved_position = game.hero.position
+	for region in [[Vector3(-430,4,400), "town"], [Vector3(20,0,10), "forest"], [Vector3(360,0,-120), "waste"], [Vector3(2205,0,-195), "crypt"]]:
+		game.hero.position = region[0]
+		game.world.set_region(region[0]); game.world._process(10)
+		game.game_audio.follow(game.hero, game.camera, 2)
+		check(game.world.region_id == region[1] and game.game_audio.ambience_id == region[1] and game.game_audio.ambience.playing, "light and ambience match " + region[1])
+	game.game_audio.clear()
+	check(game.game_audio.ambience_layers.values().all(func(layer): return not layer.playing), "all regional ambience stops on clear")
+	game.hero.position = saved_position; game.world.set_region(saved_position); game.world._process(10)
 	check(await wait_for(func(): return not game.mobs.is_empty()), "nearby mobs arrive as snapshots")
 	await create_timer(0.2).timeout
 	for kind in ["inventory", "character", "map", "shop", "teleport", "priest", "menu", "skills", "settings", "controls", "actions", "equipment", "craft"]:

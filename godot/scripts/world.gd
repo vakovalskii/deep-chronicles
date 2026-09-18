@@ -6,13 +6,15 @@ var environment: WorldEnvironment
 var sun: DirectionalLight3D
 var portals: Array = []
 var underground = false
-var daylight_energy = 1.1
+var atmosphere: Dictionary = {}
+var region_id = ""
 
 func build():
 	_lighting()
 	_terrain()
 	_props()
 	_models()
+	_town_details()
 	_portal(GameData.position_at(150, 258.5), Color("9c75ff"))
 	_portal(Vector3(2205, 0, -195), Color("c6a4ff"))
 	for t in GameData.world.towns: _portal(GameData.position_at(t.x + 18, t.z + 16), Color("70d5f0"))
@@ -25,19 +27,44 @@ func build():
 func _lighting():
 	environment = $WorldEnvironment; sun = $Sun
 	environment.environment = environment.environment.duplicate(true)
-	daylight_energy = sun.light_energy
 
+# Переходы света плавные; подземелье сразу получает тёмный фон неба.
 func set_region(pos: Vector3):
-	var is_under = pos.x > 2100
-	if is_under == underground: return
-	underground = is_under
+	var zone = GameData.zone_at(pos)
+	var id = "town" if zone.get("town", false) else str(zone.id)
+	if id == region_id: return
+	region_id = id; underground = id == "crypt"
+	atmosphere = {
+		"town": {"fog": Color("b9b3a3"), "density": 0.0018, "sun": Color("ffe0b0"), "energy": 1.2, "ambient": 0.38},
+		"meadow": {"fog": Color("a8bec5"), "density": 0.0018, "sun": Color("fff0cf"), "energy": 1.1, "ambient": 0.35},
+		"forest": {"fog": Color("788e91"), "density": 0.0032, "sun": Color("dce6da"), "energy": 0.85, "ambient": 0.32},
+		"waste": {"fog": Color("baa58b"), "density": 0.0025, "sun": Color("ffdbb6"), "energy": 1.15, "ambient": 0.32},
+		"crypt": {"fog": Color("191e30"), "density": 0.008, "sun": Color("9fb1da"), "energy": 0.12, "ambient": 0.23},
+	}.get(id, {})
 	var e = environment.environment
 	e.background_mode = Environment.BG_COLOR if underground else Environment.BG_SKY
 	e.background_color = Color("11121b")
-	e.ambient_light_energy = 0.3 if underground else 0.35
-	e.fog_light_color = Color("191723") if underground else Color("a2c2d4")
-	e.fog_density = 0.008 if underground else 0.0018
-	sun.light_energy = 0.18 if underground else daylight_energy
+
+func _town_details():
+	var cloth = ShaderMaterial.new(); cloth.shader = load("res://shaders/banner.gdshader")
+	var iron = StandardMaterial3D.new(); iron.albedo_color = Color("34333b"); iron.metallic = 0.75; iron.roughness = 0.5
+	var glow = StandardMaterial3D.new(); glow.albedo_color = Color("ffd398")
+	glow.emission_enabled = true; glow.emission = Color("ffb45f"); glow.emission_energy_multiplier = 1.8
+	for town in GameData.world.towns:
+		for side in [-1, 1]:
+			var banner = MeshInstance3D.new(); var fabric = QuadMesh.new(); fabric.size = Vector2(2.1, 5.5)
+			banner.mesh = fabric; banner.material_override = cloth
+			banner.position = GameData.position_at(town.x + side * 5.3, town.z - 18.8) + Vector3.UP * 9
+			banner.visibility_range_end = 160; add_child(banner)
+			var rail = MeshInstance3D.new(); var bar = BoxMesh.new(); bar.size = Vector3(2.5, 0.12, 0.18)
+			rail.mesh = bar; rail.material_override = iron; rail.position = banner.position + Vector3.UP * 2.8; add_child(rail)
+			var lamp = MeshInstance3D.new(); var lantern = CylinderMesh.new()
+			lantern.top_radius = 0.2; lantern.bottom_radius = 0.3; lantern.height = 0.65; lantern.radial_segments = 6
+			lamp.mesh = lantern; lamp.material_override = glow
+			lamp.position = GameData.position_at(town.x + side * 7.0, town.z - 18.8) + Vector3.UP * 5.5; add_child(lamp)
+			var light = OmniLight3D.new(); light.position = lamp.position
+			light.light_color = Color("ffc07b"); light.light_energy = 1.8; light.omni_range = 9; light.distance_fade_enabled = true
+			light.distance_fade_begin = 60; light.distance_fade_length = 20; add_child(light)
 
 func _terrain():
 	var material = ShaderMaterial.new()
@@ -118,6 +145,14 @@ func _portal(pos: Vector3, col: Color):
 	node.material_override = m; add_child(node); portals.append(node)
 
 func _process(dt):
+	if not atmosphere.is_empty():
+		var blend = 1.0 - exp(-dt * 1.8)
+		var e = environment.environment
+		e.fog_light_color = e.fog_light_color.lerp(atmosphere.fog, blend)
+		e.fog_density = lerpf(e.fog_density, atmosphere.density, blend)
+		e.ambient_light_energy = lerpf(e.ambient_light_energy, atmosphere.ambient, blend)
+		sun.light_color = sun.light_color.lerp(atmosphere.sun, blend)
+		sun.light_energy = lerpf(sun.light_energy, atmosphere.energy, blend)
 	for p in portals: p.rotate_y(dt * 0.35)
 
 func _models():

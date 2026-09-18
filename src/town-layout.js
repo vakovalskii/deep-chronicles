@@ -43,7 +43,7 @@ export const TOWN_HOUSES = [];
 const house = (x,z,rotation=0) => {
   if (Math.hypot(x,z)>84) return;
   const i=TOWN_HOUSES.length;
-  TOWN_HOUSES.push({x,z,rotation,w:10+(i%3),d:9+(i%2),h:13+(i%4)*2.1,roof:i%3?'red':'blue'});
+  TOWN_HOUSES.push({x,z,rotation,w:10+(i%3),d:9+(i%2),h:6.8+(i%3)*.65,roof:i%3?'red':'blue'});
 };
 for(const z of [-70,-53])for(const x of [-57,-39,-21,21,39,57])house(x,z,0);
 for(const x of [-68,68])for(const z of [-32,-14,14,32,49])house(x,z,x<0?Math.PI/2:-Math.PI/2);
@@ -81,11 +81,11 @@ const harbor = {
   gates:[{x:-143,z:0,rotation:-1.82},{x:-5,z:138,rotation:.163},{x:-8,z:-140,rotation:-3.018}],
   shops:[{...TOWN_SHOPS[0],x:-55,z:-22},{...TOWN_SHOPS[1],x:-55,z:22},{...TOWN_SHOPS[2],x:-89,z:24}],
   houses:[], roads:[], decor:TOWN_DECOR.filter(d=>['stall','lamp','barrels','cart'].includes(d.kind)),
-  civic:[{id:'forge',name:'Кузнечный двор',x:-74,z:72,w:18,d:14,h:11},{id:'guild',name:'Дом гильдий',x:34,z:79,w:22,d:16,h:18},{id:'warehouse',name:'Портовый склад',x:88,z:74,w:20,d:13,h:12}],
+  civic:[{id:'forge',name:'Кузнечный двор',x:-74,z:72,w:18,d:14,h:11},{id:'guild',name:'Дом гильдий',x:34,z:79,w:22,d:16,h:10},{id:'warehouse',name:'Портовый склад',x:88,z:74,w:20,d:13,h:12}],
 };
 for(const [x,z,rotation] of [
  [-113,-46,.3],[-98,-66,.4],[-81,-80,.2],[-62,-94,.1],[-42,-105,.1],[-96,-30,.6],[-74,-49,.5],[-53,-65,.3],[-33,-81,.2],[-111,32,-.1],[-108,55,-.3],[-93,82,-.2],[-74,99,Math.PI],[-52,112,Math.PI],[-31,106,Math.PI],[-16,78,2.8],[6,93,3],[-46,62,2.4],[-38,82,2.5],[55,102,3.2],[73,92,3],[72,47,Math.PI/2],[84,18,Math.PI/2],[39,49,-.4],[53,22,-.3],[30,-109,0],[3,-112,0],[-25,-119,0]
-]) {const i=harbor.houses.length;harbor.houses.push({x,z,rotation,w:11+i%3,d:10+i%2,h:12+i%4*1.6,roof:i%3?'red':'blue'});}
+]) {const i=harbor.houses.length;harbor.houses.push({x,z,rotation,w:11+i%3,d:10+i%2,h:6.8+i%3*.65,roof:i%3?'red':'blue'});}
 const road=(name,width,points)=>harbor.roads.push({name,width,points});
 road('Торговая улица',9,[[-173,-8],[-143,0],[-111,6],[-82,0],[-55,2],[-22,0],[-8,0]]);
 road('Храмовый подъём',9,[[8,-8],[24,-19],[41,-32],[58,-43],[66,-53],[66,-60]]);
@@ -127,7 +127,7 @@ for(let z=-110;z<=115;z+=14)for(let x=-120;x<=95;x+=14) {
   if(blocked||closest>26)continue;
   if([...harbor.houses,...harbor.civic,...harbor.shops.map(s=>({...s,z:s.z-3,w:12,d:19})),...harbor.decor.map(o=>({...o,w:o.r*2,d:o.r*2}))].some(o=>Math.hypot(x-o.x,z-o.z)<r+Math.hypot(o.w,o.d)/2+1))continue;
   const i=harbor.houses.length;
-  harbor.houses.push({x,z,w,d,h:10.5+i%3*3.5,rotation:-angle,roof:i%3?'red':'blue',variant:i%4});
+  harbor.houses.push({x,z,w,d,h:6.8+i%3*.65,rotation:-angle,roof:i%3?'red':'blue',variant:i%4});
 }
 export function townLayout(id) {
   return id==='harbor'?harbor:{temple:{x:0,z:-26},outline:null,gates:TOWN_GATES,shops:TOWN_SHOPS,houses:TOWN_HOUSES,roads:TOWN_ROADS,decor:TOWN_DECOR,civic:[]};

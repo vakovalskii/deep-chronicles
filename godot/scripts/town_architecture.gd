@@ -3,15 +3,20 @@ extends RefCounted
 var b: Node3D
 func _init(builder: Node3D):
 	b = builder
-	b._material("plaster_ivory",Color("d2c3a4"))
-	b._material("plaster_sage",Color("929c89"))
-	b._material("plaster_ochre",Color("ba9a72"))
-	b._material("plaster_rose",Color("af8273"))
-	b._material("timber",Color("46372d"))
-	b._material("masonry",Color("a9a293"),"res://generated/tex/brick.png")
-	b._material("slate",Color("526574"),"res://generated/tex/roof.png")
-	b._material("tile",Color("985b46"),"res://generated/tex/roof.png")
-	b._material("glass",Color("344750"))
+	b._material("plaster_ivory",Color("afa080"))
+	b._material("plaster_sage",Color("888773"))
+	b._material("plaster_ochre",Color("a58c66"))
+	b._material("plaster_rose",Color("9b806d"))
+	b._material("timber",Color("342b24"))
+	b._material("masonry",Color("807c6e"),"res://generated/tex/brick.png")
+	b._material("slate",Color("424c50"),"res://generated/tex/roof.png")
+	b._material("tile",Color("774939"),"res://generated/tex/roof.png")
+	b._material("glass",Color("202925"))
+	var weather = load("res://shaders/aged_plaster.gdshader")
+	for id in ["plaster_ivory","plaster_sage","plaster_ochre","plaster_rose"]:
+		var material = ShaderMaterial.new(); material.shader = weather
+		material.set_shader_parameter("base_color",b.materials[id].albedo_color)
+		b.materials[id] = material
 	b.materials.slate.cull_mode = BaseMaterial3D.CULL_DISABLED
 	b.materials.tile.cull_mode = BaseMaterial3D.CULL_DISABLED
 
@@ -40,22 +45,22 @@ func roof(w: float, d: float, y: float, rise: float, material: String):
 		beam(Vector3(w/2,y,z),Vector3(0,y+rise,z),.22)
 
 func window(x: float, y: float, z: float, shutters: bool, color: String):
-	b._box(Vector3(x,y,z),Vector3(1.35,1.85,.14),"timber")
-	b._box(Vector3(x,y,z+.09),Vector3(1.1,1.58,.08),"glass")
-	b._box(Vector3(x,y,z+.15),Vector3(.09,1.65,.08),"cream")
-	b._box(Vector3(x,y,z+.15),Vector3(1.16,.09,.08),"cream")
-	b._box(Vector3(x,y-1,z+.12),Vector3(1.75,.16,.45),"masonry")
+	b._box(Vector3(x,y,z),Vector3(1.05,1.45,.18),"timber")
+	b._box(Vector3(x,y,z+.09),Vector3(.8,1.18,.08),"glass")
+	b._box(Vector3(x,y,z+.15),Vector3(.12,1.28,.09),"timber")
+	b._box(Vector3(x,y,z+.15),Vector3(.86,.12,.09),"timber")
+	b._box(Vector3(x,y-.8,z+.12),Vector3(1.35,.22,.45),"masonry")
 	if shutters:
 		for side in [-1,1]:
-			b._box(Vector3(x+side*.99,y,z+.06),Vector3(.5,1.8,.13),color)
-			for dy in [-.58,.58]: b._box(Vector3(x+side*.99,y+dy,z+.14),Vector3(.5,.1,.05),"timber")
+			b._box(Vector3(x+side*.79,y,z+.06),Vector3(.42,1.4,.18),color)
+			for dy in [-.45,.45]: b._box(Vector3(x+side*.79,y+dy,z+.14),Vector3(.42,.12,.05),"timber")
 
 func house(data: Dictionary):
 	var w = float(data.w); var d = float(data.d); var h = float(data.h)
 	var variant = int(data.get("variant",abs(int(data.x*3+data.z)))) % 4
 	var plaster = ["plaster_ivory","plaster_sage","plaster_ochre","plaster_rose"][variant]
 	var roof_material = "slate" if data.roof == "blue" else "tile"
-	var floors = maxi(2,roundi(h/3.5)); var level = h/floors
+	var floors = maxi(2,roundi(h/3.8)); var level = h/floors
 	b._box(Vector3(0,.18,0),Vector3(w+.35,.36,d+.35),"masonry")
 	b._box(Vector3(0,level/2,0),Vector3(w,level,d),"masonry")
 	b._box(Vector3(0,(h+level)/2,0),Vector3(w+.18,h-level,d+.18),plaster)
@@ -64,14 +69,19 @@ func house(data: Dictionary):
 		b.orientation = original * Basis(Vector3.UP,side*PI/2)
 		var span = w if side%2==0 else d; var front = (d if side%2==0 else w)/2+.12
 		for floor in range(1,floors+1):
-			b._box(Vector3(0,floor*level,front),Vector3(span+.4,.22,.22),"timber")
+			b._box(Vector3(0,floor*level,front),Vector3(span+.4,.32,.3),"timber")
 		for x in [-span/2+.1,0,span/2-.1]:
-			b._box(Vector3(x,(h+level)/2,front),Vector3(.2,h-level,.22),"timber")
+			b._box(Vector3(x,(h+level)/2,front),Vector3(.32,h-level,.28),"timber")
 		for floor in range(floors):
-			for x in [-span*.28,span*.28]:
+			for x in [-span*.25,span*.29]:
+				if side == 2 and floor == 0: continue
 				window(x,floor*level+level*.55,front+.04,floor>0,"green" if variant%2 else "burgundy")
+		for course in 3:
+			for stone in 5:
+				var sx = -span*.4+stone*span*.2+(course%2)*.18
+				b._box(Vector3(sx,.32+course*.42,front+.04),Vector3(span*.17,.34,.12),"masonry")
 		if side%2==0:
-			for sign in [-1,1]: beam(Vector3(sign*.35,level+.3,front+.15),Vector3(sign*(span/2-.4),2*level-.3,front+.15),.15)
+			for sign in [-1,1]: beam(Vector3(sign*span*.39,level+.3,front+.15),Vector3(sign*(span/2-.3),2*level-.3,front+.15),.2)
 		if side == 0:
 			b._box(Vector3(0,1.45,front+.04),Vector3(1.8,2.9,.2),"timber")
 			for x in [-.62,-.31,0,.31,.62]: b._box(Vector3(x,1.4,front+.18),Vector3(.24,2.65,.08),"wood")
@@ -80,7 +90,7 @@ func house(data: Dictionary):
 			b._box(Vector3(0,3.2,front+.6),Vector3(2.8,.18,1.4),roof_material,.16)
 			for x in [-1.1,1.1]: beam(Vector3(x,2.55,front+.05),Vector3(x,3.1,front+1.1),.12)
 	b.orientation = original
-	roof(w+1,d+1,h+.12,w*.38,roof_material)
+	roof(w+1,d+1,h+.12,w*.52,roof_material)
 	# Труба с оголовком и тёмным устьем.
 	b._box(Vector3(w*.29,h+1.7,-d*.22),Vector3(1,4.6,1.15),"masonry")
 	b._box(Vector3(w*.29,h+4.02,-d*.22),Vector3(1.3,.25,1.45),"masonry")

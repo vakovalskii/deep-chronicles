@@ -19,8 +19,8 @@ export const MAP = 1600; // сторона карты, м
 export const DUNGEON = { x0: 2200, z0: -200, cell: 18, n: 11 }; // катакомбы — отдельная площадка за краем карты
 
 export const TOWNS = [
-  { id: 'harbor', name: 'Светлая Гавань', x: -430, z: 400, r: 170, color: 0xd8cfb8 },
-  { id: 'ford', name: 'Каменный Брод', x: 430, z: -400, r: 95, color: 0xb8a890 },
+  { id: 'harbor', name: 'Светлая Гавань', x: -430, z: 400, r: 136, scale: .8, color: 0xd8cfb8 },
+  { id: 'ford', name: 'Каменный Брод', x: 430, z: -400, r: 76, scale: .8, color: 0xb8a890 },
 ];
 
 // зоны: круги с уровнем и мобами; первая подходящая по расстоянию
@@ -50,7 +50,7 @@ export function heightAt(x, z) {
   const w = ZONES[2]; h = lerp(h, h * 0.35 + 2, smooth(w.r, w.r * 0.5, Math.hypot(x - w.x, z - w.z)));
   // города — ровные площадки
   for (const t of TOWNS) { const d = Math.hypot(x - t.x, z - t.z); h = lerp(4, h, smooth(t.r, t.r + 60, d)); }
-  h = harborHeight(x-TOWNS[0].x,z-TOWNS[0].z,h);
+  h = harborHeight((x-TOWNS[0].x)/TOWNS[0].scale,(z-TOWNS[0].z)/TOWNS[0].scale,h);
   // площадка у склепа
   h = lerp(heightAtBase(CRYPT.x, CRYPT.z), h, smooth(14, 30, Math.hypot(x - CRYPT.x, z - CRYPT.z)));
   return h;
@@ -64,7 +64,7 @@ const addObs = (x, z, r) => obstacles.push({ x, z, r });
 // эмиттер-пустышка: сервер строит расстановку, но не геометрию
 export const nullEmitter = { add() {}, use() {} };
 
-function buildHarborWalls(t,layout,B) {
+function buildHarborWalls(t,layout,B,heightAt) {
   const points=layout.outline;
   B.use('brick');
   for(let i=0;i<points.length;i++) {
@@ -94,9 +94,19 @@ function buildingObstacles(x,z,w,d,rotation=0) {
   for(let i=1;i<nz;i++)for(const side of [-1,1])add(side*w/2,-d/2+d*i/nz);
 }
 
+// План остаётся в исходных метрах; один масштаб применяется к геометрии,
+// коллизиям и NPC. Высоту берём уже в окончательных мировых координатах.
 function buildTown(t, B, npcs) {
+  const scale=t.scale, startObs=obstacles.length, startNpc=npcs.length;
+  const wx=x=>t.x+(x-t.x)*scale, wz=z=>t.z+(z-t.z)*scale;
+  const emitter={use:key=>B.use(key),add:(shape,color,x,y,z,r,w,h,d)=>B.add(shape,color,wx(x),y,wz(z),r,w*scale,h,d*scale)};
+  buildTownPlan({...t,r:t.r/scale},emitter,npcs,(x,z)=>heightAt(wx(x),wz(z)));
+  for(const o of obstacles.slice(startObs)){o.x=wx(o.x);o.z=wz(o.z);o.r*=scale;}
+  for(const npc of npcs.slice(startNpc)){npc.x=wx(npc.x);npc.z=wz(npc.z);}
+}
+function buildTownPlan(t, B, npcs, heightAt) {
   const y = heightAt(t.x, t.z), layout=townLayout(t.id);
-  if (layout.outline) buildHarborWalls(t,layout,B);
+  if (layout.outline) buildHarborWalls(t,layout,B,heightAt);
   // стена кольцом из сегментов, 4 ворот
   const segs = 36;
   B.use('brick');
@@ -255,15 +265,15 @@ export function buildProps(B = nullEmitter) {
   dungeonCells.forEach((c, k) => { if (c.i + c.j > 1 && k % 2 === 0) spawns.push({ mob: undead[k % undead.length], x: c.x + 3, z: c.z - 2 }); });
   const last = dungeonCells[dungeonCells.length - 1];
   spawns.push({ mob: 'lich', x: last.x, z: last.z });
-  const placed=(key)=>TOWNS.flatMap(t=>(townLayout(t.id)[key]||[]).map(v=>({...v,town:t.id,x:t.x+(v.x||0),z:t.z+(v.z||0),...(v.points?{points:v.points.map(([x,z])=>[t.x+x,t.z+z])}:{})})));
-  props = {npcs,spawns,townGates:placed('gates'),townHouses:placed('houses'),townShops:placed('shops'),townRoads:placed('roads'),townDecor:placed('decor'),townCivic:placed('civic'),townOutlines:TOWNS.filter(t=>townLayout(t.id).outline).map(t=>({town:t.id,points:townLayout(t.id).outline.map(([x,z])=>[t.x+x,t.z+z])})),townTemples:TOWNS.map(t=>({x:t.x+townLayout(t.id).temple.x,z:t.z+townLayout(t.id).temple.z}))};
+  const placed=(key)=>TOWNS.flatMap(t=>(townLayout(t.id)[key]||[]).map(v=>({...v,town:t.id,scale:t.scale,x:t.x+(v.x||0)*t.scale,z:t.z+(v.z||0)*t.scale,...(v.points?{points:v.points.map(([x,z])=>[t.x+x*t.scale,t.z+z*t.scale])}:{})})));
+  props = {npcs,spawns,townGates:placed('gates'),townHouses:placed('houses'),townShops:placed('shops'),townRoads:placed('roads').map(r=>({...r,...(r.width?{width:r.width*r.scale}:{w:r.w*r.scale,d:r.d*r.scale})})),townDecor:placed('decor'),townCivic:placed('civic'),townOutlines:TOWNS.filter(t=>townLayout(t.id).outline).map(t=>({town:t.id,points:townLayout(t.id).outline.map(([x,z])=>[t.x+x*t.scale,t.z+z*t.scale])})),townTemples:TOWNS.map(t=>({scale:t.scale,x:t.x+townLayout(t.id).temple.x*t.scale,z:t.z+townLayout(t.id).temple.z*t.scale}))};
   return props;
 }
 
 // точки телепорта
 export const TELEPORTS = [
-  { id: 'harbor', name: 'Светлая Гавань', x: TOWNS[0].x + 18, z: TOWNS[0].z + 22, cost: 0 },
-  { id: 'ford', name: 'Каменный Брод', x: TOWNS[1].x + 18, z: TOWNS[1].z + 22, cost: 0 },
+  { id: 'harbor', name: 'Светлая Гавань', x: TOWNS[0].x + 18*TOWNS[0].scale, z: TOWNS[0].z + 22*TOWNS[0].scale, cost: 0 },
+  { id: 'ford', name: 'Каменный Брод', x: TOWNS[1].x + 18*TOWNS[1].scale, z: TOWNS[1].z + 22*TOWNS[1].scale, cost: 0 },
   { id: 'meadow', name: 'Солнечные луга (1–9)', x: -260, z: 180, cost: 80 },
   { id: 'forest', name: 'Сумрачный лес (10–17)', x: -20, z: 60, cost: 200 },
   { id: 'waste', name: 'Выжженная пустошь (18–25)', x: 300, z: -160, cost: 400 },

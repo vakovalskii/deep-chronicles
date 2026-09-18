@@ -187,7 +187,7 @@ test('пивоты частей совпадают с суставами про�
 });
 
 // ===== правила симуляции (общие для сервера и клиента) =====
-import { calcDmg, missChance, evaChance, xpForKill, rollDrops, rollCoins, sellPrice, crystalsFor, enchSucceeds, mobStep, newMob, moveEntity, flatDist } from '../src/sim.js';
+import { calcDmg, missChance, evaChance, xpForKill, rollDrops, rollCoins, sellPrice, crystalsFor, enchSucceeds, mobStep, newMob, moveEntity, flatDist, leashDistance } from '../src/sim.js';
 import { SAFE_ENCH, MAX_ENCH } from '../src/stats.js';
 
 // генератор с фиксированным зерном — чтобы тесты не зависели от удачи
@@ -257,7 +257,9 @@ test('ИИ моба: агрится на игрока рядом, возвращ
   let cameHome = 0;
   for (let i = 0; i < 200 && !cameHome; i++) { mobStep(m, ctx, 0.1); if (m.state !== 'return' && m.state !== 'chase') cameHome = flatDist(m, m.home); }
   assert.ok(cameHome && cameHome < 2, `моб не дошёл до дома: ${cameHome}`);
-  assert.ok(m.hp > 1, 'моб не полечился на обратном пути');
+  assert.equal(m.hp, 1, 'на обратном пути лечения нет');
+  m.wanderT = 10; ctx.now += 5100; mobStep(m, ctx, .1);
+  assert.ok(m.hp > 1, 'восстановление у дома после паузы');
 });
 
 test('мирного моба не агрит близкий игрок', () => {
@@ -344,18 +346,18 @@ test('городские магазины и NPC доступны от площ�
     for(const npc of world.npcs.filter(n=>n.town===town.id&&n.role!=='guard'))
       assert.ok(queue.some(([x,z])=>Math.hypot(town.x+x-npc.x,town.z+z-npc.z)<2.5),npc.id+' недоступен от площади');
     if(town.id==='harbor')for(const [tx,tz] of [[150,25],[150,50],[150,75],[-156,-3],[-7,-153],[-3,151]])
-      assert.ok(queue.some(([x,z])=>Math.hypot(x-tx,z-tz)<2),'Выход/причал '+tx+','+tz+' недоступен');
+      assert.ok(queue.some(([x,z])=>Math.hypot(x-tx*town.scale,z-tz*town.scale)<2),'Выход/причал '+tx+','+tz+' недоступен');
   }
 });
 
 import {presentationHeightAt} from '../tools/godot/placements.mjs';
 test('порт и храм: поверхность движения совпадает с высотой настила и террасы',()=>{
   for(const z of [25,50,75])for(let x=110;x<=150;x+=2){
-    assert.ok(Math.abs(heightAt(-430+x,400+z)+3)<.01);
-    assert.ok(Math.abs(presentationHeightAt(-430+x,400+z)+3)<.01,'клиентская сетка причала');
+    assert.ok(Math.abs(heightAt(-430+x*TOWNS[0].scale,400+z*TOWNS[0].scale)+3)<.01);
+    assert.ok(Math.abs(presentationHeightAt(-430+x*TOWNS[0].scale,400+z*TOWNS[0].scale)+3)<.01,'клиентская сетка причала');
   }
-  assert.equal(heightAt(-364,324),12);
-  assert.ok(heightAt(-290,410)<-6.5,'вода должна закрывать дно');
+  assert.equal(heightAt(-430+66*TOWNS[0].scale,400-76*TOWNS[0].scale),12);
+  assert.ok(heightAt(-430+140*TOWNS[0].scale,400+10*TOWNS[0].scale)<-6.5,'вода должна закрывать дно');
 });
 
 
@@ -397,4 +399,55 @@ test('замах отменяется при смерти цели/выходе 
     mobStep(m, ctx, .1);
     assert.equal(m.windup, null); assert.equal(m.atkCd, 0); assert.equal(m.attackT, 0);
   }
+});
+
+
+test('погоня и восстановление: обычный моб, босс, разрыв дистанции и повторный бой', () => {
+  for (const boss of [false,true]) {
+    const m=newMob(997,{mob:'wolf',x:1000,z:1000},()=>.5);
+    m.def={...m.def,boss}; m.hp=10; m.state='chase';m.target=1;
+    const limit=boss?140:180;assert.equal(leashDistance(m.def),limit);
+    m.x=m.home.x+limit-1;
+    const ctx={now:1000,players:[{id:1,x:m.x+3,z:m.z}],onHit(){}};
+    mobStep(m,ctx,.1);assert.equal(m.state,'chase');
+    m.x=m.home.x+limit+1;ctx.players[0].x=m.x+3;
+    mobStep(m,ctx,.1);assert.equal(m.state,'return');assert.equal(m.windup,null);
+    mobStep(m,ctx,.1);assert.equal(m.hp,10);
+    m.x=m.home.x;m.z=m.home.z;ctx.players=[];ctx.now=2000;
+    mobStep(m,ctx,.1);assert.equal(m.state,'idle');
+    ctx.now=6999;mobStep(m,ctx,.1);assert.equal(m.hp,10);
+    ctx.now=7000;mobStep(m,ctx,.1);assert.ok(Math.abs(m.hp-(10+m.def.hp*.002))<1e-6);
+    m.state='chase';m.target=1;ctx.players=[{id:1,x:m.x+221,z:m.z}];
+    const hp=m.hp;mobStep(m,ctx,.1);assert.equal(m.state,'return');assert.equal(m.hp,hp);
+  }
+});
+test('агрессия не сбрасывается истёкшим таймером прогулки',()=>{
+  const m=newMob(998,{mob:'orc',x:1000,z:1000},()=>.5);m.wanderT=0;m.hp=1;
+  mobStep(m,{now:9000,players:[{id:1,x:1002,z:1000}],onHit(){}},.1);
+  assert.equal(m.state,'chase');assert.equal(m.hp,1);
+});
+
+
+import { CORPSE, heroAttackTiming } from '../src/sim.js';
+import { createMobs } from '../server/sim/mobs.js';
+test('тело моба передаёт возраст смерти и остаётся на время падения и растворения',()=>{
+ const world=createMobs(),m=world.list[0],now=1000;
+ world.kill(m,now);
+ for(const age of [0,5000,9000,CORPSE.lifetimeMs]){
+  const row=world.snapshotFor(m,10,now+age).find(r=>r[0]===m.id);
+  assert.ok(row);assert.equal(row[8],age);assert.ok(row[5]&8);
+ }
+ assert.ok(!world.snapshotFor(m,10,now+CORPSE.lifetimeMs+1).some(r=>r[0]===m.id));
+ mobStep(m,{now:m.respawnAt+1,players:[],onHit(){}},.1);
+ const row=world.snapshotFor(m,10,m.respawnAt+1).find(r=>r[0]===m.id);
+ assert.equal(row[8],0);assert.equal(row[5]&8,0);
+});
+test('темп автоатаки: урон приходится на 35% полного взмаха, ускорение сохраняется',()=>{
+ for(const aspd of [.64,.8,1.6]){
+  const timing=heroAttackTiming(aspd);
+  assert.ok(timing.duration<timing.cooldown);
+  assert.equal(timing.windup,timing.duration*.35);
+ }
+ assert.ok(heroAttackTiming(.8).duration>1);
+ assert.equal(heroAttackTiming(.8).duration/2,heroAttackTiming(1.6).duration);
 });

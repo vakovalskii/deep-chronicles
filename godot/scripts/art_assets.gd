@@ -25,7 +25,7 @@ static func actor(id: String) -> Node3D:
 			source_scene.free()
 		var player = AnimationPlayer.new(); player.name = "AnimationPlayer"; result.add_child(player)
 		var library = AnimationLibrary.new()
-		var clips = {"idle": "Idle", "walk": "Walk", "run": "Sprint", "attack": "Sword_Attack", "attack_alt": "Sword_Attack", "cast": "Spell_Simple_Idle", "cast_enter": "Spell_Simple_Enter", "release": "Spell_Simple_Shoot", "hit": "Hit_Chest", "death": "Death01"}
+		var clips = {"idle": "Idle", "walk": "Walk", "run": "Jog_Fwd", "attack": "Sword_Attack", "attack_alt": "Sword_Attack", "cast": "Spell_Simple_Idle", "cast_enter": "Spell_Simple_Enter", "release": "Spell_Simple_Shoot", "hit": "Hit_Chest", "death": "Death01"}
 		if id in ["warrior", "warrior_chain"]: clips.idle = "Sword_Idle"
 		if id in ["mage", "gatekeeper", "priest", "wraith", "lich"]: clips.idle = "Spell_Simple_Idle"
 		if id == "mage": clips.attack = "Spell_Simple_Shoot"
@@ -54,7 +54,7 @@ static func actor(id: String) -> Node3D:
 	var factor = float(entry.get("height", 2.4)) / maxf(box.size.y, 0.01)
 	if entry.get("rig", "") == "canonical":
 		result.set_meta("gait_walk_speed",1.04985*factor)
-		result.set_meta("gait_run_speed",6.81539*factor)
+		result.set_meta("gait_run_speed",5.27730*factor)
 	result.scale = Vector3.ONE * factor
 	result.position = Vector3(-box.get_center().x, -box.position.y, -box.get_center().z) * factor
 	result.rotation.y = float(entry.get("yaw", 0))

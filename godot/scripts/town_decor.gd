@@ -23,7 +23,7 @@ func build():
 	_material("lawn",Color("78805b"),"res://assets/terrain/grass.png")
 	architecture = preload("res://scripts/town_architecture.gd").new(self)
 	for town in GameData.world.towns:
-		origin = GameData.position_at(town.x,town.z); orientation = Basis.IDENTITY
+		origin = GameData.position_at(town.x,town.z); orientation = _plan_basis(town)
 		if town.id == "harbor":
 			_district_ground(town)
 			origin = Vector3(town.x,0,town.z); _harbor(); _temple_terrace()
@@ -39,24 +39,24 @@ func build():
 			var mesh = BoxMesh.new(); mesh.size = Vector3(.13,.025,10)
 			_part(mesh,Vector3(sin(angle)*12,.28,cos(angle)*12),"trim","inlay",Basis(Vector3.UP,angle))
 	for gate in GameData.world.get("townGates", []):
-		origin = GameData.position_at(gate.x,gate.z); orientation = Basis(Vector3.UP,gate.rotation)
+		origin = GameData.position_at(gate.x,gate.z); orientation = _plan_basis(gate,gate.rotation)
 		_gate()
 	for hall in GameData.world.get("townCivic", []):
-		origin = GameData.position_at(hall.x,hall.z); orientation = Basis.IDENTITY
+		origin = GameData.position_at(hall.x,hall.z); orientation = _plan_basis(hall)
 		_hall(hall)
 	for house in GameData.world.get("townHouses", []):
-		origin = GameData.position_at(house.x,house.z); orientation = Basis(Vector3.UP,house.rotation)
+		origin = GameData.position_at(house.x,house.z); orientation = _plan_basis(house,house.rotation)
 		architecture.house(house)
 	for road in GameData.world.get("townRoads", []):
 		if road.has("points"): _road(road); continue
 		origin = GameData.position_at(road.x, road.z); orientation = Basis.IDENTITY
 		_box(Vector3(0,.05,0),Vector3(road.w,.08,road.d),"stone")
 	for shop in GameData.world.get("townShops", []):
-		origin = GameData.position_at(shop.x, shop.z); orientation = Basis.IDENTITY
+		origin = GameData.position_at(shop.x, shop.z); orientation = _plan_basis(shop)
 		_shop(shop)
 	for item in GameData.world.get("townDecor", []):
 		origin = GameData.position_at(item.x, item.z)
-		orientation = Basis(Vector3.UP, float(item.rotation))
+		orientation = _plan_basis(item,float(item.rotation))
 		match item.kind:
 			"stall": _stall(item.color)
 			"bench": _bench()
@@ -76,6 +76,10 @@ func build():
 		for i in mm.instance_count: mm.set_instance_transform(i, group.transforms[i])
 		var instance = MultiMeshInstance3D.new(); instance.multimesh = mm; instance.material_override = group.material; instance.position = group.anchor
 		instance.visibility_range_end = 650; instance.visibility_range_end_margin = 20; add_child(instance)
+
+func _plan_basis(data: Dictionary, angle = 0.0) -> Basis:
+	var s = float(data.get("scale",1.0))
+	return Basis(Vector3.UP,angle).scaled(Vector3(s,1,s))
 
 func _material(id: String, color: Color, texture_path = "") -> StandardMaterial3D:
 	var m = StandardMaterial3D.new(); m.albedo_color = color; m.roughness = 0.88
@@ -136,7 +140,14 @@ func _planter():
 
 func _tree():
 	_cylinder(Vector3(0,.18,0),2,.36,"stone"); _cylinder(Vector3(0,.37,0),1.8,.04,"soil")
-	var tree = Art.packed("res://assets/props/oak.glb").instantiate()
+	var tree = Art.packed("res://assets/props/elm_field.glb").instantiate()
+	for node in tree.find_children("*", "MeshInstance3D", true, false):
+		var original = node.mesh.surface_get_material(0)
+		if original is StandardMaterial3D and "foliage" in original.resource_name:
+			var leaf = ShaderMaterial.new(); leaf.shader = preload("res://shaders/tree_leaf.gdshader")
+			leaf.set_shader_parameter("leaf_texture", load("res://assets/terrain/pbr/elm-leaf.png")); node.material_override = leaf
+		elif original is StandardMaterial3D:
+			var bark = original.duplicate(); bark.albedo_color = Color("695444"); node.material_override = bark
 	var bounds = Art.aabb(tree); var factor = 10.0 / maxf(.1,bounds.size.y)
 	tree.scale = Vector3.ONE * factor
 	tree.position = origin + Vector3(-bounds.get_center().x*factor, .4-bounds.position.y*factor, -bounds.get_center().z*factor)
@@ -153,8 +164,8 @@ func _lamp():
 
 func _shop(shop: Dictionary):
 	var saved_origin = origin
-	origin += Vector3(0,0,-7)
-	architecture.house({"x":shop.x,"z":shop.z,"w":10,"d":7,"h":10.5,"roof":"blue" if shop.id == "clothes" else "red"})
+	origin += orientation*Vector3(0,0,-7)
+	architecture.house({"x":shop.x,"z":shop.z,"w":10,"d":7,"h":7.8,"roof":"blue" if shop.id == "clothes" else "red"})
 	origin = saved_origin
 	# Открытый дворик перед прилавком позволяет войти и видеть продавца с игровой камеры.
 	_box(Vector3(0,.06,0),Vector3(10,.12,8),"stone")
@@ -184,7 +195,7 @@ func _shop(shop: Dictionary):
 	_box(Vector3(0,4.9,4),Vector3(10.4,.35,.4),"wood")
 	_box(Vector3(0,4.85,4.3),Vector3(5,.9,.14),shop.color)
 	var sign = Label3D.new(); sign.text = shop.name; sign.font_size = 48; sign.pixel_size = .012
-	sign.modulate = Color("fff0cc"); sign.outline_size = 6; sign.position = origin + Vector3(0,4.85,4.4)
+	sign.modulate = Color("fff0cc"); sign.outline_size = 6; sign.position = origin + orientation*Vector3(0,4.85,4.4)
 	sign.visibility_range_end = 100; add_child(sign)
 	_barrel(Vector3(3.5,0,-.3))
 
@@ -290,12 +301,13 @@ func _district_ground(town: Dictionary):
 	var vertices = PackedVector3Array()
 	for x in range(-145,114,4):
 		for z in range(-144,140,4):
-			var a = Vector2(town.x+x,town.z+z)
-			if not Geometry2D.is_point_in_polygon(a+Vector2(2,2),outline): continue
+			var s = float(town.get("scale",1.0))
+			var a = Vector2(town.x+x*s,town.z+z*s)
+			if not Geometry2D.is_point_in_polygon(a+Vector2(2,2)*s,outline): continue
 			# Зелёные внутренние дворы у жилых домов остаются свободными от мощения.
 			if (x < -100 and z < -70) or (x > 15 and x < 55 and z > 95): continue
 			for offset in [Vector2(0,0),Vector2(4,0),Vector2(0,4),Vector2(4,0),Vector2(4,4),Vector2(0,4)]:
-				var p = a+offset; vertices.append(GameData.position_at(p.x,p.y)+Vector3.UP*.045)
+				var p = a+offset*s; vertices.append(GameData.position_at(p.x,p.y)+Vector3.UP*.045)
 	_surface(vertices,"paving")
 
 func _temple_terrace():
@@ -304,7 +316,7 @@ func _temple_terrace():
 		_box(Vector3(x,8,-44),Vector3(3,7.4,1.4),"stone")
 		_box(Vector3(x,12,-44),Vector3(3.1,.5,1.8),"trim")
 	for z in range(-40,-55,-2):
-		var y = GameData.height_at(origin.x+66,origin.z+z)
+		var y = GameData.height_at(origin.x+66*orientation.x.length(),origin.z+z*orientation.z.length())
 		_box(Vector3(66,y-.17,z),Vector3(11,.4,2),"stone")
 	for x in [51,81]:
 		for z in [-59,-72,-87]:
@@ -316,7 +328,7 @@ func _hall(hall: Dictionary):
 	var w = float(hall.w); var d = float(hall.d); var h = float(hall.h)
 	architecture.house({"x":hall.x,"z":hall.z,"w":w,"d":d,"h":h,"roof":"blue","variant":2 if hall.id == "guild" else 0})
 	var label = Label3D.new(); label.text = hall.name; label.font_size = 40; label.pixel_size = .018
-	label.position = origin + Vector3(0,5.3,d*.5+.3); label.modulate = Color("f6e2ac"); label.visibility_range_end = 90; add_child(label)
+	label.position = origin + orientation*Vector3(0,5.3,d*.5+.3); label.modulate = Color("f6e2ac"); label.visibility_range_end = 90; add_child(label)
 	if hall.id == "forge":
 		_box(Vector3(-w*.36,h+3,0),Vector3(2.2,9,2.2),"stone")
 		_barrel(Vector3(w*.35,0,d*.55))
@@ -329,7 +341,7 @@ func _harbor():
 			for side in [-1,1]: _cylinder(Vector3(x,-6,z+side*2.8),.25,7,"wood")
 	for z in range(-24,106,3):
 		if absf(z-25)<5 or absf(z-50)<5 or absf(z-75)<5: continue
-		var y = GameData.height_at(origin.x+114,origin.z+z)
+		var y = GameData.height_at(origin.x+114*orientation.x.length(),origin.z+z*orientation.z.length())
 		_box(Vector3(114,y+.65,z),Vector3(.4,1.3,2.8),"stone")
 	for z in [34,84]: _ship(Vector3(144,-6.1,z))
 	for pos in [Vector3(101,-3,33),Vector3(101,-3,67),Vector3(97,-3,77)]: _barrel(pos)

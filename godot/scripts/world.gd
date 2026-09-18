@@ -15,11 +15,13 @@ func build():
 	_props()
 	_models()
 	_town_details()
+	var dressing = preload("res://scripts/world_dressing.gd").new()
+	add_child(dressing)
 	var town_decor = preload("res://scripts/town_decor.gd").new()
 	add_child(town_decor); town_decor.build()
 	_portal(GameData.position_at(150, 258.5), Color("9c75ff"))
 	_portal(Vector3(2205, 0, -195), Color("c6a4ff"))
-	for t in GameData.world.towns: _portal(GameData.position_at(t.x + 18, t.z + 16), Color("70d5f0"))
+	for t in GameData.world.towns: _portal(GameData.position_at(t.x + 18*t.scale, t.z + 16*t.scale), Color("70d5f0"))
 	for i in 6:
 		var light = OmniLight3D.new()
 		light.position = Vector3(2200 + (i % 3 + 0.5) * 66, 6, -200 + (int(i / 3.0) + 0.5) * 99)
@@ -37,10 +39,10 @@ func set_region(pos: Vector3):
 	if id == region_id: return
 	region_id = id; underground = id == "crypt"
 	atmosphere = {
-		"town": {"fog": Color("acbbc2"), "density": 0.0007, "sun": Color("ffe0b0"), "energy": 1.15, "ambient": 0.28},
-		"meadow": {"fog": Color("a8bec5"), "density": 0.0018, "sun": Color("fff0cf"), "energy": 1.1, "ambient": 0.35},
-		"forest": {"fog": Color("788e91"), "density": 0.0032, "sun": Color("dce6da"), "energy": 0.85, "ambient": 0.32},
-		"waste": {"fog": Color("baa58b"), "density": 0.0025, "sun": Color("ffdbb6"), "energy": 1.15, "ambient": 0.32},
+		"town": {"fog": Color("acbbc2"), "density": 0.00012, "sun": Color("ffe0b0"), "energy": 1.15, "ambient": 0.28},
+		"meadow": {"fog": Color("a8bec5"), "density": 0.00016, "sun": Color("fff0cf"), "energy": 1.1, "ambient": 0.35},
+		"forest": {"fog": Color("6f9293"), "density": 0.00045, "sun": Color("e5ecd1"), "energy": 1.05, "ambient": 0.23},
+		"waste": {"fog": Color("c4a589"), "density": 0.00025, "sun": Color("ffdbb6"), "energy": 1.15, "ambient": 0.32},
 		"crypt": {"fog": Color("191e30"), "density": 0.008, "sun": Color("9fb1da"), "energy": 0.12, "ambient": 0.23},
 	}.get(id, {})
 	var e = environment.environment
@@ -56,7 +58,7 @@ func _town_details():
 		for side in [-1, 1]:
 			var banner = MeshInstance3D.new(); var fabric = QuadMesh.new(); fabric.size = Vector2(2.1, 5.5)
 			banner.mesh = fabric; banner.material_override = cloth
-			banner.position = GameData.position_at(town.x + side * 5.3, town.z + 7.2) + Vector3.UP * 9
+			banner.position = GameData.position_at(town.x + side * 5.3 * town.scale, town.z + 7.2 * town.scale) + Vector3.UP * 9
 			banner.visibility_range_end = 160; add_child(banner)
 			var rail = MeshInstance3D.new(); var bar = BoxMesh.new(); bar.size = Vector3(2.5, 0.12, 0.18)
 			rail.mesh = bar; rail.material_override = iron; rail.position = banner.position + Vector3.UP * 2.8; add_child(rail)
@@ -74,6 +76,12 @@ func _terrain():
 	for key in ["grass", "forest", "sand", "dirt", "rock", "snow"]:
 		var path = "res://assets/terrain/%s.png" % key
 		material.set_shader_parameter(key, load(path if ResourceLoader.exists(path) else "res://generated/tex/t_%s.png" % key))
+	material.set_shader_parameter("grass", load("res://assets/terrain/pbr/meadow-albedo.png"))
+	material.set_shader_parameter("sand", load("res://assets/terrain/pbr/badlands-albedo.png"))
+	material.set_shader_parameter("forest", load("res://assets/terrain/pbr/forrest_ground_01_diff_2k.jpg"))
+	material.set_shader_parameter("forest_normal", load("res://assets/terrain/pbr/forrest_ground_01_nor_gl_2k.jpg"))
+	material.set_shader_parameter("forest_roughness", load("res://assets/terrain/pbr/forrest_ground_01_rough_2k.jpg"))
+	material.set_shader_parameter("forest_height", load("res://assets/terrain/pbr/forrest_ground_01_disp_2k.jpg"))
 	# Chunked meshes let the engine cull terrain behind the camera.
 	for cz in range(-1000, 1000, 100):
 		for cx in range(-1000, 1000, 100):
@@ -98,9 +106,7 @@ func _terrain():
 			node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF; add_child(node)
 	var water = MeshInstance3D.new(); var plane = PlaneMesh.new(); plane.size = Vector2(2000, 2000)
 	water.mesh = plane; water.position.y = -6.5
-	var wm = StandardMaterial3D.new(); wm.albedo_color = Color(0.24, 0.5, 0.65, 0.86)
-	wm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA; wm.roughness = 0.25
-	wm.albedo_texture = load("res://generated/tex/water.png"); wm.uv1_scale = Vector3(160, 160, 160)
+	var wm = ShaderMaterial.new(); wm.shader = preload("res://shaders/living_water.gdshader")
 	water.material_override = wm; water.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF; add_child(water)
 
 func _props():
@@ -164,7 +170,15 @@ func _process(dt):
 
 func _models():
 	var groups: Dictionary = {}
-	for row in GameData.world.get("modelPlacements", []):
+	for original_row in GameData.world.get("modelPlacements", []):
+		var row = original_row.duplicate()
+		if row[0] in ["oak", "pine"]:
+			var zone = GameData.zone_at(Vector3(row[1], row[2], row[3]))
+			var choice = posmod(hash("tree:%s:%s" % [row[1],row[3]]), 100)
+			if zone.id == "forest": row[0] = "pine_natural" if choice < 50 else ("elm_slender" if choice < 77 else "alder_round")
+			else: row[0] = "elm_field" if choice < 48 else ("alder_round" if choice < 78 else ("elm_slender" if choice < 94 else "pine_natural"))
+		if row[0] in ["elm_field", "elm_slender", "alder_round", "pine_natural"]:
+			row[5] *= 1.2; row[7] *= 1.2
 		var key = "%s_%s_%s" % [row[0], floori(row[1] / 100), floori(row[3] / 100)]
 		if not groups.has(key): groups[key] = []
 		groups[key].append(row)
@@ -180,7 +194,19 @@ func _models():
 				var local = mesh.transform; var parent = mesh.get_parent()
 				while parent != source and parent is Node3D:
 					local = parent.transform * local; parent = parent.get_parent()
-				parts.append({"mesh": mesh.mesh, "transform": local})
+				var display_mesh = mesh.mesh
+				if id in ["elm_field","elm_slender","alder_round","pine_natural"]:
+					display_mesh = display_mesh.duplicate()
+					for surface in display_mesh.get_surface_count():
+						var original = display_mesh.surface_get_material(surface)
+						if original is StandardMaterial3D and "foliage" in original.resource_name:
+							var leaf = ShaderMaterial.new(); leaf.shader = preload("res://shaders/tree_leaf.gdshader")
+							leaf.set_shader_parameter("leaf_texture", load("res://assets/terrain/pbr/spruce-spray.png" if id == "pine_natural" else "res://assets/terrain/pbr/elm-leaf.png"))
+							display_mesh.surface_set_material(surface, leaf)
+						elif original is StandardMaterial3D and "bark" in original.resource_name.to_lower():
+							var bark = original.duplicate(); bark.albedo_color = Color("695444") if id != "elm_slender" else Color("a3977e")
+							display_mesh.surface_set_material(surface, bark)
+				parts.append({"mesh": display_mesh, "transform": local})
 			sources[id] = {"box": Art.aabb(source), "parts": parts}
 			source.free()
 		var box: AABB = sources[id].box
@@ -195,6 +221,6 @@ func _models():
 				var transform = Transform3D(basis, Vector3(r[1], r[2], r[3]) + basis * offset)
 				mm.set_instance_transform(i, transform * part.transform)
 			var node = MultiMeshInstance3D.new(); node.name = "Art_" + id; node.multimesh = mm
-			node.visibility_range_end = 360 if id in ["oak", "pine", "rock_a", "rock_b", "bush"] else 800
+			node.visibility_range_end = 360 if id in ["oak", "pine", "elm_field", "elm_slender", "alder_round", "pine_natural", "rock_a", "rock_b", "bush"] else 800
 			node.visibility_range_end_margin = 30
 			add_child(node)

@@ -9,7 +9,7 @@ import { zoneAt, TOWNS, DUNGEON, CRYPT, heightAt, obstacles } from '../src/world
 import { PVP, karmaForPk, karmaWashCost } from '../src/pvp.js';
 import { effectiveSkill, spForKill } from '../src/progression.js';
 import { CLASSES, SKILLS, ITEMS } from '../src/data.js';
-import { calcDmg, missChance, evaChance, flatDist, clamp } from '../src/sim.js';
+import { heroAttackTiming, calcDmg, missChance, evaChance, flatDist, clamp } from '../src/sim.js';
 import { createGroundLoot } from './sim/loot.js';
 import { createMovement } from './sim/movement.js';
 import { createMobs } from './sim/mobs.js';
@@ -324,10 +324,11 @@ function autoAttack(a, dt, now) {
   if (a.swing && a.swing.target !== targetKey) a.swing = null;
   if (!a.swing) {
     if (a.atkTimer > 0) return;
-    a.atkTimer = 1 / s.aspd;
-    const windup = Math.min(0.32, a.atkTimer * 0.32);
+    const timing = heroAttackTiming(s.aspd);
+    a.atkTimer = timing.cooldown;
+    const windup = timing.windup;
     a.swing = { target: targetKey, remaining: windup };
-    pushNear(a, { k: 'attack_start', t: Math.min(0.75, a.atkTimer * 0.88), to: { ...a.target } });
+    pushNear(a, { k: 'attack_start', t: timing.duration, to: { ...a.target } });
     return;
   }
   a.swing.remaining -= dt;

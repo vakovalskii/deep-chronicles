@@ -65,7 +65,7 @@ func _run():
 	check(data.world.spawns.size() == 155 and data.world.obstacles.size() >= 3251 + data.world.townDecor.size() and data.world.modelPlacements.size() >= 1900, "world content exported without missing spawns")
 	check(absf(data.height_at(-430, 400) - 4) < 0.001, "town ground matches server")
 	var position = data.move(Vector3(-437, 4, 400), Vector3.RIGHT, 5)
-	check(position.distance_to(Vector3(-430, 4, 400)) >= 5.0, "movement cannot cross the fountain")
+	check(position.distance_to(Vector3(-430, 4, 400)) >= 4.5*float(data.world.towns[0].scale)+0.6-0.01, "movement cannot cross the fountain")
 	var art = load("res://scripts/art_assets.gd")
 	var assets_ok = true
 	for id in data.catalog.MOBS.keys() + ["warrior", "mage", "merchant", "gatekeeper", "priest"]:
@@ -198,7 +198,7 @@ func _run():
 	await create_timer(0.35).timeout
 	game.joystick = Vector2.ZERO
 	check(game.hero.position.distance_to(start) > 1, "native movement updates position")
-	check(game.stats.speed > 5 and game.stats.speed < 7, "native speed uses the restored world scale")
+	check(is_equal_approx(game.stats.speed, 7.15), "native warrior uses the requested ten-percent faster pace")
 	var stopped_at = game.hero.position
 	await create_timer(.15).timeout
 	check(game.hero.position.distance_to(stopped_at)<.01 and not game.hero.moving and game.hero.last_clip == "idle", "releasing movement stops position and gait without drifting")
@@ -506,7 +506,7 @@ func _test_locomotion():
 		if data.move(candidate, Vector3.ZERO, 0.01).distance_to(candidate) < 0.1:
 			direction = trial; break
 	game.destination = start + direction * 16; game.has_destination = true
-	check(await wait_for(func(): return game.hero.moving and game.hero.last_clip == "run"), "actual click movement selects the full-body sprint clip")
+	check(await wait_for(func(): return game.hero.moving and game.hero.last_clip == "run"), "actual click movement selects the full-body running clip")
 	await create_timer(0.2).timeout
 	check(game.hero.motion_speed > 5 and game.hero.motion_speed <= float(game.stats.speed) * 1.05 and game.stats.speed < 20, "running speed is reduced and animation follows measured displacement")
 	var skeleton = game.hero.model.find_child("Skeleton3D", true, false)
@@ -553,19 +553,20 @@ func _test_mob_telegraph():
 		for packet in received.slice(from_message):
 			if packet.t == "ev":
 				for event in packet.e:
-					if event.k == "mob_windup" and int(event.p) == game.own_id: warning.merge(event, true); return true
+					if event.k == "mob_windup" and int(event.p) == game.own_id and int(event.m) == orc_id: warning.merge(event, true); return true
 		return false, 10), "an aggressive server mob announces its wind-up before damage")
 	if warning.is_empty(): return
 	var mob = game.mobs.get(int(warning.m))
 	game.set_target(mob)
 	check(is_instance_valid(mob) and mob.winding_up and game.combat_fx.telegraphs.has(mob.get_instance_id()), "server wind-up drives the monster pose and the matching ground sector")
 	check(game.game_audio.music.combat_remaining > 0, "a real mob threat switches the local music into combat")
-	await create_timer(0.05).timeout
-	check(game.game_audio.music.duck_db < 0 and game.game_audio.music.cue == "music_battle", "battle theme crossfades and ducks below attack sounds")
-	await _screenshot("mob-windup.png")
+	# Start the dodge before waiting for audio and GPU screenshot readback.
 	# Real client movement, not a developer warp: leave the fixed sector.
 	game.destination = game.hero.position + escape * 14
 	game.has_destination = true
+	await create_timer(0.05).timeout
+	check(game.game_audio.music.duck_db < 0 and game.game_audio.music.cue == "music_battle", "battle theme crossfades and ducks below attack sounds")
+	await _screenshot("mob-windup.png")
 	var strike = {}
 	check(await wait_for(func():
 		for packet in received.slice(from_message):

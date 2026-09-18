@@ -80,11 +80,11 @@ import {MOB_SPEED} from '../src/sim.js';
 test('масштаб скорости согласован для классов, мобов, баффов и перегруза',()=>{
   for(const cls of ['warrior','mage']){
     const p=newChar('Тест',cls), speed=calcStats(p).speed;
-    assert.ok(speed>5&&speed<7,cls+' не должен летать по карте');
+    assert.ok(Math.abs(speed-({warrior:7.15,mage:6.3624}[cls]))<1e-8,cls+' получает прибавку темпа 10%');
     assert.equal(calcStats(p,[{stat:'speed',mul:1.25,until:100}],0).speed,speed*1.25);
     p.inv=[{id:'potion_hp',n:10000}];
     assert.ok(Math.abs(calcStats(p).speed-speed*.6)<1e-8);
   }
-  assert.equal(MOB_SPEED({}),3);
-  assert.ok(Math.abs(MOB_SPEED({boss:true})-2.4)<1e-8);
+  assert.ok(Math.abs(MOB_SPEED({})-3.3)<1e-8);
+  assert.ok(Math.abs(MOB_SPEED({boss:true})-2.64)<1e-8);
 });

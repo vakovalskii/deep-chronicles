@@ -97,3 +97,21 @@ test('неизвестные и прототипные ID навыков/рец�
   }
   assert.equal(newChar('Тест','__proto__').cls,'warrior');
 });
+
+test('смерть и нулевая мана сохраняются при загрузке, оживляет только respawn', async () => {
+  const { killPlayer, profileOf, respawn } = await import('../server/sim/player.js');
+  const a = actor(); a.P.mp = 0; killPlayer(a, 'Тестовый моб');
+  const saved = profileOf(a);
+  const restored = newActor(2, a.name, loadChar(a.name, saved));
+  assert.equal(restored.dead, true);
+  assert.equal(restored.P.hp, 0);
+  assert.equal(restored.P.mp, 0);
+  const xp = restored.P.xp;
+  respawn(restored);
+  assert.equal(restored.dead, false);
+  assert.ok(restored.P.hp > 0);
+  assert.equal(restored.P.xp, xp, 'повторный вход не должен повторять штраф смерти');
+  const legacy = newChar('Старый', 'warrior'); delete legacy.hp; delete legacy.mp; delete legacy.dead;
+  const old = newActor(3, 'Старый', loadChar('Старый', legacy));
+  assert.equal(old.dead, false); assert.ok(old.P.hp > 0 && old.P.mp > 0);
+});

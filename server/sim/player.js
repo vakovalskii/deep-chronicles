@@ -40,7 +40,11 @@ export function loadChar(name, save) {
   for (const [sl, id] of Object.entries(P.equip)) if (id && !ITEMS[id]) P.equip[sl] = null;
   for (const sl of Object.keys(P.enc)) P.enc[sl] = clamp(P.enc[sl] | 0, 0, MAX_ENCH);
   const s = calcStats(P);
-  P.hp = clamp(+P.hp || s.maxHp, 0, s.maxHp); P.mp = clamp(+P.mp || s.maxMp, 0, s.maxMp);
+  // Ноль — сохраненное значение ресурса, а не отсутствие поля.
+  P.hp = clamp(Number.isFinite(P.hp) ? P.hp : s.maxHp, 0, s.maxHp);
+  P.mp = clamp(Number.isFinite(P.mp) ? P.mp : s.maxMp, 0, s.maxMp);
+  P.dead = P.dead === true || P.hp === 0;
+  if (P.dead) P.hp = 0;
   return P;
 }
 
@@ -51,7 +55,7 @@ export function newActor(id, name, P) {
     x: P.x, y: heightAt(P.x, P.z), z: P.z, r: 0,
     target: null,        // { m: mobId } | { p: playerId }
     attacking: false, atkTimer: 0, cds: {}, buffs: [], cast: null,
-    dead: false, dirty: true, out: [],
+    dead: P.dead === true || P.hp === 0, dirty: true, out: [],
     hitBy: new Map(), karma: 0, pk: 0, flagUntil: 0,
   };
 }
@@ -105,6 +109,9 @@ export function respawn(a) {
 }
 export function place(a, x, z) {
   a.x = x; a.z = z; a.y = heightAt(x, z);
+  // Сервер уже перенес героя: новые позиции проверяются относительно места
+  // назначения. На запоздавшие старые координаты клиент получает обычный fix.
+  a.stAt = Date.now();
   ev(a, { k: 'move', x, z });
 }
 

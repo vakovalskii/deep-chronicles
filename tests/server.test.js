@@ -419,3 +419,87 @@ test('изготовление по WS: списание материалов, �
     assert.equal(saved.coins,700);assert.deepEqual(saved.craftReceipts,['native-order-0001']);
   } finally {a.ws.close();await a.closed();}
 });
+
+test('отклоненный телепорт и respawn живого не разрешают произвольное перемещение', async () => {
+  const a = client(); await a.open();
+  try {
+    a.send({ t: 'register', name: 'БезРывка', pass: 'secret1', cls: 'warrior' });
+    const { p } = await a.wait('authok');
+    for (const command of [{ t: 'respawn' }, { t: 'tp', id: 'missing' }]) {
+      a.send(command);
+      a.send({ t: 'st', x: p.x + 500, z: p.z, y: 0, r: 0, a: 0 });
+      const reply = await a.wait('fix', 'snap');
+      assert.equal(reply.t === 'fix' ? reply.x : reply.me.x, p.x);
+      if (reply.t !== 'fix') assert.equal((await a.wait('fix')).x, p.x);
+    }
+  } finally { a.ws.close(); await a.closed(); }
+});
+
+test('вход вторым устройством получает последнее состояние через пароль и токен', async () => {
+  const a = client(), b = client(), c = client(); await Promise.all([a.open(), b.open(), c.open()]);
+  try {
+    a.send({ t: 'register', name: 'ПереносСессии', pass: 'secret1', cls: 'warrior' });
+    const first = await a.wait('authok');
+    a.send({ t: 'unequip', slot: 'weapon' });
+    const before = await untilP(a, p => !p.equip.weapon);
+    b.send({ t: 'auth', token: first.token });
+    const second = await b.wait('authok');
+    assert.deepEqual(second.p.inv, before.inv); assert.equal(second.p.equip.weapon, null);
+    const idx = second.p.inv.findIndex(e => e.id === 'sword_novice');
+    b.send({ t: 'equip', idx });
+    const equipped = await untilP(b, p => p.equip.weapon === 'sword_novice');
+    c.send({ t: 'login', name: 'ПереносСессии', pass: 'secret1' });
+    const third = await c.wait('authok');
+    assert.equal(third.p.equip.weapon, 'sword_novice'); assert.deepEqual(third.p.inv, equipped.inv);
+  } finally { for (const x of [a,b,c]) x.ws.close(); await Promise.all([a.closed(),b.closed(),c.closed()]); }
+});
+
+test('законный телепорт принимает новую позицию, отклоняет старую и не отключает проверку скорости', async () => {
+  const { buildProps, TELEPORTS } = await import('../src/world-core.js');
+  const gate = buildProps().npcs.find(n => n.role === 'gatekeeper');
+  const destination = TELEPORTS.find(t => Math.hypot(t.x - gate.x, t.z - gate.z) > 100);
+  const a = client(); await a.open();
+  try {
+    a.send({ t: 'register', name: 'ЗаконныйПеренос', pass: 'secret1', cls: 'warrior' }); await a.wait('authok');
+    await at(a, gate.x, gate.z);
+    a.send({ t: 'dev', coins: 100000 }); await untilP(a, p => p.coins === 100000);
+    a.send({ t: 'tp', id: destination.id });
+    const teleported = await untilP(a, p => p.x === destination.x && p.z === destination.z);
+    assert.equal(teleported.coins, 100000 - destination.cost);
+    a.send({ t: 'st', x: gate.x, z: gate.z, y: 0, r: 0, a: 0 });
+    const staleFix = await a.wait('fix');
+    assert.equal(staleFix.x, destination.x); assert.equal(staleFix.z, destination.z);
+    a.send({ t: 'st', x: destination.x, z: destination.z, y: 0, r: 0, a: 0 });
+    // Move one metre from the destination: a normal movement must remain valid.
+    a.send({ t: 'st', x: destination.x + 1, z: destination.z, y: 0, r: 0, a: 1 });
+    let moved;
+    for (let i = 0; i < 30; i++) { const m = await a.wait('snap', 'fix'); assert.notEqual(m.t, 'fix'); if (m.me.x === destination.x + 1) { moved = m; break; } }
+    assert.ok(moved, 'нормальное движение после телепорта не принято');
+    a.send({ t: 'st', x: destination.x + 500, z: destination.z, y: 0, r: 0, a: 1 });
+    assert.equal((await a.wait('fix')).x, destination.x + 1);
+  } finally { a.ws.close(); await a.closed(); }
+});
+
+test('смерть переживает вход; мертвый не перемещается, после respawn можно двигаться', async () => {
+  const { buildProps } = await import('../src/world-core.js');
+  const spawns = buildProps().spawns, index = spawns.findIndex(s => s.mob === 'orc'), mob = spawns[index];
+  const a = client(), b = client(); await Promise.all([a.open(), b.open()]);
+  try {
+    a.send({ t: 'register', name: 'СмертьСохранена', pass: 'secret1', cls: 'warrior' });
+    const auth = await a.wait('authok');
+    await at(a, mob.x, mob.z);
+    a.send({ t: 'dev', hp: 1 });
+    a.send({ t: 'atk', id: index + 1, kind: 'm' });
+    await untilEv(a, /"k":"dead"/);
+    b.send({ t: 'auth', token: auth.token });
+    const dead = await b.wait('authok'); assert.equal(dead.p.dead, true); assert.equal(dead.p.hp, 0);
+    b.send({ t: 'st', x: dead.p.x + 1, z: dead.p.z, y: 0, r: 0, a: 0 });
+    const fixed = await b.wait('fix'); assert.equal(fixed.x, dead.p.x); assert.equal(fixed.z, dead.p.z);
+    b.send({ t: 'respawn' });
+    const alive = await untilP(b, p => !p.dead && p.hp > 0);
+    b.send({ t: 'st', x: alive.x + 1, z: alive.z, y: 0, r: 0, a: 1 });
+    let moved;
+    for (let i = 0; i < 30; i++) { const m = await b.wait('snap', 'fix'); assert.notEqual(m.t, 'fix'); if (m.me.x === alive.x + 1) { moved = m; break; } }
+    assert.ok(moved);
+  } finally { a.ws.close(); b.ws.close(); await Promise.all([a.closed(), b.closed()]); }
+});

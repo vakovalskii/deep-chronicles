@@ -72,7 +72,7 @@ npm run test:native      # только smoke против временного 
 npm run native:weapons   # хват оружия + скриншот
 npm run native:probe     # TLS и кадр `hi` от боевого сервера, без входа в аккаунт
 npm run native:gallery   # витрина моделей в PNG для художественной приёмки
-npm run native:build -- --target=macos   # только сборка
+npm run native:build -- macos   # только сборка
 ```
 
 Артефакты тестов — `.native-run/test-artifacts` (или `test-touch-artifacts` при `--touch`),
@@ -82,6 +82,10 @@ npm run native:build -- --target=macos   # только сборка
 
 - `NATIVE_READY` не появился → клиент не собрал сцену; смотреть лог в `.native-run/`.
 - `checks=N failures=0` нет в выводе → smoke не дошёл до конца, там же причина.
-- Расхождение статов в 48 фикстурах → разъехались `data.gd` и `src/stats.js`; чинить зеркало
+- Расхождение статов в экспортированных фикстурах → разъехались `data.gd` и `src/stats.js`; чинить зеркало
   в клиенте, не правила.
 - Пустая или старая `godot/generated/` → `npm run native:assets`; руками её не правят.
+
+## Полный выпуск
+
+`npm run native:verify -- --release` дополнительно строит macOS и Windows ZIP, расчёт экономики и сайт скачивания, проверяет страницу с реальным временным сервером. Нужен Python 3 для ZIP Windows. Затем `npm run deploy -- --verified`. Браузерная игра закрыта, `--web` больше не поддерживается. Подробности и источники истины — [NATIVE_PIPELINE](docs/NATIVE_PIPELINE.md).

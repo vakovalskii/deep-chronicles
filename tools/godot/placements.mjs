@@ -1,6 +1,21 @@
 // Replace presentation meshes only. Server colliders, height field and spawn
 // coordinates remain the original deterministic world-core.js output.
 import { heightAt } from "../../src/world-core.js";
+// Exact triangular surface rendered by Godot (4 m grid, same diagonal).
+export function presentationHeightAt(x, z) {
+  if (x > 2100) return 0;
+  const x0 = Math.floor(x / 4) * 4, z0 = Math.floor(z / 4) * 4, u = (x-x0)/4, v = (z-z0)/4;
+  const a = heightAt(x0,z0), b = heightAt(x0+4,z0), c = heightAt(x0,z0+4), d = heightAt(x0+4,z0+4);
+  return u+v <= 1 ? a*(1-u-v)+b*u+c*v : b*(1-v)+c*(1-u)+d*(u+v-1);
+}
+export function groundPlacement(row) {
+  const [id, x, , z, , w, h, d] = row;
+  const radius = id.startsWith('rock') ? 0.35 : id === 'bush' ? 0.2 : 0;
+  const levels = [presentationHeightAt(x,z)];
+  for (let i=0; radius && i<8; i++) levels.push(presentationHeightAt(x+Math.cos(i*Math.PI/4)*w*radius,z+Math.sin(i*Math.PI/4)*d*radius));
+  row[2] = Math.min(...levels) - (id.startsWith('rock') ? Math.min(h*0.15,0.6) : ['oak','pine','bush'].includes(id) ? 0.12 : 0.02);
+  return row;
+}
 export function artPlacements(shapes, towns, crypt) {
   const models = [], omitted = new Set();
   const add = (id, r, y, w, h, d = w) => models.push([id, r[2], y, r[4], r[5], w, h, d]);
@@ -34,5 +49,5 @@ export function artPlacements(shapes, towns, crypt) {
     if (Math.abs(Math.sin(a*2))<.4) continue;
     models.push(['bush',town.x+Math.cos(a)*28,heightAt(town.x,town.z),town.z+Math.sin(a)*28,a,2.4,1.35,2.4]);
   }
-  return { shapes: shapes.filter((_, i) => !omitted.has(i)), modelPlacements: models };
+  return { shapes: shapes.filter((_, i) => !omitted.has(i)), modelPlacements: models.map(groundPlacement) };
 }

@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { openDb } from './accounts.js';
 import { zoneAt, TOWNS, DUNGEON, CRYPT, heightAt } from '../src/world-core.js';
 import { PVP, karmaForPk, karmaWashCost } from '../src/pvp.js';
+import { effectiveSkill, spForKill } from '../src/progression.js';
 import { CLASSES, SKILLS, ITEMS } from '../src/data.js';
 import { calcDmg, missChance, evaChance, flatDist, clamp } from '../src/sim.js';
 import { createGroundLoot } from './sim/loot.js';
@@ -70,7 +71,7 @@ wss.on('connection', (ws, req) => {
   const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
   const p = { id: ++seq, ws, name: null, key: null, a: null, known: new Set(), knownMobs: new Set(), lastChat: {}, stN: 0, stT: 0 };
   players.set(p.id, p);
-  send(p, { t: 'hi', online: online(), features: { groundLoot: 1 } });
+  send(p, { t: 'hi', online: online(), features: { groundLoot: 1, progression: 1, autoloot: 1, crafting: 1, nativeOnly: 1 } });
   ws.on('message', (raw) => {
     let m; try { m = JSON.parse(raw); } catch { return; }
     if (m.t === 'auth' || m.t === 'login' || m.t === 'register') return onAuth(p, m, ip);
@@ -100,27 +101,29 @@ wss.on('connection', (ws, req) => {
         a.attacking = !m.hold;
         return;
       }
+      case 'autoloot': {
+        if (typeof m.enabled !== 'boolean') return;
+        const before = a.P.autoloot; a.P.autoloot = m.enabled;
+        try { if (!acc.store(p.key, PL.profileOf(a))) throw Error('save failed'); }
+        catch { a.P.autoloot = before; PL.say(a, 'Не удалось сохранить автолут', 'bad'); }
+        a.dirty = true; return;
+      }
+      case 'learn': return PL.cmdLearn(a, String(m.id || ''), m.rank, () => acc.store(p.key, PL.profileOf(a)));
       case 'skill': return onSkill(p, a, String(m.id || ''), now);
       case 'pickup': {
         const result = groundLoot.claim(String(m.id || ''), a, p.key, now);
         if (result.error) return send(p, { t: 'pickup_err', id: m.id, reason: result.error });
         const d = result.drop;
-        const before = { coins: a.P.coins, inv: structuredClone(a.P.inv) };
-        if (d.item === 'coins') a.P.coins += d.n;
-        else PL.addItem(a.P, d.item, d.n);
-        try {
-          if (!acc.store(p.key, PL.profileOf(a))) throw new Error('profile not saved');
-        } catch {
-          a.P.coins = before.coins; a.P.inv = before.inv; groundLoot.restore(d);
+        if (!PL.creditLoot(a, [d], () => acc.store(p.key, PL.profileOf(a)))) {
+          groundLoot.restore(d);
           return send(p, { t: 'pickup_err', id: d.id, reason: 'Не удалось сохранить подбор. Добыча осталась на земле.' });
         }
-        a.dirty = true;
-        a.out.push({ k: 'pickup', id: d.id, item: d.item, n: d.n });
         return;
       }
       case 'use': return PL.cmdUse(a, String(m.id || ''));
       case 'equip': return PL.cmdEquip(a, m.idx | 0, m.slot);
       case 'unequip': return PL.cmdUnequip(a, String(m.slot || ''));
+      case 'craft': return PL.cmdCraft(a, world.npcs, String(m.id || ''), m.request, () => acc.store(p.key, PL.profileOf(a)));
       case 'buy': return PL.cmdBuy(a, world.npcs, String(m.id || ''), m.n);
       case 'sell': return PL.cmdSell(a, world.npcs, m.idx | 0, m.n);
       case 'ench': return PL.cmdEnch(a, String(m.scroll || ''), m.ref || {});
@@ -129,6 +132,7 @@ wss.on('connection', (ws, req) => {
       case 'dev': {
         if (!DEV_CMD) return;
         if (m.x != null) { PL.place(a, num(m.x), num(m.z)); a.warpUntil = now + 2000; }
+        if (m.sp != null) a.P.sp = Math.max(0, num(m.sp, 1e9) | 0);
         if (m.coins != null) a.P.coins = Math.max(0, num(m.coins, 1e9) | 0);
         if (m.lvl != null) a.P.lvl = clamp(m.lvl | 0, 1, 40);
         if (m.hp != null) a.P.hp = num(m.hp, 1e6);
@@ -197,8 +201,11 @@ function damageMob(a, mb, dmg, crit, now) {
   const rw = world.rewardFor(mb, winner.P.lvl);
   PL.gainXp(winner, rw.xp);
   winner.P.kills++;
-  groundLoot.spawn(mb, rw, recipient.key, recipient.name, now);
-  winner.out.push({ k: 'kill', mob: mb.kind, name: mb.def.name, xp: rw.xp, coins: rw.coins, ground: true, boss: !!mb.def.boss });
+  const sp = spForKill(rw.xp); winner.P.sp += sp;
+  const drops = [{ item: 'coins', n: rw.coins }, ...rw.drops.map(item => ({ item, n: 1 }))];
+  const auto = winner.P.autoloot && PL.creditLoot(winner, drops, () => acc.store(recipient.key, PL.profileOf(winner)));
+  if (!auto) groundLoot.spawn(mb, rw, recipient.key, recipient.name, now);
+  winner.out.push({ k: 'kill', mob: mb.kind, name: mb.def.name, xp: rw.xp, coins: rw.coins, sp, ground: !auto, boss: !!mb.def.boss });
   winner.dirty = true;
   // убийство моба смывает карму PK
   if (winner.karma > 0) { winner.karma = Math.max(0, winner.karma - Math.max(1, Math.ceil(rw.xp / PVP.karmaPerXp))); sendMe(winner); }
@@ -235,7 +242,7 @@ function damageActor(a, v, atk, mul, school, critChance, now) {
 function onSkill(p, a, id, now) {
   const err = PL.skillError(a, id, now);
   if (err) return PL.say(a, err, 'bad');
-  const sk = SKILLS[id], s = PL.statsOf(a, now);
+  const sk = effectiveSkill(a.P, id), s = PL.statsOf(a, now);
   if (sk.kind === 'dmg') {
     const t = targetPos(a.target);
     if (!alive(t)) return PL.say(a, 'Нет цели', 'bad');
@@ -248,7 +255,7 @@ function onSkill(p, a, id, now) {
 }
 
 function applySkill(a, id, ref, now) {
-  const sk = SKILLS[id], s = PL.statsOf(a, now);
+  const sk = effectiveSkill(a.P, id), s = PL.statsOf(a, now);
   if (sk.kind === 'dmg') {
     const t = targetPos(ref);
     if (!alive(t) || flatDist(a, t) > sk.range + targetRadius(ref) + LAG_M + 2) return;
@@ -263,7 +270,7 @@ function applySkill(a, id, ref, now) {
     a.out.push({ k: 'heal', kind: 'hp', amount: amt, skill: id });
   } else if (sk.kind === 'buff') {
     a.buffs.push({ stat: sk.stat, mul: sk.mul, until: now + sk.dur * 1000, name: sk.name });
-    a.out.push({ k: 'buff', id, dur: sk.dur });
+    a.out.push({ k: 'buff', id, dur: sk.dur, stat: sk.stat, mul: sk.mul });
   } else if (sk.kind === 'aoe') {
     const atk = sk.school === 'm' ? s.matk : s.patk;
     let n = 0;

@@ -54,6 +54,7 @@ export const ITEMS = {
   sword_crystal: { name: 'Кристальный клинок', slot: 'weapon', grade: 'c', patk: 38, price: 6500, lvl: 18, w: 3.5, color: 0x80e0ff },
   staff_crystal: { name: 'Кристальный посох', slot: 'weapon', grade: 'c', patk: 14, matk: 36, price: 6500, lvl: 18, w: 2.2, twoHand: true, color: 0x90a0ff },
   sword_dragon: { name: 'Клинок дракона', slot: 'weapon', grade: 'b', patk: 70, price: 0, lvl: 25, w: 4, color: 0xff6030, rare: true },
+  staff_abyss: { name: 'Посох глубин', slot: 'weapon', grade: 'b', patk: 24, matk: 68, price: 0, lvl: 25, w: 2.5, twoHand: true, color: 0x68dfd8, rare: true, icon: 'staff_crystal' },
   // щиты
   shield_wood: { name: 'Дощатый щит', slot: 'shield', grade: 'd', pdef: 12, price: 400, lvl: 8, w: 4, color: 0x8a6030 },
   shield_iron: { name: 'Железный щит', slot: 'shield', grade: 'c', pdef: 26, price: 2600, lvl: 18, w: 6, color: 0x9098a8 },
@@ -88,6 +89,15 @@ export const ITEMS = {
   legs_bone: { name: 'Костяные поножи', slot: 'legs', grade: 'b', pdef: 40, price: 0, lvl: 25, w: 6, set: 'bone', color: 0xd0cab0, rare: true },
   gloves_bone: { name: 'Костяные перчатки', slot: 'gloves', grade: 'b', pdef: 15, price: 0, lvl: 25, w: 1.6, set: 'bone', color: 0xe0dcc0, rare: true },
   boots_bone: { name: 'Костяные сапоги', slot: 'feet', grade: 'b', pdef: 15, price: 0, lvl: 25, w: 2.2, set: 'bone', color: 0xc8c2a8, rare: true },
+  // B: комплект мага — та же ступень, что костяной комплект воина.
+  hat_abyss: { name: 'Капюшон глубин', slot: 'head', grade: 'b', pdef: 16, mdef: 20, price: 0, lvl: 25, w: 1, set: 'abyss', color: 0x286e75, rare: true, icon: 'hat_mystic' },
+  robe_abyss: { name: 'Мантия глубин', slot: 'armor', grade: 'b', pdef: 60, mdef: 50, mp: 120, price: 0, lvl: 25, w: 4.5, robe: true, full: true, set: 'abyss', color: 0x286e75, rare: true, icon: 'robe_mystic' },
+  gloves_abyss: { name: 'Перчатки глубин', slot: 'gloves', grade: 'b', pdef: 10, mdef: 9, price: 0, lvl: 25, w: 0.6, set: 'abyss', color: 0x205c63, rare: true, icon: 'gloves_mystic' },
+  boots_abyss: { name: 'Сапоги глубин', slot: 'feet', grade: 'b', pdef: 10, mdef: 9, price: 0, lvl: 25, w: 0.9, set: 'abyss', color: 0x205c63, rare: true, icon: 'boots_mystic' },
+  shield_bone: { name: 'Щит глубин', slot: 'shield', grade: 'b', pdef: 44, price: 0, lvl: 25, w: 7, color: 0xe0dcc0, rare: true, icon: 'shield_iron' },
+  neck_lich: { name: 'Ожерелье глубин', slot: 'neck', grade: 'b', mdef: 40, price: 0, lvl: 25, w: 0.1, color: 0x68dfd8, rare: true, icon: 'neck_silver' },
+  ring_lich: { name: 'Кольцо глубин', slot: 'ring', grade: 'b', mdef: 22, crit: 0.015, price: 0, lvl: 25, w: 0.1, color: 0x68dfd8, rare: true, icon: 'ring_silver' },
+  lich_seal: { name: 'Печать Короля-лича', price: 0, sell: 0, stack: true, loot: true, w: 0.05, color: 0xb070ff, icon: 'ear_lich' },
   // украшения
   ear_bronze: { name: 'Бронзовая серьга', slot: 'ear', grade: 'd', mdef: 7, mp: 10, price: 300, lvl: 8, w: 0.1, color: 0xc08040 },
   neck_bronze: { name: 'Бронзовое ожерелье', slot: 'neck', grade: 'd', mdef: 10, price: 400, lvl: 8, w: 0.1, color: 0xc08040 },
@@ -111,6 +121,7 @@ export const ITEMS = {
 
 // комплекты: бонус, когда надеты все части
 export const SETS = {
+  abyss: { name: 'Комплект глубин', parts: ['hat_abyss', 'robe_abyss', 'gloves_abyss', 'boots_abyss'], bonus: { mp: 280, matk: 26, cast: 0.15 } },
   leather: { name: 'Кожаный комплект', parts: ['helm_leather', 'armor_leather', 'legs_leather', 'gloves_leather', 'boots_leather'], bonus: { hp: 80, pdef: 10 } },
   apprentice: { name: 'Ученический комплект', parts: ['hat_apprentice', 'robe_apprentice', 'gloves_apprentice', 'boots_apprentice'], bonus: { mp: 60, matk: 5 } },
   chain: { name: 'Кольчужный комплект', parts: ['helm_chain', 'armor_chain', 'legs_chain', 'gloves_chain', 'boots_chain'], bonus: { hp: 220, pdef: 25, speed: -1 } },
@@ -132,7 +143,7 @@ export const MOBS = {
   skeleton: { name: 'Скелет-страж', lvl: 18, hp: 700, patk: 56, pdef: 95, xp: 520, coins: [55, 100], shape: 'humanoid', color: 0xe0dcc8, size: 1.1, aggro: true, drops: { bone: 0.8, potion_mp: 0.1, scroll_ench_a: 0.04 } },
   ghoul: { name: 'Упырь', lvl: 21, hp: 950, patk: 68, pdef: 120, xp: 720, coins: [70, 140], shape: 'humanoid', color: 0x6a8a6a, size: 1.2, aggro: true, drops: { ectoplasm: 0.25, ring_silver: 0.02 } },
   wraith: { name: 'Призрак', lvl: 24, hp: 1100, patk: 80, pdef: 130, xp: 900, coins: [90, 160], shape: 'ghost', color: 0x90ffd0, size: 1.3, aggro: true, drops: { ectoplasm: 0.5, scroll_ench_w: 0.04, hat_mystic: 0.02 } },
-  lich: { name: 'Король-лич', lvl: 28, hp: 9000, patk: 120, pdef: 200, xp: 9000, coins: [1500, 2500], shape: 'humanoid', color: 0x8040c0, size: 2.6, aggro: true, boss: true, respawn: 300, drops: { sword_dragon: 0.3, armor_bone: 0.3, helm_bone: 0.3, legs_bone: 0.3, gloves_bone: 0.3, boots_bone: 0.3, ear_lich: 0.25, scroll_ench_w: 0.5, ectoplasm: 1 } },
+  lich: { name: 'Король-лич', lvl: 28, hp: 9000, patk: 120, pdef: 200, xp: 9000, coins: [1500, 2500], shape: 'humanoid', color: 0x8040c0, size: 2.6, aggro: true, boss: true, respawn: 300, drops: { lich_seal: 1, staff_abyss: 0.3, hat_abyss: 0.3, robe_abyss: 0.3, gloves_abyss: 0.3, boots_abyss: 0.3, shield_bone: 0.2, neck_lich: 0.2, ring_lich: 0.25, sword_dragon: 0.3, armor_bone: 0.3, helm_bone: 0.3, legs_bone: 0.3, gloves_bone: 0.3, boots_bone: 0.3, ear_lich: 0.25, scroll_ench_w: 0.5, ectoplasm: 1 } },
 };
 
 // торговцы
@@ -143,3 +154,21 @@ export const SHOP = [
   'sword_crystal', 'staff_crystal', 'shield_iron', 'helm_chain', 'armor_chain', 'legs_chain', 'gloves_chain', 'boots_chain',
   'hat_mystic', 'robe_mystic', 'gloves_mystic', 'boots_mystic', 'ear_silver', 'neck_silver', 'ring_silver',
 ];
+
+// Явная цена выкупа: стартовые бесплатные вещи больше не превращаются в 1600 монет.
+for (const item of Object.values(ITEMS)) if (item.rare) item.sell = 1600;
+
+// Гарантированная альтернатива случайному дропу. Изготовление у торговца.
+export const RECIPES = {
+  sword_long: { coins: 300, materials: { pelt: 20, bone: 20 } },
+  staff_oak: { coins: 300, materials: { pelt: 20, bone: 20 } },
+  sword_crystal: { coins: 900, materials: { crystal: 40, bone: 40 } },
+  staff_crystal: { coins: 900, materials: { crystal: 40, bone: 40 } },
+  sword_dragon: { coins: 12000, materials: { lich_seal: 8, crystal: 120, ectoplasm: 60 } },
+  staff_abyss: { coins: 12000, materials: { lich_seal: 8, crystal: 120, ectoplasm: 60 } },
+};
+for (const id of [...SETS.bone.parts, ...SETS.abyss.parts, 'shield_bone', 'ear_lich', 'neck_lich', 'ring_lich']) {
+  const main = ITEMS[id].slot === 'armor';
+  RECIPES[id] = { coins: main ? 6000 : 2500, materials: { lich_seal: main ? 4 : 2, crystal: main ? 60 : 25, ectoplasm: main ? 30 : 12 } };
+}
+RECIPES.robe_abyss = { coins: 8500, materials: { lich_seal: 6, crystal: 85, ectoplasm: 42 } };

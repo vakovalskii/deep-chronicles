@@ -47,7 +47,7 @@ func _run():
 			if fixture.stats[key] is float or fixture.stats[key] is int:
 				if not is_equal_approx(float(s[key]), float(fixture.stats[key])):
 					stats_match = false; print("Mismatch ", key, ": ", s[key], " != ", fixture.stats[key])
-	check(stats_match, "48 native stat profiles match the JS game rules")
+	check(stats_match, "%s native stat profiles match the JS game rules" % fixtures.size())
 	check(data.world.spawns.size() == 155 and data.world.obstacles.size() == 3251 and data.world.modelPlacements.size() >= 2000, "world content exported without missing spawns")
 	check(absf(data.height_at(-430, 400) - 4) < 0.001, "town ground matches server")
 	var position = data.move(Vector3(-437, 4, 400), Vector3.RIGHT, 5)
@@ -80,13 +80,38 @@ func _run():
 	check(game.hero.animator != null and game.hero.animator.has_animation("walk"), "native animated hero imported")
 	check(await wait_for(func(): return not game.mobs.is_empty()), "nearby mobs arrive as snapshots")
 	await create_timer(0.2).timeout
-	for kind in ["inventory", "character", "map", "shop", "teleport", "priest", "menu", "skills", "settings", "controls"]:
+	for kind in ["inventory", "character", "map", "shop", "teleport", "priest", "menu", "skills", "settings", "controls", "actions", "equipment", "craft"]:
 		game.hud.show_window(kind)
 		await process_frame
 		check(is_instance_valid(game.hud.window) and game.get_viewport().get_visible_rect().encloses(game.hud.window.get_global_rect()), kind + " window fits the viewport")
 		if DisplayServer.get_name() != "headless": await _screenshot(kind + ".png")
 	game.hud.close_window()
 	check(game.hud.skill_buttons[0].get_global_rect().intersects(game.get_viewport().get_visible_rect()), "hotbar is inside viewport")
+	game.hud.log_line("system-only-marker", "rewards")
+	game.hud.chat.add_message({"ch": "all", "from": "Проверка", "text": "player-only-marker"})
+	check(game.hud.chat.system_view.get_parsed_text().contains("system-only-marker") and not game.hud.chat.log_view.get_parsed_text().contains("system-only-marker"), "system log is separate from player chat")
+	check(not game.hud.chat.system_view.get_parsed_text().contains("player-only-marker"), "ordinary messages never enter system log")
+	check(game.hud.chat.system_view.get_global_rect().end.y < game.hud.chat.log_view.get_global_rect().position.y, "system log is above ordinary chat")
+	var distance = game.camera_distance
+	_wheel(game.hud.chat.log_view.get_global_rect().get_center(), MOUSE_BUTTON_WHEEL_DOWN)
+	await process_frame
+	check(is_equal_approx(distance, game.camera_distance), "real wheel input over chat does not move the camera")
+	_wheel(game.hud.chat.system_view.get_global_rect().get_center(), MOUSE_BUTTON_WHEEL_UP)
+	await process_frame
+	check(is_equal_approx(distance, game.camera_distance), "real wheel input over system log does not move the camera")
+	var zoom = game.hud.minimap.zoom
+	_wheel(game.hud.minimap.get_global_rect().get_center(), MOUSE_BUTTON_WHEEL_UP)
+	await process_frame
+	check(game.hud.minimap.zoom < zoom and is_equal_approx(distance, game.camera_distance), "minimap wheel changes map scale without moving camera")
+	game.hud.minimap.change_zoom(100); check(game.hud.minimap.zoom == 8.0, "minimap zoom-out is bounded")
+	game.hud.minimap.change_zoom(0.001); check(game.hud.minimap.zoom == 0.5, "minimap zoom-in is bounded")
+	game.hud.minimap.change_zoom(4)
+	game.hud.assign_slot(0, "pickup"); game.hud.hotbar_locked = false; game.hud.swap_slots(0, 8)
+	game.hud.assign_slot(8, "potion_hp")
+	check(game.hud.hotbar_bindings[8] == "potion_hp" and game.hud.Settings.read_value("hotbar", "warrior", [])[8] == "potion_hp", "custom action bindings are saved")
+	game.hud.hotbar_bindings = game.hud.default_bindings(); game.hud._save_hotbar()
+	check(game.hud.pickup_button.visible and game.hud.pickup_button.text.contains("Поднять"), "pickup has an explicit permanent action button")
+	await _screenshot("chat-actions.png")
 	var start = game.hero.position
 	game.joystick = Vector2.RIGHT
 	await create_timer(0.35).timeout
@@ -112,6 +137,10 @@ func _run():
 	var money_before = game.profile.coins
 	game.hud.show_window("shop"); _click("shop_tab", "sell"); _click("sell_stack", "potion_mp")
 	check(await wait_for(func(): return _bag("potion_mp") < 0 and game.profile.coins == money_before + quantity * data.sell_price("potion_mp")), "sell tab sells the correct stack at the server price")
+	await _dev({"sp": 5000})
+	game.hud.show_window("skills"); _click("learn", "battle_cry")
+	check(await wait_for(func(): return game.profile.get("skills", {}).get("battle_cry", 0) == 1 and game.profile.sp < 5000), "skills card learns the server rank and spends SP")
+	game.hud.close_window()
 	game.hud.skill_buttons[1].pressed.emit()
 	check(await wait_for(func(): return not game.hud.buff_text.text.is_empty() and game.stats.patk > data.stats(game.profile).patk), "buff and effective stats come from the server skill event")
 	await _dev({"x": -418, "z": 410})
@@ -139,6 +168,9 @@ func _run():
 		game.pick(game.camera.unproject_position(mob.position + Vector3.UP * 1.1))
 		check(await wait_for(func(): return game.target == mob and game.target_arrow.visible and game.hud.target_panel.visible and mob.selected), "clicking a mob displays its name, HP, arrow and selection ring")
 		await _screenshot("target-selected.png")
+		game.hud.autoloot_button.button_pressed = false
+		check(await wait_for(func(): return game.profile.get("autoloot") == false), "autoloot toggle persists on the server")
+		var sp_before = int(game.profile.get("sp", 0))
 		var coins_before = int(game.profile.coins)
 		game.attack(); game.use_skill("power_strike")
 		var killed = await wait_for(func(): return game.profile.get("kills", 0) > 0, 12)
@@ -148,6 +180,7 @@ func _run():
 				if message.t == "ev":
 					for event in message.e:
 						if event.k == "msg": print("Server: ", event.text)
+		check(game.profile.get("sp", 0) > sp_before, "mob kill awards server SP")
 		check(killed, "native target + attack + skill kill a server mob and award progress")
 		check(int(game.profile.coins) == coins_before, "kill awards XP but coins stay on the ground")
 		check(await wait_for(func(): return game.ground_loot.values().any(func(d): return d.data.item == "coins")), "server kill spawns visible ground coins")
@@ -214,6 +247,10 @@ func _run():
 	game.hud.chat.set_preference("sys", false); game.hud.log_line("hidden system notice")
 	check(not game.hud.chat.log_view.get_parsed_text().contains("hidden system notice"), "chat settings filter system messages")
 	game.hud.chat.set_preference("sys", true)
+	for i in 270: game.hud.log_line("battle message %s" % i, "combat")
+	check(game.hud.chat.log_view.get_parsed_text().contains("native public chat"), "combat spam cannot erase ordinary chat history")
+	game.hud.chat.set_preference("combat", false)
+	check(not game.hud.chat.system_view.get_parsed_text().contains("battle message"), "system log combat filter is independent")
 	check(await wait_for(func(): return game.hud.minimap.player_markers.size() > 0 and net.online_count == 2), "server online count and remote players appear in the HUD and minimap")
 	var saved_level = game.profile.lvl
 	net.start()
@@ -224,7 +261,10 @@ func _run():
 	game._login({"t": "register", "name": "NativeMage", "pass": "isolated-test", "cls": "mage"})
 	check(await wait_for(func(): return game.profile.get("cls") == "mage"), "mage character starts")
 	check(game.hero.animator != null and game.hero.animator.has_animation("cast"), "mage has native cast animation")
-	await _dev({"lvl": 10, "hp": 50})
+	await _dev({"lvl": 10, "hp": 50, "sp": 5000})
+	game.hud.show_window("skills"); _click("learn", "heal")
+	check(await wait_for(func(): return game.profile.get("skills", {}).get("heal", 0) == 1), "mage learns healing for SP")
+	game.hud.close_window()
 	game.use_skill("heal")
 	check(await wait_for(func(): return game.cast_time > 0), "server-driven casting starts")
 	check(await wait_for(func(): return game.profile.hp > 60), "healing updates server health")
@@ -236,6 +276,18 @@ func _run():
 	game._action("equip", _bag("sword_long"))
 	check(await wait_for(func(): return game.hero.weapon_node.get_meta("weapon_kind") == "warrior"), "mage equipping a sword changes the actual weapon model")
 	check(game.hero.weapon_node.to_global(game.hero.weapon_node.get_meta("handle_center")).distance_to(game.hero.weapon_node.get_parent().global_position) < 0.001, "weapon handle stays exactly on the palm grip")
+	await _dev({"x": -442, "z": 410, "coins": 1000, "item": "pelt", "n": 20})
+	await _dev({"item": "bone", "n": 20})
+	game.hud.show_window("craft"); _click("craft", "staff_oak")
+	check(await wait_for(func(): return _bag("staff_oak") >= 0 and game.profile.coins == 700 and _bag("pelt") < 0 and _bag("bone") < 0), "native crafting spends exact resources on the actual server")
+	game.hud.close_window()
+	await _dev({"lvl": 25, "item": "staff_abyss"})
+	game._action("equip", _bag("staff_abyss"))
+	check(await wait_for(func(): return game.profile.equip.weapon == "staff_abyss" and game.hero.weapon_node.get_meta("weapon_kind") == "mage"), "B mage weapon is equipped and uses the staff model")
+	for item in ["hat_abyss", "robe_abyss", "gloves_abyss", "boots_abyss"]:
+		await _dev({"item": item}); game._action("equip", _bag(item)); await create_timer(0.15).timeout
+	check(await wait_for(func(): return game.stats.sets.any(func(entry): return entry.id == "abyss" and entry.have == entry.parts.size())), "complete B mage set activates the shared server-stat bonus")
+	game.hud.show_window("character"); await _screenshot("mage-b-gear.png"); game.hud.close_window()
 	# Real screenshot from the rendering backend, when running with a display.
 	if DisplayServer.get_name() != "headless":
 		await RenderingServer.frame_post_draw
@@ -276,3 +328,10 @@ func _screenshot(name: String):
 	await process_frame
 	await RenderingServer.frame_post_draw
 	root.get_texture().get_image().save_png(artifacts.path_join(name) if not artifacts.is_empty() else "user://native-" + name)
+
+func _wheel(pos: Vector2, direction: int):
+	var motion = InputEventMouseMotion.new(); motion.position = pos; motion.global_position = pos
+	root.push_input(motion, true)
+	var event = InputEventMouseButton.new(); event.position = pos; event.global_position = pos; event.button_index = direction; event.pressed = true
+	root.push_input(event, true)
+	event = event.duplicate(); event.pressed = false; root.push_input(event, true)

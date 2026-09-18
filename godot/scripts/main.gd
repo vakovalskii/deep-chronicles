@@ -193,18 +193,20 @@ func _event(e: Dictionary):
 		"cd": cooldowns[e.id] = Time.get_ticks_msec() + float(e.cd) * 1000
 		"hit", "miss":
 			if is_instance_valid(source): source.attack_time = 0.55
+			if source == hero and is_instance_valid(victim): hud.log_line("%s: %s" % [victim.display_name, "Промах" if e.k == "miss" else "Урон %s" % int(e.dmg)], "combat")
 			if is_instance_valid(victim):
 				_float(victim.position, "Промах" if e.k == "miss" else str(int(e.dmg)), Color("ffdd79") if e.get("crit", false) else Color.WHITE)
 				_effect(victim.position, Color("ffd284"), 0.8)
 		"hurt":
+			hud.log_line("Уклонение" if e.get("dodge", false) else "Получен урон: %s" % int(e.get("dmg", 0)), "combat")
 			_float(hero.position, "Уклонение" if e.get("dodge", false) else "−%s" % int(e.get("dmg", 0)), Color("ff7777"))
 			if not is_instance_valid(target): set_target(mobs.get(int(e.get("from", -1)), players.get(int(e.get("fromP", -1)))))
 		"mdie":
 			if is_instance_valid(victim): victim.dead = true; victim.hp = 0
 			if target == victim: attacking = false; pending_skill = ""
-		"kill": hud.log_line("%s повержен. +%s опыта. %s" % [e.name, int(e.xp), "Добыча на земле — кликните по ней или нажмите Z." if e.get("ground", false) else "+%s монет." % int(e.coins)])
+		"kill": hud.log_line("%s: +%s EXP, +%s SP. %s" % [e.name, int(e.xp), int(e.get("sp", 0)), "Добыча на земле · Z — подобрать." if e.get("ground", false) else "Автолут."], "rewards")
 		"pickup":
-			hud.log_line("Подобрано: %s ×%s" % ["Монеты" if e.item == "coins" else GameData.catalog.ITEMS[e.item].name, int(e.n)])
+			hud.log_line("Подобрано: %s ×%s" % ["Монеты" if e.item == "coins" else GameData.catalog.ITEMS[e.item].name, int(e.n)], "rewards")
 			_float(hero.position, "+%s монет" % int(e.n) if e.item == "coins" else GameData.catalog.ITEMS[e.item].name, Color("f5d885"))
 		"loot": hud.log_line("Получено: " + GameData.catalog.ITEMS.get(e.id, {}).get("name", e.id))
 		"lvl":
@@ -216,7 +218,7 @@ func _event(e: Dictionary):
 		"buff":
 			var sk = GameData.catalog.SKILLS[e.id]
 			buffs = buffs.filter(func(b): return b.get("id") != e.id)
-			buffs.append({"id": e.id, "stat": sk.stat, "mul": sk.mul, "until": Time.get_ticks_msec() + e.dur * 1000})
+			buffs.append({"id": e.id, "stat": e.get("stat", sk.stat), "mul": e.get("mul", sk.mul), "until": Time.get_ticks_msec() + e.dur * 1000})
 			hud.log_line(sk.name); _effect(hero.position, GameData.color(sk.color), 3)
 		"cast_fx":
 			var sk = GameData.catalog.SKILLS[e.id]
@@ -350,7 +352,7 @@ func attack():
 	Network.send({"t": "atk", "id": target.entity_id, "kind": target.kind})
 
 func use_skill(id: String):
-	var sk = GameData.catalog.SKILLS[id]
+	var sk = GameData.skill(profile, id)
 	if sk.kind == "dmg" and is_instance_valid(target):
 		if target.kind == "p" and not pvp_enabled and not Input.is_key_pressed(KEY_CTRL): hud.log_line("Включите PvP в окне персонажа."); return
 		Network.send({"t": "atk", "id": target.entity_id, "kind": target.kind, "hold": true})
@@ -387,7 +389,7 @@ func _open_npc(npc):
 func _action(kind: String, value):
 	if profile.is_empty(): return
 	match kind:
-		"inventory", "character", "map", "menu", "skills", "settings", "controls": hud.toggle(kind)
+		"inventory", "character", "map", "menu", "skills", "settings", "controls", "actions", "equipment": hud.toggle(kind)
 		"camera": camera_yaw = hero.rotation.y + PI; camera_pitch = 0.65; camera_distance = 24
 		"fullscreen": DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED if DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN else DisplayServer.WINDOW_MODE_FULLSCREEN)
 		"attack": attack()
@@ -400,11 +402,13 @@ func _action(kind: String, value):
 		"pvp":
 			pvp_enabled = not pvp_enabled; hud.pvp_enabled = pvp_enabled
 			hud.log_line("PvP включён" if pvp_enabled else "PvP выключен"); hud.show_window("character", true)
-		"hotbar":
-			if value < 3: use_skill(GameData.catalog.CLASSES[profile.cls].skills[value])
-			else: Network.send({"t": "use", "id": "potion_hp" if value == 3 else "potion_mp"})
+		"hotbar": hud.activate_slot(int(value))
+		"skill": use_skill(str(value))
+		"learn": Network.send({"t": "learn", "id": value.id, "rank": value.rank})
+		"autoloot": Network.send({"t": "autoloot", "enabled": value})
 		"use", "buy": Network.send({"t": kind, "id": value, "n": 1})
 		"equip", "sell": Network.send({"t": kind, "idx": value, "n": 1})
+		"craft": Network.send({"t": "craft", "id": value, "request": "%s-%s" % [Time.get_ticks_usec(), randi()]})
 		"buy_stack": Network.send({"t": "buy", "id": value.id, "n": value.n})
 		"sell_stack": Network.send({"t": "sell", "idx": value.idx, "n": value.n})
 		"equip_slot": Network.send({"t": "equip", "idx": value.idx, "slot": value.slot})
@@ -454,6 +458,8 @@ func _clear_entities():
 
 func _unhandled_input(event):
 	if profile.is_empty(): return
+	if event is InputEventMouse or event is InputEventGesture or event is InputEventScreenTouch or event is InputEventScreenDrag:
+		if hud.pointer_over_ui(event.position): return
 	if event is InputEventKey and event.pressed and not event.echo:
 		match event.physical_keycode:
 			KEY_I: hud.toggle("inventory")
@@ -469,16 +475,12 @@ func _unhandled_input(event):
 				else: set_target(null); _cancel_attack(); has_destination = false; hud.show_window("menu")
 			KEY_ENTER: hud.chat_input.grab_focus()
 			KEY_V: camera_yaw = hero.rotation.y + PI; camera_pitch = 0.65; camera_distance = 24
-			KEY_1, KEY_2, KEY_3, KEY_4, KEY_5: _action("hotbar", int(event.physical_keycode) - KEY_1)
-			KEY_6: attack()
-			KEY_7: next_target()
-			KEY_8: talk_nearest()
-			KEY_9: pickup_nearest()
-			KEY_0: hud.toggle("skills")
+			KEY_1, KEY_2, KEY_3, KEY_4, KEY_5, KEY_6, KEY_7, KEY_8, KEY_9: hud.activate_slot(int(event.physical_keycode) - KEY_1)
+			KEY_0: hud.activate_slot(9)
 			KEY_F11: DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED if DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN else DisplayServer.WINDOW_MODE_FULLSCREEN)
 	elif event is InputEventMouseButton:
-		if event.button_index == MOUSE_BUTTON_WHEEL_UP: camera_distance = clampf(camera_distance * 0.9, 6, 65)
-		if event.button_index == MOUSE_BUTTON_WHEEL_DOWN: camera_distance = clampf(camera_distance * 1.1, 6, 65)
+		if event.pressed and event.button_index == MOUSE_BUTTON_WHEEL_UP: camera_distance = clampf(camera_distance * 0.9, 6, 65)
+		if event.pressed and event.button_index == MOUSE_BUTTON_WHEEL_DOWN: camera_distance = clampf(camera_distance * 1.1, 6, 65)
 		if event.button_index == MOUSE_BUTTON_LEFT and event.pressed: pick(event.position)
 	elif event is InputEventMouseMotion and Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
 		camera_yaw -= event.relative.x * 0.006; camera_pitch = clampf(camera_pitch + event.relative.y * 0.005, 0.18, 1.4)

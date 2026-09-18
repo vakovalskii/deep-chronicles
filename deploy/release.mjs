@@ -13,9 +13,9 @@ async function run(command, args) {
   const code = await new Promise((resolve, reject) => { child.on('error', reject); child.on('exit', resolve); });
   if (code !== 0) throw Error(`Release step failed: ${command} (${code})`);
 }
-if (!process.argv.includes('--verified')) await run(process.execPath, ['tools/godot/verify.mjs', '--headless', '--offline', '--web']);
+if (!process.argv.includes('--verified')) await run(process.execPath, ['tools/godot/verify.mjs', '--headless', '--offline', '--release']);
 const report = JSON.parse(fs.readFileSync(path.join(root, '.native-run/verification/report.json'), 'utf8'));
-if (!report.ok || ['rules', 'server', 'client-server', 'weapons', 'web-build', 'web-browser'].some(name => !report.steps.some(s => s.name === name && s.ok))) throw Error('A complete passing native + web verification report is required');
+if (!report.ok || ['rules', 'server', 'client-server', 'weapons', 'economy', 'build-macos', 'build-windows', 'site-build', 'site-check'].some(name => !report.steps.some(s => s.name === name && s.ok))) throw Error('A complete passing native + download-site verification report is required');
 const hash = file => crypto.createHash('sha256').update(fs.readFileSync(path.join(root, file))).digest('hex');
 for (const [file, expected] of Object.entries({ ...report.inputs, ...report.outputs })) if (!fs.existsSync(path.join(root, file)) || hash(file) !== expected) throw Error(`Changed after verification: ${file}`);
 // Check for new source files as well, so an untested addition cannot enter the release.
@@ -30,6 +30,6 @@ await run('ssh', ['-o', 'BatchMode=yes', host, `mkdir -p '${remote}'`]);
 for (const dir of ['server', 'src', 'dist']) await run('rsync', ['-az', '--exclude', 'data', `${dir}/`, `${host}:${remote}/${dir}/`]);
 await run('rsync', ['-az', 'package.json', 'package-lock.json', 'deploy/promote.sh', `${host}:${remote}/`]);
 await run('ssh', ['-o', 'BatchMode=yes', host, `bash '${remote}/promote.sh' '${remote}'`]);
-await run(process.execPath, ['tools/godot/probe.mjs', '--require-loot']);
-fs.writeFileSync(path.join(root, '.native-run/deployment.json'), JSON.stringify({ id, commit: report.commit, verified: report.finished, promoted: new Date().toISOString(), groundLoot: 1 }, null, 2) + '\n');
+await run(process.execPath, ['tools/godot/probe.mjs', '--require-native']);
+fs.writeFileSync(path.join(root, '.native-run/deployment.json'), JSON.stringify({ id, commit: report.commit, verified: report.finished, promoted: new Date().toISOString(), groundLoot: 1, progression: 1, nativeOnly: 1 }, null, 2) + '\n');
 console.log(`Deployment verified: ${id}`);

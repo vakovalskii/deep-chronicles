@@ -1,6 +1,7 @@
 // Персонаж на сервере: профиль, сумка, экипировка, магазин, заточка, опыт и смерть.
 // Клиент ничего из этого не считает — он только присылает команды и рисует события.
-import { CLASSES, ITEMS, SKILLS, SHOP, MAX_LEVEL, xpToNext } from '../../src/data.js';
+import { migrateProgression, effectiveSkill, learnError, skillRanks } from '../../src/progression.js';
+import { CLASSES, ITEMS, SKILLS, SHOP, RECIPES, MAX_LEVEL, xpToNext } from '../../src/data.js';
 import { calcStats, equipFromBag, unequipSlot, migrate, MAX_ENCH } from '../../src/stats.js';
 import { TOWNS, TELEPORTS, heightAt, zoneAt } from '../../src/world-core.js';
 import { sellPrice, crystalsFor, enchSucceeds, xpLossOnDeath, flatDist, clamp } from '../../src/sim.js';
@@ -9,7 +10,7 @@ export const SAVE_VERSION = 3; // всё, что старее, пересозд�
 const NPC_RANGE = 8; // на каком расстоянии можно говорить с NPC
 
 export function newChar(name, cls) {
-  const c = CLASSES[cls] ? cls : 'warrior';
+  const c = typeof cls === 'string' && Object.hasOwn(CLASSES, cls) ? cls : 'warrior';
   const t = TOWNS[0];
   const P = {
     v: SAVE_VERSION, name, cls: c, lvl: 1, xp: 0, coins: 150, kills: 0, pvp: 0,
@@ -18,7 +19,7 @@ export function newChar(name, cls) {
     equip: { weapon: c === 'mage' ? 'staff_novice' : 'sword_novice', armor: 'armor_cloth', legs: 'legs_cloth' },
     enc: {}, home: t.id, x: t.x, z: t.z - 12,
   };
-  migrate(P);
+  migrate(P); migrateProgression(P);
   const s = calcStats(P);
   P.hp = s.maxHp; P.mp = s.maxMp;
   return P;
@@ -26,9 +27,11 @@ export function newChar(name, cls) {
 
 // сейв из базы → рабочий профиль. Всё, что не проходит проверку, заменяется новым персонажем.
 export function loadChar(name, save) {
-  if (!save || typeof save !== 'object' || save.v !== SAVE_VERSION || !CLASSES[save.cls]) return newChar(name, save?.cls);
+  if (!save || typeof save !== 'object' || save.v !== SAVE_VERSION || !Object.hasOwn(CLASSES, save.cls)) return newChar(name, save?.cls);
   const P = migrate({ ...save, name });
   P.lvl = clamp(P.lvl | 0 || 1, 1, MAX_LEVEL);
+  migrateProgression(P);
+  P.craftReceipts = Array.isArray(P.craftReceipts) ? P.craftReceipts.filter(x => typeof x === 'string').slice(-32) : [];
   P.xp = Math.max(0, +P.xp || 0);
   P.coins = Math.max(0, Math.round(+P.coins || 0));
   P.inv = (Array.isArray(P.inv) ? P.inv : []).filter((e) => ITEMS[e?.id]).map((e) => ({
@@ -181,6 +184,7 @@ export function cmdSell(a, npcs, idx, n) {
   if (!it) return say(a, 'Нет такой вещи', 'bad');
   n = clamp(n | 0 || 1, 1, e.n);
   const gain = sellPrice(it) * n;
+  if (gain <= 0) return say(a, 'Этот предмет нельзя продать', 'bad');
   e.n -= n; if (e.n <= 0) a.P.inv.splice(idx | 0, 1);
   a.P.coins += gain;
   a.dirty = true; say(a, `Продано: ${it.name}${n > 1 ? ` ×${n}` : ''} за ${gain} мон.`, 'good');
@@ -198,10 +202,11 @@ export function cmdTeleport(a, npcs, id) {
 // ---------- умения ----------
 // Проверки те же, что были на клиенте, но теперь решающие: мана, кулдаун, уровень, город.
 export function skillError(a, id, now) {
-  const sk = SKILLS[id];
+  const sk = effectiveSkill(a.P, id);
   if (!sk) return 'Нет такого умения';
   if (a.dead || a.cast) return 'Сейчас нельзя';
   if (!CLASSES[a.P.cls].skills.includes(id)) return 'Это умение не вашего класса';
+  if (!a.P.skills[id]) return 'Сначала изучите умение за SP в карточке навыков';
   if (a.P.lvl < sk.lvl) return `${sk.name}: нужен уровень ${sk.lvl}`;
   if ((a.cds[id] || 0) > now) return 'Умение ещё не готово';
   if (a.P.mp < sk.mp) return 'Недостаточно маны';
@@ -223,3 +228,52 @@ export const profileOf = (a) => ({
   x: Math.round(a.x * 100) / 100, z: Math.round(a.z * 100) / 100,
   karma: a.karma, pk: a.pk, dead: a.dead,
 });
+
+// Ожидаемый ранг предотвращает повторную оплату при двойном клике/повторе пакета.
+export function cmdLearn(a, id, rank, save) {
+  if (a.dead || a.cast) return say(a, 'Сейчас нельзя изучать умение', 'bad');
+  const error = learnError(a.P, id, rank);
+  if (error) return say(a, error, 'bad');
+  const next = skillRanks(id)[rank - 1], before = { sp: a.P.sp, skills: { ...a.P.skills } };
+  a.P.sp -= next.sp; a.P.skills[id] = rank;
+  try { if (!save()) throw Error('save failed'); }
+  catch { Object.assign(a.P, before); return say(a, 'Не удалось сохранить обучение. SP возвращены', 'bad'); }
+  a.dirty = true; say(a, `Изучено: ${next.name}, ранг ${rank}. Потрачено ${next.sp} SP`, 'good');
+}
+// Одна транзакционная точка выдачи для ручного подбора и автолута.
+export function creditLoot(a, drops, save) {
+  const before = { coins: a.P.coins, inv: structuredClone(a.P.inv) };
+  for (const d of drops) {
+    if (d.item === 'coins') a.P.coins += d.n;
+    else addItem(a.P, d.item, d.n);
+  }
+  try { if (!save()) throw Error('save failed'); }
+  catch { Object.assign(a.P, before); return false; }
+  a.dirty = true;
+  for (const d of drops) a.out.push({ k: 'pickup', id: d.id || '', item: d.item, n: d.n });
+  return true;
+}
+
+export function cmdCraft(a, npcs, id, request, save) {
+  if (a.dead || !npcNear(a, npcs, 'merchant')) return say(a, 'Для изготовления подойдите к торговцу живым', 'bad');
+  if (typeof request !== 'string' || request.length < 8 || request.length > 80) return;
+  if (a.P.craftReceipts?.includes(request)) return say(a, 'Этот заказ уже выполнен');
+  const recipe = Object.hasOwn(RECIPES, id) ? RECIPES[id] : null, item = ITEMS[id];
+  if (!recipe || !item) return say(a, 'Нет такого рецепта', 'bad');
+  if (a.P.lvl < item.lvl) return say(a, `Нужен уровень ${item.lvl}`, 'bad');
+  if (a.P.coins < recipe.coins) return say(a, 'Недостаточно монет', 'bad');
+  for (const [part, n] of Object.entries(recipe.materials)) {
+    if (a.P.inv.filter(e => e.id === part).reduce((sum,e) => sum+e.n,0) < n) return say(a, `Не хватает: ${ITEMS[part].name} ×${n}`, 'bad');
+  }
+  const before = { coins: a.P.coins, inv: structuredClone(a.P.inv), craftReceipts: a.P.craftReceipts || [] };
+  a.P.coins -= recipe.coins;
+  for (const [part, amount] of Object.entries(recipe.materials)) {
+    let remaining = amount;
+    for (const entry of a.P.inv) if (entry.id === part) { const n = Math.min(entry.n, remaining); entry.n -= n; remaining -= n; }
+  }
+  a.P.inv = a.P.inv.filter(e => e.n > 0); addItem(a.P, id);
+  a.P.craftReceipts = [...before.craftReceipts, request].slice(-32);
+  try { if (!save()) throw Error('save failed'); }
+  catch { Object.assign(a.P, before); return say(a, 'Изготовление не сохранено. Материалы и монеты возвращены', 'bad'); }
+  a.dirty = true; say(a, `Изготовлено: ${item.name}`, 'good');
+}

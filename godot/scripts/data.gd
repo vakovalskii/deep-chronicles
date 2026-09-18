@@ -31,7 +31,8 @@ func height_at(x: float, z: float) -> float:
 	var ix = int(fx)
 	var iz = int(fz)
 	var a = iz * int(t.count) + ix
-	return lerpf(lerpf(heights[a], heights[a + 1], fx - ix), lerpf(heights[a + int(t.count)], heights[a + int(t.count) + 1], fx - ix), fz - iz)
+	var u = fx - ix; var v = fz - iz; var stride = int(t.count)
+	return heights[a] * (1-u-v) + heights[a+1]*u + heights[a+stride]*v if u+v <= 1 else heights[a+1]*(1-v) + heights[a+stride]*(1-u) + heights[a+stride+1]*(u+v-1)
 
 func position_at(x: float, z: float) -> Vector3:
 	return Vector3(x, height_at(x, z), z)
@@ -66,7 +67,8 @@ func move(pos: Vector3, direction: Vector3, distance: float) -> Vector3:
 
 func icon(id: String) -> Texture2D:
 	if not icons.has(id):
-		var p = "res://generated/icons/%s.png" % id
+		var art_id = catalog.ITEMS.get(id, {}).get("icon", id)
+		var p = "res://generated/icons/%s.png" % art_id
 		icons[id] = load(p) if ResourceLoader.exists(p) else null
 	return icons[id]
 
@@ -135,3 +137,7 @@ func appearance(p: Dictionary) -> Dictionary:
 	gear.helmKind = items.get(p.equip.get("head"), {}).get("set")
 	var mat = {"chain": "chain", "bone": "plate", "leather": "leather"}.get(armor.get("set", ""), "cloth")
 	return {"cls": p.cls, "body": armor.get("color", catalog.CLASSES[p.cls].color), "w": weapon.get("color"), "staff": weapon.get("twoHand", false), "ench": p.get("enc", {}).get("weapon", 0), "robe": armor.get("robe", false) or p.cls == "mage", "mat": mat, "gear": gear}
+
+func skill(p: Dictionary, id: String) -> Dictionary:
+	var ranks = catalog.UI_RULES.skillRanks[id]
+	return ranks[clampi(int(p.get("skills", {}).get(id, 1)) - 1, 0, ranks.size() - 1)]

@@ -43,14 +43,14 @@ for (let attempt = 0; attempt < 15; attempt++) {
     ws.on('error', () => { clearTimeout(timer); resolve(false); });
     ws.on('message', raw => {
       const m = JSON.parse(raw); if (m.t !== 'hi') return;
-      clearTimeout(timer); ws.close(); resolve(m.features?.groundLoot === 1);
+      clearTimeout(timer); ws.close(); resolve(m.features?.groundLoot === 1 && m.features?.progression === 1 && m.features?.nativeOnly === 1);
     });
   });
   if (connected) break;
   await new Promise(r => setTimeout(r, 300));
 }
-if (!connected) throw Error('Ground-loot protocol probe failed');
-console.log('SERVER_RELEASE_OK groundLoot=1');
+if (!connected) throw Error('Native progression protocol probe failed');
+console.log('SERVER_RELEASE_OK groundLoot=1 progression=1 nativeOnly=1');
 JS
 systemctl is-active realms-ws
 trap - ERR

@@ -135,7 +135,7 @@ export function mobStep(m, ctx, dt) {
 }
 
 // ---------- экономика ----------
-export const sellPrice = (it) => Math.round((it.price || 4000) * (it.loot ? 1 : 0.4));
+export const sellPrice = (it) => Math.max(0, it.sell ?? Math.round((it.price ?? 0) * (it.loot ? 1 : 0.4)));
 export const crystalsFor = (grade, cur) => ({ d: 2, c: 6, b: 15 }[grade] * (cur + 1));
 // удачна ли попытка усиления: до SAFE_ENCH — всегда
 export const enchSucceeds = (cur, rng = Math.random) => cur < SAFE_ENCH || rng() < ENCH_CHANCE;

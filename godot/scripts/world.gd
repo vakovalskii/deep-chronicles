@@ -49,14 +49,14 @@ func _terrain():
 	for cz in range(-1000, 1000, 100):
 		for cx in range(-1000, 1000, 100):
 			var vertices = PackedVector3Array(); var normals = PackedVector3Array(); var indices = PackedInt32Array()
-			for z in 11:
-				for x in 11:
-					var px = cx + x * 10.0; var pz = cz + z * 10.0
+			for z in 26:
+				for x in 26:
+					var px = cx + x * 4.0; var pz = cz + z * 4.0
 					vertices.append(GameData.position_at(px, pz))
 					normals.append(Vector3(GameData.height_at(px - 1, pz) - GameData.height_at(px + 1, pz), 2, GameData.height_at(px, pz - 1) - GameData.height_at(px, pz + 1)).normalized())
-					if x < 10 and z < 10:
-						var a = z * 11 + x
-						indices.append_array(PackedInt32Array([a, a + 1, a + 11, a + 1, a + 12, a + 11]))
+					if x < 25 and z < 25:
+						var a = z * 26 + x
+						indices.append_array(PackedInt32Array([a, a + 1, a + 26, a + 1, a + 27, a + 26]))
 			var arrays = []; arrays.resize(Mesh.ARRAY_MAX)
 			arrays[Mesh.ARRAY_VERTEX] = vertices; arrays[Mesh.ARRAY_NORMAL] = normals; arrays[Mesh.ARRAY_INDEX] = indices
 			var mesh = ArrayMesh.new(); mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)

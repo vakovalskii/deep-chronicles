@@ -60,6 +60,15 @@ var target_hint: Label
 var status_panel: PanelContainer
 var buffs_row: HBoxContainer
 var hotbar_labels: Array = []
+const Settings = preload("res://scripts/interface_settings.gd")
+var hotbar_bindings: Array = []
+var hotbar_class = ""
+var hotbar_locked = true
+var chat_frame: Control
+var autoloot_button: CheckButton
+var pickup_button: Button
+const ACTION_NAMES = {"attack": "Атака", "target": "Следующая цель", "talk": "Разговор", "pickup": "Поднять добычу", "skills": "Умения", "inventory": "Сумка", "character": "Персонаж", "map": "Карта", "empty": "Пусто"}
+
 var login_decoration: Control
 var registration_mode = false
 var login_submit: Button
@@ -109,7 +118,7 @@ func _row(parent: Node) -> HBoxContainer:
 	var n = HBoxContainer.new(); parent.add_child(n); return n
 
 func _panel(parent: Node, pos: Vector2, width: float) -> VBoxContainer:
-	var p = PanelContainer.new(); p.position = pos; p.custom_minimum_size.x = width; parent.add_child(p)
+	var p = PanelContainer.new(); p.position = pos; p.custom_minimum_size.x = width; parent.add_child(p); p.mouse_force_pass_scroll_events = false
 	var v = VBoxContainer.new(); p.add_child(v); return v
 
 func _login():
@@ -196,11 +205,18 @@ func _game_hud():
 	var map_panel = PanelContainer.new(); game_ui.add_child(map_panel)
 	map_panel.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
 	map_panel.offset_left = -176; map_panel.offset_right = -8; map_panel.offset_top = 8; map_panel.offset_bottom = 145
-	minimap = load("res://scripts/map.gd").new(); minimap.compact = true; map_panel.add_child(minimap)
+	var map_box = VBoxContainer.new(); map_panel.add_child(map_box)
+	minimap = load("res://scripts/map.gd").new(); minimap.compact = true; map_box.add_child(minimap)
+	var zoom_row = _row(map_box)
+	_button(zoom_row, "−", func(): minimap.change_zoom(1.25)).tooltip_text = "Отдалить миникарту"
+	var zoom_label = _label(zoom_row, "×%.1f" % (2.0 / minimap.zoom), 10); zoom_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL; zoom_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_button(zoom_row, "+", func(): minimap.change_zoom(0.8)).tooltip_text = "Приблизить миникарту"
+	minimap.zoom_changed.connect(func(value): zoom_label.text = "×%.1f" % (2.0 / value))
 	var chat_box = _panel(game_ui, Vector2.ZERO, 306)
 	chat_box.get_parent().set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT)
 	chat_box.get_parent().offset_left = 8; chat_box.get_parent().offset_right = 314
-	chat_box.get_parent().offset_top = -245 if not touch else -396
+	chat_frame = chat_box.get_parent()
+	chat_box.get_parent().offset_top = -330 if not touch else -476
 	chat_box.get_parent().offset_bottom = -8 if not touch else -160
 	chat = load("res://scripts/chat_panel.gd").new(); chat_box.add_child(chat)
 	chat_log = chat.log_view; chat_input = chat.input; chat_channel = chat.channel
@@ -208,22 +224,27 @@ func _game_hud():
 	chat.settings_requested.connect(func(): toggle("settings"))
 	var bottom = VBoxContainer.new(); game_ui.add_child(bottom)
 	bottom.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM)
-	bottom.offset_left = -248; bottom.offset_right = 248; bottom.offset_top = -90; bottom.offset_bottom = -8
+	bottom.offset_left = -270; bottom.offset_right = 270; bottom.offset_top = -132; bottom.offset_bottom = -8
 	cast_bar = ProgressBar.new(); cast_bar.custom_minimum_size.y = 9; cast_bar.visible = false; bottom.add_child(cast_bar); cast_bar.show_percentage = false
 	cast_text = _label(bottom, "", 11); cast_text.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER; cast_text.hide()
+	var actions_panel = PanelContainer.new(); bottom.add_child(actions_panel)
+	var actions = _row(actions_panel)
+	_button(actions, "Атака · F", func(): action.emit("attack", null))
+	pickup_button = _button(actions, "Поднять · Z", func(): action.emit("pickup", null)); pickup_button.tooltip_text = "Поднять ближайшую доступную добычу"
+	_button(actions, "Цель · Tab", func(): action.emit("target", null))
+	autoloot_button = CheckButton.new(); autoloot_button.text = "Автолут"; actions.add_child(autoloot_button)
+	autoloot_button.toggled.connect(func(value): action.emit("autoloot", value))
+	_button(actions, "Панель…", func(): toggle("actions"))
 	var hotbar_panel = PanelContainer.new(); bottom.add_child(hotbar_panel)
 	var hotbar = _row(hotbar_panel); hotbar.add_theme_constant_override("separation", 2)
 	for i in 10:
 		var index = i
-		var button = _button(hotbar, "", func():
-			if index < 5: action.emit("hotbar", index)
-			else: action.emit(["attack", "target", "talk", "pickup", "skills"][index - 5], null))
-		button.custom_minimum_size = Vector2(44 if not touch else 48, 44 if not touch else 48); button.expand_icon = true; button.add_theme_constant_override("icon_max_width", 32)
+		var button = load("res://scripts/hotbar_slot.gd").new(); button.index = i
+		button.custom_minimum_size = Vector2(48 if not touch else 50, 44 if not touch else 48); button.expand_icon = true; button.add_theme_constant_override("icon_max_width", 30)
+		hotbar.add_child(button); button.pressed.connect(func(): activate_slot(index)); button.swap_requested.connect(swap_slots)
+		button.add_theme_font_size_override("font_size", 10)
 		var number = _label(button, str(i + 1) if i < 9 else "0", 9); number.position = Vector2(3, 0); number.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		if i < 5: skill_buttons.append(button); hotbar_labels.append(number)
-		else:
-			button.text = ["⚔", "◎", "E", "Z", "K"][i - 5]
-			button.tooltip_text = ["Атака · F", "Следующая цель · Tab", "Разговор · E", "Подобрать добычу · Z", "Умения · K"][i - 5]
+		skill_buttons.append(button); hotbar_labels.append(number)
 	quick_hint = _label(bottom, "F — атака · Tab — цель · Z — подбор · E — разговор", 10); quick_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	var commands = PanelContainer.new(); game_ui.add_child(commands)
 	commands.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
@@ -249,13 +270,17 @@ func enter(p: Dictionary):
 func update_profile(p: Dictionary):
 	profile = p; current_stats = GameData.stats(p, active_buffs)
 	if not enchant_scroll.is_empty() and not p.inv.any(func(e): return e.id == enchant_scroll): enchant_scroll = ""
-	if window_kind in ["inventory", "character", "shop", "teleport", "priest", "skills"]: show_window(window_kind, true)
-	var skills = GameData.catalog.CLASSES[p.cls].skills
-	for i in 5:
-		var id = skills[i] if i < 3 else ("potion_hp" if i == 3 else "potion_mp")
-		var it = GameData.catalog.SKILLS[id] if i < 3 else GameData.catalog.ITEMS[id]
-		skill_buttons[i].icon = GameData.icon(id); skill_buttons[i].tooltip_text = _skill_description(id) if i < 3 else _item_description(id)
-		skill_buttons[i].text = ""; skill_buttons[i].disabled = i < 3 and p.lvl < it.lvl
+	if window_kind in ["inventory", "character", "shop", "teleport", "priest", "skills", "craft"]: show_window(window_kind, true)
+	if hotbar_class != p.cls:
+		hotbar_class = p.cls
+		hotbar_bindings = Settings.read_value("hotbar", p.cls, default_bindings()).duplicate()
+		if hotbar_bindings.size() != 10: hotbar_bindings = default_bindings()
+		var choices = binding_choices()
+		for i in 10:
+			if hotbar_bindings[i] not in choices: hotbar_bindings[i] = "empty"
+		hotbar_locked = bool(Settings.read_value("hotbar", "locked", true))
+	autoloot_button.set_pressed_no_signal(p.get("autoloot", true))
+	_refresh_hotbar()
 
 func update_values(p: Dictionary, s: Dictionary, pos: Vector3, target, cooldowns: Dictionary, cast_time: float):
 	if p.is_empty(): return
@@ -273,7 +298,7 @@ func update_values(p: Dictionary, s: Dictionary, pos: Vector3, target, cooldowns
 	xp_bar.max_value = GameData.xp_next(int(p.lvl)); xp_bar.value = p.xp
 	var z = GameData.zone_at(pos)
 	zone.text = z.name + " · " + str(z.lv)
-	status_label.text = ("В сети: %s" % Network.online_count if Network.authed else "Переподключение…") + "  ·  %s монет" % int(p.coins)
+	status_label.text = ("В сети: %s" % Network.online_count if Network.authed else "Переподключение…") + "  ·  %s SP" % int(p.get("sp", 0))
 	if p.get("karma", 0) > 0: status_label.text += " · Карма %s" % int(p.karma)
 	target_panel.visible = is_instance_valid(target) and target.visible
 	target_info.text = target.display_name if is_instance_valid(target) else ""
@@ -284,22 +309,26 @@ func update_values(p: Dictionary, s: Dictionary, pos: Vector3, target, cooldowns
 	dead_panel.visible = p.get("dead", false)
 	cast_bar.visible = cast_time > 0; cast_bar.max_value = maxf(0.01, cast_duration); cast_bar.value = cast_duration - cast_time
 	cast_text.visible = cast_time > 0; cast_text.text = "%s · %.1f с" % [cast_name, cast_time]
-	var skills = GameData.catalog.CLASSES[p.cls].skills
-	for i in 3:
-		var remaining = maxf(0, (cooldowns.get(skills[i], 0) - Time.get_ticks_msec()) / 1000.0)
-		skill_buttons[i].text = "%.1f" % remaining if remaining > 0 else ""
-		skill_buttons[i].disabled = not Network.authed or p.get("dead", false) or p.lvl < GameData.catalog.SKILLS[skills[i]].lvl or remaining > 0
-	for i in [3, 4]:
-		var id = "potion_hp" if i == 3 else "potion_mp"
-		var count = 0
-		for item in p.inv:
-			if item.id == id: count += int(item.n)
-		skill_buttons[i].text = str(count); skill_buttons[i].disabled = not Network.authed or p.get("dead", false) or count == 0
+	for i in hotbar_bindings.size():
+		var id = str(hotbar_bindings[i]); var button = skill_buttons[i]
+		button.disabled = not Network.authed or p.get("dead", false) or id == "empty"
+		if id in GameData.catalog.SKILLS:
+			var remaining = maxf(0, (cooldowns.get(id, 0) - Time.get_ticks_msec()) / 1000.0)
+			button.text = "%.1f" % remaining if remaining > 0 else ""
+			button.disabled = button.disabled or int(p.get("skills", {}).get(id, 0)) == 0 or remaining > 0
+		elif id in GameData.catalog.ITEMS:
+			var count = 0
+			for item in p.inv:
+				if item.id == id: count += int(item.n)
+			button.text = str(count); button.disabled = button.disabled or count == 0
+	autoloot_button.disabled = not Network.authed
+	pickup_button.disabled = not Network.authed or p.get("dead", false)
+	chat_frame.offset_top = chat_frame.offset_bottom - int(chat.preferences.height)
 	if is_instance_valid(map_control): map_control.player_position = pos; map_control.queue_redraw()
 	minimap.player_position = pos; minimap.queue_redraw()
 
-func log_line(text: String):
-	chat.add_message({"ch": "sys", "text": text})
+func log_line(text: String, category = "info"):
+	chat.add_message({"ch": "sys", "text": text, "category": category})
 
 func close_window():
 	if is_instance_valid(window):
@@ -317,7 +346,7 @@ func show_window(kind: String, refresh = false):
 	window = load("res://scripts/window_frame.gd").new(); game_ui.add_child(window)
 	window.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
 	var dimensions = get_viewport().get_visible_rect().size
-	var desired = {"inventory": Vector2(360, 560), "character": Vector2(410, 630), "shop": Vector2(500, 540), "map": Vector2(760, 530), "menu": Vector2(360, 405), "settings": Vector2(450, 370), "skills": Vector2(490, 400), "teleport": Vector2(480, 470), "priest": Vector2(370, 230), "controls": Vector2(500, 510)}.get(kind, Vector2(500, 520))
+	var desired = {"inventory": Vector2(360, 560), "character": Vector2(410, 630), "shop": Vector2(500, 540), "map": Vector2(760, 530), "menu": Vector2(360, 405), "settings": Vector2(450, 540), "actions": Vector2(440, 530), "skills": Vector2(530, 570), "teleport": Vector2(480, 470), "priest": Vector2(370, 230), "controls": Vector2(500, 510)}.get(kind, Vector2(500, 520))
 	if touch: desired.x += 35; desired.y += 35
 	var half = Vector2(minf(desired.x, dimensions.x - 16), minf(desired.y, dimensions.y - 16)) * 0.5
 	window.offset_left = -half.x; window.offset_right = half.x; window.offset_top = -half.y; window.offset_bottom = half.y
@@ -326,7 +355,7 @@ func show_window(kind: String, refresh = false):
 		window.position = Vector2(dimensions.x - half.x * 2 - 188, 76)
 	if window_positions.has(kind): window.position = window_positions[kind]
 	var row = _row(window_body); row.mouse_filter = Control.MOUSE_FILTER_STOP; row.gui_input.connect(window.drag_title)
-	var titles = {"inventory": "Снаряжение и сумка", "character": "Персонаж", "map": "Карта мира", "shop": "Торговец", "teleport": "Хранитель врат", "priest": "Жрец", "menu": "Меню игры", "settings": "Настройки", "controls": "Управление", "skills": "Умения"}
+	var titles = {"inventory": "Снаряжение и сумка", "character": "Персонаж", "map": "Карта мира", "shop": "Торговец", "teleport": "Хранитель врат", "priest": "Жрец", "menu": "Меню игры", "settings": "Настройки", "controls": "Управление", "skills": "Умения", "actions": "Панель действий", "craft": "Изготовление", "equipment": "Путь снаряжения"}
 	_label(row, "◇  " + titles.get(kind, kind), 14).size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_button(row, "×", close_window).tooltip_text = "Закрыть · Esc"
 	if kind == "map":
@@ -340,6 +369,8 @@ func show_window(kind: String, refresh = false):
 		"inventory": _inventory_grid(list)
 		"character": _character(list)
 		"shop": _shop(list)
+		"craft": _craft(list)
+		"equipment": _equipment_guide(list)
 		"teleport":
 			_wrapped(list, "Хранитель перенесёт вас в выбранную область. Возрождение — в родном городе: " + _home_name())
 			_label(list, "Монеты: %s" % int(profile.coins))
@@ -353,11 +384,12 @@ func show_window(kind: String, refresh = false):
 			var b = _button(list, "Очистить карму · %s мон." % cost, func(): action.emit("wash", null))
 			b.disabled = karma <= 0 or profile.coins < cost or not Network.authed
 		"skills": _skills(list)
+		"actions": _actions_settings(list)
 		"menu":
 			_label(list, "Персонаж: %s · %s" % [profile.name, GameData.catalog.CLASSES[profile.cls].name], 20)
 			_wrapped(list, "Сервер: %s\n%s · Игроков в мире: %s" % [Network.endpoint, "Подключено" if Network.authed else "Переподключение…", Network.online_count])
 			var grid = GridContainer.new(); grid.columns = 2; list.add_child(grid)
-			for entry in [["Снаряжение · I", "inventory"], ["Персонаж · C", "character"], ["Умения · K", "skills"], ["Карта мира · M", "map"], ["Настройки", "settings"], ["Управление", "controls"]]:
+			for entry in [["Снаряжение · I", "inventory"], ["Персонаж · C", "character"], ["Умения · K", "skills"], ["Панель действий", "actions"], ["Оружие и броня", "equipment"], ["Карта мира · M", "map"], ["Настройки", "settings"], ["Управление", "controls"]]:
 				_button(grid, entry[0], func(): show_window(entry[1])).size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			_button(list, "Вернуть камеру за спину · V", func(): action.emit("camera", null); close_window())
 			_button(list, "Полный экран / окно · F11", func(): action.emit("fullscreen", null))
@@ -412,6 +444,7 @@ func _bonus_text(bonus: Dictionary) -> String:
 	return ", ".join(parts)
 
 func _shop(list):
+	_button(list, "Изготовить за материалы…", func(): show_window("craft"))
 	_label(list, "Ваши монеты: %s" % int(profile.coins), 20)
 	var tabs = _row(list)
 	for entry in [["Купить", "buy"], ["Продать", "sell"]]:
@@ -428,13 +461,14 @@ func _shop(list):
 		for i in profile.inv.size():
 			var index = i; var item = profile.inv[i]; var it = GameData.catalog.ITEMS[item.id]; var price = GameData.sell_price(item.id)
 			var row = _item_row(list, item.id, "%s%s ×%s\n%s мон. за штуку" % [it.name, " +%s" % int(item.e) if item.get("e", 0) > 0 else "", int(item.n), price])
-			var b = _button(row, "Продать 1", func(): action.emit("sell", index)); b.set_meta("sell", index); b.disabled = not Network.authed
+			var b = _button(row, "Продать 1", func(): action.emit("sell", index)); b.set_meta("sell", index); b.disabled = not Network.authed or price <= 0
 			if item.n > 1:
-				b = _button(row, "Все · %s" % (price * int(item.n)), func(): action.emit("sell_stack", {"idx": index, "n": int(item.n)})); b.set_meta("sell_stack", item.id); b.disabled = not Network.authed
+				b = _button(row, "Все · %s" % (price * int(item.n)), func(): action.emit("sell_stack", {"idx": index, "n": int(item.n)})); b.set_meta("sell_stack", item.id); b.disabled = not Network.authed or price <= 0
 
 func _character(list):
 	var preview = load("res://scripts/character_preview.gd").new(); preview.profile = profile; list.add_child(preview)
 	_label(list, "%s · %s · Уровень %s" % [profile.name, GameData.catalog.CLASSES[profile.cls].name, int(profile.lvl)], 22)
+	_label(list, "SP: %s · Монеты: %s" % [_money(int(profile.get("sp", 0))), _money(int(profile.coins))])
 	_label(list, "Родной город: " + _home_name())
 	_label(list, "HP %s / %s · MP %s / %s" % [int(profile.hp), int(current_stats.maxHp), int(profile.mp), int(current_stats.maxMp)])
 	_label(list, "Опыт: %s / %s · %.1f%%" % [int(profile.xp), GameData.xp_next(int(profile.lvl)), 100.0 * profile.xp / GameData.xp_next(int(profile.lvl))])
@@ -493,7 +527,7 @@ func _inventory_grid(parent):
 	# Fixed wallet stays visible even when the inventory contents scroll.
 	var wallet = VBoxContainer.new(); window_body.add_child(wallet)
 	wallet_label = _label(wallet, "●  %s  монет" % _money(int(profile.coins)), 17); wallet_label.modulate = Color("e5c779")
-	wallet_label.tooltip_text = "Монеты зачисляются сервером после подбора. Z — ближайшая добыча."
+	wallet_label.tooltip_text = "Монеты зачисляет сервер: автолут или ручной подбор. Z — ближайшая добыча."
 	var weight = ProgressBar.new(); weight.custom_minimum_size.y = 14; weight.max_value = current_stats.cap; weight.value = current_stats.load; wallet.add_child(weight)
 	weight.tooltip_text = "Вес: %.1f / %s" % [current_stats.load, int(current_stats.cap)]
 
@@ -560,10 +594,10 @@ func _select_item(item: Dictionary):
 		var reason = GameData.enchant_error(item.id, int(item.get("e", 0)), enchant_scroll) if enchant_scroll != "" else (GameData.wear_error(profile, it) if it.has("slot") and not item.has("slot") else "")
 		b.disabled = not reason.is_empty() or not Network.authed; b.tooltip_text = reason; b.set_meta("item_action", item.id)
 	if item.has("idx"):
-		var b = _button(actions, "Продать · %s мон." % GameData.sell_price(item.id), func(): action.emit("sell", item.idx)); b.tooltip_text = "Подойдите к торговцу"
+		var b = _button(actions, "Продать · %s мон." % GameData.sell_price(item.id), func(): action.emit("sell", item.idx)); b.tooltip_text = "Подойдите к торговцу"; b.disabled = GameData.sell_price(item.id) <= 0 or not Network.authed
 
 func _skill_description(id: String) -> String:
-	var sk = GameData.catalog.SKILLS[id]
+	var sk = GameData.skill(profile, id)
 	var result = "%s · Уровень %s\nМана: %s · Перезарядка: %s с" % [sk.name, int(sk.lvl), int(sk.mp), sk.cd]
 	if sk.has("cast"): result += "\nПодготовка: %.2f с" % (sk.cast / maxf(0.1, current_stats.get("cast", 1)))
 	if sk.has("mul"): result += "\nСила: ×%s" % sk.mul
@@ -574,21 +608,117 @@ func _skill_description(id: String) -> String:
 	return result
 
 func _skills(list):
-	for i in GameData.catalog.CLASSES[profile.cls].skills.size():
-		var id = GameData.catalog.CLASSES[profile.cls].skills[i]; var sk = GameData.catalog.SKILLS[id]
-		var row = _item_row(list, id, _skill_description(id))
-		var b = _button(row, "Применить · %s" % (i + 1), func(): action.emit("hotbar", i))
-		b.disabled = profile.lvl < sk.lvl or not Network.authed or profile.get("dead", false)
+	_label(list, "Очки навыков: %s SP" % _money(int(profile.get("sp", 0))), 17)
+	_wrapped(list, "SP накапливаются за убийства. Новые ранги открываются на указанных уровнях и изучаются здесь. Базовая атака первого уровня уже изучена.", 12)
+	for id in GameData.catalog.CLASSES[profile.cls].skills:
+		var ranks = GameData.catalog.UI_RULES.skillRanks[id]; var learned = int(profile.get("skills", {}).get(id, 0))
+		var row = _item_row(list, id, "%s · Ранг %s/%s" % [GameData.catalog.SKILLS[id].name, learned, ranks.size()])
+		var button = _button(row, "Применить", func(): action.emit("skill", id)); button.disabled = learned == 0 or not Network.authed or profile.get("dead", false)
+		_wrapped(list, _skill_description(id), 12)
+		if learned < ranks.size():
+			var next = ranks[learned]; var rank = learned + 1
+			var effect = "Сила ×%s" % next.mul if next.has("mul") else "Исцеление %s%%" % int(next.get("amount", 0) * 100)
+			_wrapped(list, "Следующий ранг %s · уровень %s · %s SP\n%s · %s MP" % [rank, int(next.lvl), int(next.sp), effect, int(next.mp)], 12)
+			button = _button(list, "Изучить ранг %s · %s SP" % [rank, int(next.sp)], func(): action.emit("learn", {"id": id, "rank": rank}))
+			button.set_meta("learn", id)
+			button.disabled = not Network.authed or profile.get("dead", false) or profile.lvl < next.lvl or profile.get("sp", 0) < next.sp
+		else: _label(list, "Все ранги изучены", 12)
+		list.add_child(HSeparator.new())
 
 func _settings(list):
 	_label(list, "Чат", 20)
-	for entry in [["sys", "Системные сообщения"], ["trade", "Торговый чат во вкладке «Все»"], ["near", "Ближний чат во вкладке «Все»"], ["bubbles", "Сообщения над персонажами"]]:
+	for entry in [["sys", "Системный журнал над чатом"], ["combat", "Журнал: урон и бой"], ["rewards", "Журнал: опыт, SP и добыча"], ["info", "Журнал: уведомления"], ["trade", "Торговый чат во вкладке «Все»"], ["near", "Ближний чат во вкладке «Все»"], ["bubbles", "Сообщения над персонажами"]]:
 		var b = CheckButton.new(); b.text = entry[1]; b.button_pressed = chat.preferences[entry[0]]; list.add_child(b)
 		b.toggled.connect(func(value): chat.set_preference(entry[0], value))
 	var row = _row(list); _label(row, "Размер текста чата")
 	var font_size = SpinBox.new(); font_size.min_value = 10; font_size.max_value = 18; font_size.step = 1; font_size.value = chat.preferences.size; row.add_child(font_size)
 	font_size.value_changed.connect(func(value): chat.set_preference("size", int(value)))
+	row = _row(list); _label(row, "Высота блока чата")
+	var height = SpinBox.new(); height.min_value = 240; height.max_value = 440; height.step = 20; height.value = chat.preferences.height; row.add_child(height)
+	height.value_changed.connect(func(value): chat.set_preference("height", int(value)))
+	_wrapped(list, "Границу между системным журналом и обычным чатом можно перетаскивать.", 12)
 	_label(list, "Изображение", 20)
 	_button(list, "Полный экран / окно", func(): action.emit("fullscreen", null))
 	_button(list, "Вернуть камеру за спину", func(): action.emit("camera", null))
 	_wrapped(list, "Настройки чата сохраняются на этом устройстве. Персонаж и весь игровой прогресс сохраняются на сервере.", 14)
+
+func pointer_over_ui(pos: Vector2) -> bool:
+	for child in game_ui.get_children():
+		if child is Control and child.visible and child.mouse_filter != Control.MOUSE_FILTER_IGNORE and child.get_global_rect().has_point(pos): return true
+	return false
+
+func default_bindings() -> Array:
+	return GameData.catalog.CLASSES[profile.cls].skills.duplicate() + ["potion_hp", "potion_mp", "attack", "target", "talk", "pickup", "skills"]
+
+func binding_choices() -> Array:
+	return GameData.catalog.CLASSES[profile.cls].skills.duplicate() + ["potion_hp", "potion_mp", "scroll_escape"] + ACTION_NAMES.keys()
+
+func binding_name(id: String) -> String:
+	if id in GameData.catalog.SKILLS: return GameData.catalog.SKILLS[id].name
+	if id in GameData.catalog.ITEMS: return GameData.catalog.ITEMS[id].name
+	return ACTION_NAMES.get(id, "Пусто")
+
+func activate_slot(index: int):
+	if index < 0 or index >= hotbar_bindings.size(): return
+	var id = str(hotbar_bindings[index])
+	if id in GameData.catalog.SKILLS: action.emit("skill", id)
+	elif id in GameData.catalog.ITEMS: action.emit("use", id)
+	elif id != "empty": action.emit(id, null)
+
+func assign_slot(index: int, id: String):
+	if id not in binding_choices() or index < 0 or index >= 10: return
+	hotbar_bindings[index] = id; _save_hotbar()
+
+func swap_slots(from: int, to: int):
+	if hotbar_locked or from < 0 or from >= 10 or to < 0 or to >= 10: return
+	var previous = hotbar_bindings[to]; hotbar_bindings[to] = hotbar_bindings[from]; hotbar_bindings[from] = previous; _save_hotbar()
+
+func _save_hotbar():
+	Settings.write_value("hotbar", profile.cls, hotbar_bindings); _refresh_hotbar()
+	if window_kind == "actions": show_window("actions", true)
+
+func _refresh_hotbar():
+	for i in hotbar_bindings.size():
+		var id = str(hotbar_bindings[i]); var button = skill_buttons[i]
+		button.locked = hotbar_locked; button.icon = GameData.icon(id)
+		button.text = {"attack": "Атака", "target": "Цель", "talk": "Говор.", "pickup": "Дроп", "skills": "Умения", "inventory": "Сумка", "character": "Герой", "map": "Карта"}.get(id, "")
+		button.tooltip_text = binding_name(id) + "\nКлавиша: " + (str(i + 1) if i < 9 else "0")
+		if id in GameData.catalog.SKILLS: button.tooltip_text += "\n" + _skill_description(id)
+		if not hotbar_locked: button.tooltip_text += "\nПеретащите на другую ячейку для обмена"
+
+func _actions_settings(list):
+	_wrapped(list, "Выберите содержимое ячеек. Клавиши 1–9 и 0 повторяют панель. После снятия блокировки ячейки можно менять местами перетаскиванием.", 12)
+	var lock_button = CheckButton.new(); lock_button.text = "Заблокировать перетаскивание"; lock_button.button_pressed = hotbar_locked; list.add_child(lock_button)
+	lock_button.toggled.connect(func(value): hotbar_locked = value; Settings.write_value("hotbar", "locked", value); _refresh_hotbar())
+	var choices = binding_choices()
+	for i in 10:
+		var index = i; var row = _row(list); _label(row, "Ячейка %s" % (str(i + 1) if i < 9 else "0")).custom_minimum_size.x = 88
+		var select = OptionButton.new(); select.size_flags_horizontal = Control.SIZE_EXPAND_FILL; row.add_child(select)
+		for id in choices: select.add_item(binding_name(id))
+		select.select(choices.find(hotbar_bindings[i])); select.item_selected.connect(func(choice): assign_slot(index, choices[choice]))
+	_button(list, "Вернуть исходную панель", func(): hotbar_bindings = default_bindings(); _save_hotbar())
+
+func _craft(list):
+	_label(list, "Монеты: %s" % _money(int(profile.coins)), 16)
+	_wrapped(list, "Изготовление у торговца: 100% успех, материалы и монеты расходуются. Печать Короля-лича гарантирована за победу над боссом.", 12)
+	for id in GameData.catalog.RECIPES:
+		var item = GameData.catalog.ITEMS[id]; var recipe = GameData.catalog.RECIPES[id]
+		var row = _item_row(list, id, "%s [%s] · ур. %s" % [item.name, str(item.grade).to_upper(), int(item.lvl)])
+		var enough = profile.coins >= recipe.coins and profile.lvl >= item.lvl
+		var parts: Array[String] = []
+		for part in recipe.materials:
+			var have = 0
+			for entry in profile.inv:
+				if entry.id == part: have += int(entry.n)
+			var need = int(recipe.materials[part]); enough = enough and have >= need
+			parts.append("%s: %s/%s" % [GameData.catalog.ITEMS[part].name, have, need])
+		var button = _button(row, "%s мон." % int(recipe.coins), func(): action.emit("craft", id)); button.set_meta("craft", id)
+		button.disabled = not enough or not Network.authed or profile.get("dead", false)
+		_wrapped(list, " · ".join(parts), 12); list.add_child(HSeparator.new())
+
+func _equipment_guide(list):
+	_wrapped(list, "Собственная прогрессия до 40 уровня. Воин: меч + щит и броня. Маг: двуручный посох и мантия. Полный комплект даёт дополнительный бонус; украшения защищают от магии.", 13)
+	for entry in [["D · уровень 8", "Длинный меч / Дубовый жезл. Кожаный / ученический комплект. Покупка у торговца, оружие также из шкур и костей."], ["C · уровень 18", "Кристальный клинок / посох. Кольчужный / мистический комплект. Покупка; оружие также из кристаллов и костей."], ["B · уровень 25", "Клинок дракона / Посох глубин. Костяной / комплект глубин. Дроп с Короля-лича либо гарантированное изготовление за печати, ресурсы и монеты."]]:
+		_label(list, entry[0], 17); _wrapped(list, entry[1], 13)
+	_wrapped(list, "Усиление: до +3 безопасно. Дальше при неудаче предмет распадается на кристаллы. Сначала соберите базовый комплект и запасное оружие.", 13)
+	_button(list, "Рецепты и стоимость", func(): show_window("craft"))

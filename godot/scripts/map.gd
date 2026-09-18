@@ -1,6 +1,9 @@
 extends Control
 var player_position = Vector3.ZERO
 var compact = false
+const Settings = preload("res://scripts/interface_settings.gd")
+var zoom = 2.0
+signal zoom_changed(value: float)
 var mob_markers: Array = []
 var player_markers: Array = []
 var target_position = Vector3.INF
@@ -10,7 +13,8 @@ var extent = Vector2(1600,1600)
 
 func _ready():
 	custom_minimum_size = Vector2(164, 124) if compact else Vector2(600, 410)
-	mouse_filter = Control.MOUSE_FILTER_IGNORE; clip_contents = true
+	mouse_filter = Control.MOUSE_FILTER_STOP; mouse_force_pass_scroll_events = false; clip_contents = true
+	if compact: zoom = clampf(float(Settings.read_value("map", "zoom", 2.0)), 0.5, 8.0)
 	if not terrain_map: _bake_terrain()
 
 func _bake_terrain():
@@ -49,8 +53,8 @@ func update_entities(mobs: Dictionary, players: Dictionary, target):
 	queue_redraw()
 
 func _draw():
-	origin = Vector2(player_position.x,player_position.z)-size if compact else Vector2(-800,-800)
-	extent = size*2 if compact else Vector2(1600,1600)
+	origin = Vector2(player_position.x,player_position.z)-size*zoom*0.5 if compact else Vector2(-800,-800)
+	extent = size*zoom if compact else Vector2(1600,1600)
 	if not compact and player_position.x > 2100:
 		var d = GameData.world.dungeon
 		origin = Vector2(d.x0 - d.cell, d.z0 - d.cell); extent = Vector2.ONE * d.cell * (d.n + 2)
@@ -96,3 +100,14 @@ func _draw():
 	draw_circle(player,7,Color("23352e"));draw_circle(player,4,Color("91ffe1"))
 	if compact:draw_string(font,Vector2(size.x*.5-4,14),"С",HORIZONTAL_ALIGNMENT_LEFT,-1,12,Color("eee0b9"))
 	elif player_position.x>2100:draw_string(font,Vector2(20,35),"Вы в катакомбах",HORIZONTAL_ALIGNMENT_LEFT,-1,22,Color("bf92ff"))
+
+func change_zoom(factor: float):
+	zoom = clampf(zoom * factor, 0.5, 8.0)
+	Settings.write_value("map", "zoom", zoom); zoom_changed.emit(zoom); queue_redraw()
+
+func _gui_input(event):
+	if not compact: return
+	if event is InputEventMouseButton and event.pressed:
+		if event.button_index == MOUSE_BUTTON_WHEEL_UP: change_zoom(0.8); accept_event()
+		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN: change_zoom(1.25); accept_event()
+	elif event is InputEventMagnifyGesture: change_zoom(1.0 / event.factor); accept_event()

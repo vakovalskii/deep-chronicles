@@ -10,4 +10,5 @@ const godot=godotBinary();
 await run(godot,['--headless','--path','godot','--editor','--import','--quit']);
 await run(godot,['--headless','--path','godot',process.argv.includes('--debug')?'--export-debug':'--export-release',preset,output]);
 if(target==='macos')await run('ditto',['-x','-k',output,path.dirname(output)]);
+if(target==='windows')await run(process.execPath,['tools/godot/package.mjs']);
 console.log('Build:',output);

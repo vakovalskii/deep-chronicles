@@ -1,5 +1,5 @@
 {
-  "name": "l2-web",
+  "name": "khroniki-glubin",
   "private": true,
   "type": "module",
   "scripts": {
@@ -10,24 +10,22 @@
     "test:native": "node tools/godot/test.mjs",
     "dev": "node tools/godot/run.mjs",
     "build": "node tools/godot/build.mjs",
-    "test:unit": "node --test tests/unit.test.js",
-    "test:e2e": "node tests/e2e.mjs",
+    "test:unit": "node --test tests/unit.test.js tests/progression.test.js",
     "test": "npm run test:unit && npm run test:server && npm run test:native",
     "server": "node --no-warnings server/server.js",
     "test:server": "node --no-warnings --test tests/server.test.js",
     "deploy": "bash deploy/deploy.sh",
-    "deploy:quick": "bash deploy/quick.sh",
-    "test:e2e:show": "HEADED=1 SLOW=120 node tests/e2e.mjs",
     "native:build": "node tools/godot/build.mjs",
     "native:art": "node tools/godot/prepare-art.mjs",
     "native:gallery": "node tools/godot/gallery.mjs",
-    "dev:web": "node --no-warnings server/server.js & vite --host",
-    "build:web": "vite build",
-    "test:web": "npm run test:unit && npm run test:server && npm run build:web && npm run test:e2e",
     "native:verify": "node tools/godot/verify.mjs",
     "native:probe": "node tools/godot/probe.mjs",
     "native:weapons": "node tools/godot/weapons.mjs",
-    "native:references": "node tools/godot/references.mjs"
+    "native:references": "node tools/godot/references.mjs",
+    "native:package": "node tools/godot/package.mjs",
+    "native:economy": "node tools/godot/economy.mjs",
+    "site:build": "node tools/site/build.mjs",
+    "test:site": "node tests/site.mjs"
   },
   "dependencies": {
     "three": "^0.170.0",

@@ -183,7 +183,17 @@ test('мобы приходят с сервера и их можно убить'
   for (let i = 0; i < 80; i++) {
     a.send({ t: 'st', x: mob[1] + 1, y: 0, z: mob[3] + 1, r: 0, a: 0 });
     const m = await a.wait('ev', 'snap');
-    if (m.t === 'ev' && m.e.some((e) => e.k === 'kill')) { assert.ok(true); a.ws.close(); await a.closed(); return; }
+    if (m.t === 'ev' && m.e.some((e) => e.k === 'kill')) {
+      const reward = m.e.find(e => e.k === 'kill');
+      assert.equal(reward.ground, false, 'автолут включён для нового персонажа');
+      assert.ok(reward.sp > 0);
+      const p = await untilP(a, p => p.kills > 0 && p.sp > 0 && p.coins > 150);
+      const { DatabaseSync } = await import('node:sqlite');
+      const db = new DatabaseSync(DB, { readOnly: true });
+      const saved = JSON.parse(db.prepare('SELECT save FROM accounts WHERE key = ?').get('охотник').save); db.close();
+      assert.equal(saved.coins,p.coins); assert.equal(saved.sp,p.sp);
+      a.ws.close(); await a.closed(); return;
+    }
   }
   throw new Error('моб не умер за отведённое время');
 });
@@ -301,4 +311,42 @@ test('дроп по WebSocket: два игрока видят награду, в
       assert.equal(ok.p.coins, auth.p.coins + 17); assert.equal(ok.p.inv.find(e => e.id === 'pelt').n, 1);
     } finally { resumed.ws.close(); await resumed.closed(); }
   } finally { a.ws.close(); b.ws.close(); await Promise.all([a.closed(), b.closed()]); }
+});
+
+
+test('SP/обучение/автолут по WS: класс, уровень, двойной клик и перезаход', async () => {
+  const a=client(); await a.open();
+  try {
+    a.send({t:'register',name:'Ученик',pass:'skill-test',cls:'warrior'});
+    const auth=await a.wait('authok'); assert.equal(auth.p.skills.power_strike,1);
+    a.send({t:'learn',id:'battle_cry',rank:1}); await untilEv(a,/уровень/);
+    a.send({t:'dev',lvl:8,sp:5000}); await untilP(a,p=>p.sp===5000&&p.lvl===8);
+    a.send({t:'learn',id:'heal',rank:1}); await untilEv(a,/класса/);
+    a.send({t:'learn',id:'battle_cry',rank:1}); a.send({t:'learn',id:'battle_cry',rank:1});
+    const p=await untilP(a,p=>p.skills.battle_cry===1);
+    const {skillRanks}=await import('../src/progression.js');
+    assert.equal(p.sp,5000-skillRanks('battle_cry')[0].sp);
+    a.send({t:'autoloot',enabled:false}); await untilP(a,p=>p.autoloot===false);
+    a.ws.close(); await a.closed(); await pause(150);
+    const b=client(); await b.open();
+    try { b.send({t:'auth',token:auth.token}); const ok=await b.wait('authok');
+      assert.equal(ok.p.sp,p.sp); assert.equal(ok.p.skills.battle_cry,1); assert.equal(ok.p.autoloot,false);
+    } finally {b.ws.close();await b.closed();}
+  } finally {a.ws.close();await a.closed();}
+});
+
+test('изготовление по WS: списание материалов, повтор заказа и сохранение', async () => {
+  const a=client();await a.open();
+  try {
+    a.send({t:'register',name:'Кузнец',pass:'craft-test',cls:'mage'});await a.wait('authok');
+    a.send({t:'dev',lvl:8,coins:1000,item:'pelt',n:40,x:-442,z:410});await untilP(a,p=>p.inv.some(e=>e.id==='pelt'));
+    a.send({t:'dev',item:'bone',n:40});await untilP(a,p=>p.inv.some(e=>e.id==='bone'));
+    const order={t:'craft',id:'staff_oak',request:'native-order-0001'};a.send(order);a.send(order);
+    const p=await untilP(a,p=>p.inv.some(e=>e.id==='staff_oak'));
+    assert.equal(p.coins,700); assert.equal(p.inv.find(e=>e.id==='pelt').n,20);assert.equal(p.inv.find(e=>e.id==='bone').n,20);
+    assert.equal(p.inv.filter(e=>e.id==='staff_oak').length,1);
+    const {DatabaseSync}=await import('node:sqlite');const db=new DatabaseSync(DB,{readOnly:true});
+    const saved=JSON.parse(db.prepare('SELECT save FROM accounts WHERE key = ?').get('кузнец').save);db.close();
+    assert.equal(saved.coins,700);assert.deepEqual(saved.craftReceipts,['native-order-0001']);
+  } finally {a.ws.close();await a.closed();}
 });

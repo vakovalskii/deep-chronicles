@@ -27,7 +27,10 @@ WebSocket, JSON в каждом кадре, различитель — поле 
 | `logout` | `{token}` | удаляет строку токена |
 | `st` | `{x, y, z, r, a}` | положение и битовая маска действия, 10 раз в секунду; лимит 25/с |
 | `atk` | `{id, kind:'p'\|'m', hold?}` | цель; `hold:true` — только взять на прицел; `id:null` — сбросить |
-| `skill` | `{id}` | применить умение |
+| `skill` | `{id}` | применить изученный ранг умения |
+| `learn` | `{id,rank}` | изучить строго следующий ранг за SP, сохранить сразу |
+| `autoloot` | `{enabled:boolean}` | переключить серверный автолут и сохранить |
+| `craft` | `{id,request}` | изготовить вещь рядом с торговцем; request — уникальный ID заказа |
 | `pickup` | `{id}` | подбор серверного объекта добычи: жизнь, 3 м, защита владельца, атомарная выдача |
 | `use` | `{id}` | зелье или свиток побега |
 | `equip` | `{idx, slot?}` / `unequip {slot}` | надеть/снять |
@@ -38,13 +41,13 @@ WebSocket, JSON в каждом кадре, различитель — поле 
 | `wash` | — | смыть карму у жреца |
 | `chat` | `{ch:'all'\|'trade'\|'near', text}` | кулдауны 3000 / 10000 / 800 мс |
 | `pm` | `{to, text}` | личное сообщение, кулдаун 400 мс |
-| `dev` | `{x,z,coins,lvl,hp,item,n,xp,drop}` | **только** при `DEV_CMD=1`; в проде отсутствует |
+| `dev` | `{x,z,coins,lvl,hp,item,n,xp,sp,drop}` | **только** при `DEV_CMD=1`; в проде отсутствует |
 
 ## Сервер → клиент
 
 | `t` | полезная нагрузка | когда |
 |---|---|---|
-| `hi` | `{online, features:{groundLoot:1}}` | сразу после соединения (по нему же работает проба `server_probe.gd`) |
+| `hi` | `{online, features:{groundLoot:1,progression:1,autoloot:1,crafting:1,nativeOnly:1}}` | сразу после соединения (по нему же работает проба `server_probe.gd`) |
 | `authok` | `{id, name, token, p, online}` | успешный вход; `p` — профиль целиком |
 | `autherr` | `{reason, kind}` | `kind:"auth"` — клиент забывает токен |
 | `kicked` | — | этим аккаунтом вошли в другом месте; клиент останавливает цикл |
@@ -81,13 +84,13 @@ WebSocket, JSON в каждом кадре, различитель — поле 
 
 `hit {m|p, dmg, crit, by?}` · `miss` · `mdie` · `hurt {dmg, dodge?, from|fromP, name, guard?}` ·
 `heal {kind, amount, skill?}` · `cd {id, cd}` · `cast {id, t}` · `cast_fx {id, to?}` ·
-`buff {id, dur}` · `loot {id}` · `kill {mob, name, xp, coins, ground, boss}` · `pickup {id, item, n}` · `lvl {lvl}` ·
+`buff {id, dur, stat, mul}` · `loot {id}` · `kill {mob, name, xp, sp, coins, ground, boss}` · `pickup {id, item, n}` · `lvl {lvl}` ·
 `dead {by, loss, pk}` · `move {x, z}` · `ench {ok, color}` · `msg {text, cls}` (`cls` ∈ good/bad/rare).
 
 `pushNear` (`server/server.js:389-392`) дублирует событие всем в радиусе `VIEW`, дописывая
 `by: actorId` — так соседи видят чужой бой.
 
-При `kill.ground:true` опыт уже выдан, а монеты/вещи ещё лежат на земле. Зачисление происходит только после `pickup` и серверного `you`. Получение награды сразу сохраняется в SQLite, при неудаче записи предмет возвращается на землю. Право привязано к аккаунту на 20 с, затем подбор общий, исчезновение через 5 минут; неподнятая добыча не переживает рестарт. Источник чисел — `src/loot.js`. Полное описание: [GROUND_LOOT](docs/GROUND_LOOT.md).
+В профиле добавлены `sp`, `skills: {id:rank}`, `autoloot` и последние 32 `craftReceipts`; миграция сохраняет v3 и старые вещи. При `kill.ground:false` сервер уже выдал автолут и сохранил его; `pickup.id` у такой награды пустой. При `kill.ground:true` опыт и SP уже выданы, а монеты/вещи ещё лежат на земле. Зачисление происходит только после `pickup` и серверного `you`. Получение награды сразу сохраняется в SQLite, при неудаче записи предмет возвращается на землю. Право привязано к аккаунту на 20 с, затем подбор общий, исчезновение через 5 минут; неподнятая добыча не переживает рестарт. Источник чисел — `src/loot.js`. Полное описание: [GROUND_LOOT](docs/GROUND_LOOT.md).
 
 ## Что важно помнить
 

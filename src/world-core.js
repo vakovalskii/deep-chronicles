@@ -28,6 +28,18 @@ export const ZONES = [
   { id: 'forest', name: 'Сумрачный лес', x: 20, z: 10, r: 300, lv: '10–17', mobs: [['treant', 10], ['orc', 10], ['spider', 9]], ground: [0.16, 0.3, 0.14] },
   { id: 'waste', name: 'Выжженная пустошь', x: 360, z: -120, r: 330, lv: '18–25', mobs: [['scorpion', 12], ['golem', 9]], ground: [0.66, 0.55, 0.36] },
 ];
+// Hand-authored hunting rhythm on top of the deterministic world: two exits,
+// small low-level clearings, then stronger groups further from the safe town.
+export const HUNTING_CAMPS = [
+  { id: 'east_rabbits', name: 'Старая дорога · 1', x: -285, z: 387, mob: 'rabbit', count: 12, radius: 19 },
+  { id: 'north_rabbits', name: 'Опушка · 1', x: -443, z: 255, mob: 'rabbit', count: 12, radius: 19 },
+  { id: 'east_wolves', name: 'Волчий лог · 3', x: -235, z: 380, mob: 'wolf', count: 9, radius: 20 },
+  { id: 'north_wolves', name: 'Сухой ручей · 3', x: -447, z: 205, mob: 'wolf', count: 9, radius: 20 },
+  { id: 'east_goblins', name: 'Разведчики руин · 5', x: -186, z: 368, mob: 'goblin', count: 8, radius: 20 },
+  { id: 'north_goblins', name: 'Заброшенный тракт · 5', x: -455, z: 157, mob: 'goblin', count: 8, radius: 20 },
+  { id: 'meadow_arrival', name: 'Охотничья стоянка · 1–3', x: -240, z: 185, mob: 'rabbit', count: 12, radius: 20 },
+];
+
 export const CRYPT = { x: 150, z: 250 }; // вход в катакомбы в лесу
 
 export function zoneAt(x, z) {
@@ -117,6 +129,7 @@ function buildNature(B) {
   for (let i = 0; i < 9000 && placed < 2600; i++) {
     const x = (hash(i, 1) - 0.5) * MAP * 0.95, z = (hash(i, 2) - 0.5) * MAP * 0.95;
     const zn = zoneAt(x, z); if (zn.town) continue;
+    if (HUNTING_CAMPS.some(c => Math.hypot(x-c.x,z-c.z) < c.radius + 10)) continue;
     if (TOWNS.some((t) => Math.hypot(x - t.x, z - t.z) < t.r + 30)) continue;
     if (Math.hypot(x - CRYPT.x, z - CRYPT.z) < 30) continue;
     if (TELEPORTS.some((t) => Math.hypot(x - t.x, z - t.z) < 14)) continue; // точки прибытия свободны
@@ -211,6 +224,7 @@ export function buildProps(B = nullEmitter) {
       const x = zn.x + Math.cos(a) * d, z = zn.z + Math.sin(a) * d;
       if (zoneAt(x, z).id !== zn.id || heightAt(x, z) < -5 || heightAt(x, z) > 45) continue;
       if (TOWNS.some((t) => Math.hypot(x - t.x, z - t.z) < t.r + 40)) continue;
+      if (blockedAt(x, z, 2)) continue;
       spawns.push({ mob, x, z }); break;
     }
   }
@@ -218,7 +232,16 @@ export function buildProps(B = nullEmitter) {
   dungeonCells.forEach((c, k) => { if (c.i + c.j > 1 && k % 2 === 0) spawns.push({ mob: undead[k % undead.length], x: c.x + 3, z: c.z - 2 }); });
   const last = dungeonCells[dungeonCells.length - 1];
   spawns.push({ mob: 'lich', x: last.x, z: last.z });
-  props = { npcs, spawns };
+  for (const camp of HUNTING_CAMPS) {
+    for (let i = 0; i < camp.count; i++) {
+      const angle = i * 2.3999632297;
+      const radius = Math.sqrt((i + 0.5) / camp.count) * camp.radius;
+      const x = camp.x + Math.cos(angle) * radius, z = camp.z + Math.sin(angle) * radius;
+      if (zoneAt(x,z).town || blockedAt(x,z,2) || heightAt(x,z) < -5) continue;
+      spawns.push({ mob: camp.mob, x, z, camp: camp.id });
+    }
+  }
+  props = { npcs, spawns, huntingCamps: HUNTING_CAMPS };
   return props;
 }
 
@@ -226,6 +249,7 @@ export function buildProps(B = nullEmitter) {
 export const TELEPORTS = [
   { id: 'harbor', name: 'Светлая Гавань', x: TOWNS[0].x + 18, z: TOWNS[0].z + 22, cost: 0 },
   { id: 'ford', name: 'Каменный Брод', x: TOWNS[1].x + 18, z: TOWNS[1].z + 22, cost: 0 },
+  { id: 'hunting', name: 'Охотничьи угодья (1–5)', x: -308, z: 389, cost: 0 },
   { id: 'meadow', name: 'Солнечные луга (1–9)', x: -260, z: 180, cost: 80 },
   { id: 'forest', name: 'Сумрачный лес (10–17)', x: -20, z: 60, cost: 200 },
   { id: 'waste', name: 'Выжженная пустошь (18–25)', x: 300, z: -160, cost: 400 },

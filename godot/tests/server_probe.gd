@@ -3,6 +3,7 @@ extends Node
 var deadline = 0
 var require_loot = false
 var require_native = false
+var require_party = false
 var seconds = 0
 var greeting: Dictionary = {}
 var opened_at = 0
@@ -12,6 +13,7 @@ var finished = false
 
 func _ready():
 	for arg in OS.get_cmdline_user_args():
+		if arg == "--require-party": require_party = true
 		if arg == "--require-native": require_native = true
 		if arg == "--require-loot": require_loot = true
 		if arg.begins_with("--seconds="): seconds = clampi(int(arg.trim_prefix("--seconds=")), 0, 300)
@@ -24,6 +26,7 @@ func _message(message: Dictionary):
 	if message.get("t") == "pong": pongs += 1
 	if message.get("t") != "hi": return
 	greeting = message; opened_at = Time.get_ticks_msec(); deadline = opened_at + (seconds + 5) * 1000
+	if require_party and message.get("features", {}).get("party", 0) < 1: _fail("Server has no party support")
 	if require_loot and message.get("features", {}).get("groundLoot", 0) < 1: _fail("Server has no ground-loot support")
 	if require_native and (message.get("features", {}).get("progression", 0) < 1 or message.get("features", {}).get("nativeOnly", 0) < 1): _fail("Server has no native progression support")
 

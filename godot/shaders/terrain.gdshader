@@ -6,11 +6,20 @@ uniform sampler2D sand : source_color, filter_linear_mipmap_anisotropic, repeat_
 uniform sampler2D dirt : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
 uniform sampler2D rock : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
 uniform sampler2D snow : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
+uniform sampler2D ground_albedo : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
+uniform sampler2D ground_normal : filter_linear_mipmap_anisotropic, repeat_enable;
+uniform sampler2D ground_roughness : filter_linear_mipmap_anisotropic, repeat_enable;
+uniform sampler2D paving_albedo : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
+uniform sampler2D paving_normal : filter_linear_mipmap_anisotropic, repeat_enable;
+uniform sampler2D paving_roughness : filter_linear_mipmap_anisotropic, repeat_enable;
 varying vec3 world_pos;
 varying vec3 world_normal;
 void vertex() {
 	world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	world_normal = (MODEL_NORMAL_MATRIX * NORMAL);
+	// UV is world XZ: build a matching tangent frame for normal maps on terrain.
+	TANGENT = normalize(vec3(1.0, -NORMAL.x / max(NORMAL.y, 0.1), 0.0));
+	BINORMAL = normalize(cross(NORMAL, TANGENT));
 }
 float noise2(vec2 p) {
 	return sin(p.x * .037 + sin(p.y * .029)) * sin(p.y * .041 + sin(p.x * .025));
@@ -41,6 +50,18 @@ void fragment() {
 	float rocky = max(smoothstep(0.35, 0.6, 1.0 - world_normal.y), smoothstep(38.0, 55.0, world_pos.y));
 	col = mix(col, texture(rock, uv).rgb, rocky);
 	col = mix(col, texture(snow, uv).rgb, smoothstep(72.0, 86.0, world_pos.y));
-	ALBEDO = col;
-	ROUGHNESS = 0.95;
+	float paving = max(roads, town * 0.92);
+	vec2 detail_uv = p / 3.0;
+	vec2 paving_uv = p / 9.0;
+	vec3 earth = texture(ground_albedo, detail_uv).rgb;
+	vec3 stones = texture(paving_albedo, paving_uv).rgb;
+	float natural = (weights.x + weights.y) * (1.0 - rocky) * (1.0 - town * 0.4);
+	col = mix(col, earth, natural * 0.72);
+	col = mix(col, stones, paving);
+	// Material palette, not a darkness overlay: keep value separation in the albedo.
+	float luminance = dot(col, vec3(0.2126, 0.7152, 0.0722));
+	ALBEDO = mix(vec3(luminance), col, 0.68) * vec3(0.88, 0.91, 0.94);
+	vec3 detail_normal = mix(texture(ground_normal, detail_uv).rgb, texture(paving_normal, paving_uv).rgb, paving);
+	NORMAL_MAP = mix(vec3(0.5, 0.5, 1.0), detail_normal, max(natural, paving) * 0.65);
+	ROUGHNESS = mix(texture(ground_roughness, detail_uv).r, texture(paving_roughness, paving_uv).r, paving);
 }

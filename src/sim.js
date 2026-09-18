@@ -20,7 +20,7 @@ export const missChance = (mobLvl, acc) => clamp(0.06 + (mobLvl + 33 - acc) * 0.
 export const evaChance = (mobLvl, eva) => clamp(0.05 + (eva - (mobLvl + 33)) * 0.01, 0.02, 0.3);
 
 export const MOB_ATK_CD = (def) => (def.boss ? 1.4 : 1.8);
-export const MOB_SPEED = (def) => 8.4 * (def.boss || ['tree', 'golem'].includes(def.shape) ? 0.8 : 1);
+export const MOB_SPEED = (def) => (def.speed || 4.6) * (def.boss || ['tree', 'golem'].includes(def.shape) ? 0.8 : 1);
 export const mobRadius = (def) => (def.size || 1) * 0.9;
 // Замах фиксирует направление. Игрок успевает выйти из сектора до удара;
 // клиент рисует ровно эти параметры, но попадание проверяется только здесь.
@@ -137,7 +137,7 @@ export function mobStep(m, ctx, dt) {
   if (m.state === 'idle' || m.state === 'wander') {
     if (m.def.aggro && near && nd < 14) { m.state = 'chase'; m.target = near.id; }
     m.wanderT -= dt;
-    if (m.wanderT <= 0) { m.wanderT = rand(4, 10); m.dest = { x: m.home.x + rand(-12, 12), z: m.home.z + rand(-12, 12) }; m.state = 'wander'; }
+    if (m.wanderT <= 0) { m.wanderT = rand(5, 12); m.dest = { x: m.home.x + rand(-6, 6), z: m.home.z + rand(-6, 6) }; m.state = 'wander'; }
     if (m.state === 'wander' && m.dest) {
       const dx = m.dest.x - m.x, dz = m.dest.z - m.z, L = Math.hypot(dx, dz);
       if (L < 0.5) { m.state = 'idle'; m.dest = null; }

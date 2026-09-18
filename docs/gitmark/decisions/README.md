@@ -10,4 +10,5 @@ links:
 
 # Решения
 
-- [Основной клиент — нативный Godot](docs/gitmark/decisions/2026-09-18-native-godot-client.md) — 2026-09-18, сервер и общие правила не переписываем
+- [Следующий клиент — UE5](docs/gitmark/decisions/2026-09-18-unreal-client.md) — актуальное решение, Godot сохраняется до приёмки
+- [Основной клиент — нативный Godot](docs/gitmark/decisions/2026-09-18-native-godot-client.md) — историческое решение, направление пересмотрено

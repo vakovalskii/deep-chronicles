@@ -2,7 +2,7 @@
 node_type: plan
 title: Переезд клиента на Godot — состояние и хвосты
 service: _platform
-status: active
+status: archived
 updated: 2026-09-18
 tags: [migration, godot, roadmap]
 links:
@@ -12,6 +12,8 @@ links:
 ---
 
 # Переезд клиента на Godot: состояние на 2026-09-18
+
+История действующего клиента. Последнее направление пользователя — [UE5](docs/gitmark/plans/unreal-migration.md); актуальная очередь и результаты проверок — [CURRENT_TASKS](docs/CURRENT_TASKS.md).
 
 Ветка `server-authoritative`. Решение и его обоснование —
 [отдельный документ](docs/gitmark/decisions/2026-09-18-native-godot-client.md);

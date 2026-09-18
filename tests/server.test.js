@@ -485,3 +485,40 @@ test('автоатака сначала объявляет замах; отме�
     assert.ok(events.slice(start).some(e=>e.k==='hit'), 'a completed swing still applies server damage');
   } finally { a.ws.close(); b.ws.close(); await Promise.all([a.closed(),b.closed()]); }
 });
+
+test('пати делит реальные XP/SP, защищает групповой дроп, изолирует чат и распускается при выходе', async () => {
+  const a=client(), b=client(), outsider=client(); await Promise.all([a.open(),b.open(),outsider.open()]);
+  const seen=[]; outsider.ws.on('message', raw=>seen.push(JSON.parse(raw)));
+  try {
+    a.send({t:'register',name:'ГруппаПервый',pass:'secret1',cls:'warrior'});
+    b.send({t:'register',name:'ГруппаВторой',pass:'secret1',cls:'mage'});
+    outsider.send({t:'register',name:'ГруппаЧужой',pass:'secret1',cls:'mage'});
+    const [aa,bb]=await Promise.all([a.wait('authok'),b.wait('authok'),outsider.wait('authok')]);
+    a.send({t:'party',action:'invite',name:'ГруппаВторой'}); const invitation=await b.wait('party_invite');assert.equal(invitation.from,aa.id);
+    b.send({t:'party',action:'accept',from:aa.id});
+    assert.equal((await a.wait('party')).members.length,2);assert.equal((await b.wait('party')).members.length,2);
+    b.send({t:'party',action:'mode',mode:'pickup'});assert.match((await b.wait('party_err')).reason,/лидер/);
+    a.send({t:'party',action:'mode',mode:'pickup'});
+    let state; do {state=await a.wait('party');} while(state.mode!=='pickup');
+    a.send({t:'chat',ch:'party',text:'group-private-marker'});
+    assert.equal((await b.wait('chat')).text,'group-private-marker');
+    await at(a,-285,387);await at(b,-285,388);await at(outsider,-285,389);
+    let mob;
+    for(let i=0;i<40&&!mob;i++) {const s=await a.wait('snap');mob=s.m.filter(r=>!(r[5]&8)&&Math.hypot(r[1]+285,r[3]-387)<25).sort((x,y)=>Math.hypot(x[1]+285,x[3]-387)-Math.hypot(y[1]+285,y[3]-387))[0];}
+    assert.ok(mob);await at(a,mob[1]+1,mob[3]+1);await at(b,mob[1]+2,mob[3]+2);
+    a.send({t:'atk',kind:'m',id:mob[0]});
+    const killed=(await untilEv(a,/"k":"kill"/)).find(e=>e.k==='kill');
+    const shared=(await untilEv(b,/"k":"kill"/)).find(e=>e.k==='kill');
+    const {MOBS}=await import('../src/data.js'); const {spForKill}=await import('../src/progression.js');
+    assert.equal(killed.xp+shared.xp,MOBS[killed.mob].xp);assert.equal(killed.sp+shared.sp,spForKill(MOBS[killed.mob].xp));
+    const pa=await untilP(a,p=>p.kills===1),pb=await untilP(b,p=>p.kills===1);assert.equal(pa.coins,150);assert.equal(pb.coins,150,'pickup policy suppresses autoloot');
+    let drops=[];for(let i=0;i<40&&!drops.length;i++)drops=(await b.wait('snap')).g.filter(d=>d.available&&d.item==='coins');
+    const drop=drops[0];assert.ok(drop);await at(outsider,drop.x,drop.z);outsider.send({t:'pickup',id:drop.id});assert.match((await outsider.wait('pickup_err')).reason,/принадлежит/);
+    await at(b,drop.x,drop.z);b.send({t:'pickup',id:drop.id});const rewarded=await untilP(b,p=>p.coins>150);assert.equal(rewarded.coins,150+drop.n);
+    a.send({t:'pickup',id:drop.id});assert.ok((await a.wait('pickup_err')).reason);
+    assert.ok(!seen.some(m=>m.t==='chat'&&m.text==='group-private-marker'));
+    b.send({t:'party',action:'leave'});
+    do {state=await a.wait('party');} while(state.members.length);assert.equal(state.id,null);
+    assert.equal(bb.p.cls,'mage');
+  } finally { for(const c of [a,b,outsider])c.ws.close();await Promise.all([a.closed(),b.closed(),outsider.closed()]); }
+});

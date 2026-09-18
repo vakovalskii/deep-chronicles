@@ -33,7 +33,7 @@
     },
     "wolf": {
       "path": "res://assets/creatures/wolf.glb",
-      "height": 1.6,
+      "height": 1.25,
       "clips": {
         "idle": "idle",
         "walk": "walk",
@@ -57,7 +57,7 @@
     },
     "rabbit": {
       "path": "res://assets/creatures/rabbit.glb",
-      "height": 0.95,
+      "height": 0.62,
       "clips": {
         "idle": "idle",
         "walk": "walk",
@@ -71,7 +71,7 @@
     },
     "boar": {
       "path": "res://assets/creatures/boar.glb",
-      "height": 1.9,
+      "height": 1.5,
       "clips": {
         "idle": "idle",
         "walk": "walk",

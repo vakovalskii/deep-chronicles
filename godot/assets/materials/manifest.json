@@ -1,0 +1,71 @@
+{
+  "license": "CC0-1.0",
+  "licenseUrl": "https://docs.ambientcg.com/license/",
+  "sources": {
+    "paving": {
+      "asset": "PavingStones131",
+      "url": "https://ambientcg.com/get?file=PavingStones131_1K-JPG.zip",
+      "page": "https://ambientcg.com/view?id=PavingStones131",
+      "sha256": "4b48575f51af3f8cd8ba20021f8a471f22435749782e553493967425e498fa4d"
+    },
+    "ground": {
+      "asset": "Ground037",
+      "url": "https://ambientcg.com/get?file=Ground037_1K-JPG.zip",
+      "page": "https://ambientcg.com/view?id=Ground037",
+      "sha256": "4e69db2b7251b1736fa70fe6fe4ab80d64bd220117dd5dd4c7caaead51c2574e"
+    },
+    "masonry": {
+      "asset": "Bricks097",
+      "url": "https://ambientcg.com/get?file=Bricks097_1K-JPG.zip",
+      "page": "https://ambientcg.com/view?id=Bricks097",
+      "sha256": "97b5df360161e48bcfed609aef361e8115b680ddc0aea4ad9321d4b00e222ad0"
+    }
+  },
+  "files": {
+    "paving_albedo.jpg": {
+      "source": "paving",
+      "entry": "PavingStones131_1K-JPG_Color.jpg",
+      "sha256": "98644aad83a6d570c1b66e48ecad9211a73c320f5a53021a46d98bf453f041db"
+    },
+    "paving_normal.jpg": {
+      "source": "paving",
+      "entry": "PavingStones131_1K-JPG_NormalGL.jpg",
+      "sha256": "6593f4057cb20b87ddfa1cb4e40f4369c16bffc29f69ce0024040391bc5ae5ff"
+    },
+    "paving_roughness.jpg": {
+      "source": "paving",
+      "entry": "PavingStones131_1K-JPG_Roughness.jpg",
+      "sha256": "d99671810de9d0dcc812815bee0544df035bd903918620de39c2c956f0c4bff4"
+    },
+    "ground_albedo.jpg": {
+      "source": "ground",
+      "entry": "Ground037_1K-JPG_Color.jpg",
+      "sha256": "d92bec8a35b9cb16ec79b421ca0f572a7400286eae109beafa266629ef49a6cf"
+    },
+    "ground_normal.jpg": {
+      "source": "ground",
+      "entry": "Ground037_1K-JPG_NormalGL.jpg",
+      "sha256": "ea59dbdcfa5bf2f28bdd4aa896d4e5f96c4cce5939100dcc6db4bbbcdebfe38d"
+    },
+    "ground_roughness.jpg": {
+      "source": "ground",
+      "entry": "Ground037_1K-JPG_Roughness.jpg",
+      "sha256": "3786b088e981aae562f06b6477972d379cffd09a5cc542ab42f9ffd94f9bcb0e"
+    },
+    "masonry_albedo.jpg": {
+      "source": "masonry",
+      "entry": "Bricks097_1K-JPG_Color.jpg",
+      "sha256": "218f7343091f1c0d9044fd642247d23dd322087271df1b45c8f51fdff91042dd"
+    },
+    "masonry_normal.jpg": {
+      "source": "masonry",
+      "entry": "Bricks097_1K-JPG_NormalGL.jpg",
+      "sha256": "3c13ff7b8018983e0d1529fa330b2d4494f92da299b72db19dbc76282f3f23e7"
+    },
+    "masonry_roughness.jpg": {
+      "source": "masonry",
+      "entry": "Bricks097_1K-JPG_Roughness.jpg",
+      "sha256": "a629784339b79cff67079a34f313ec5de18b8b6eb478455ac9b8df09c615b37d"
+    }
+  }
+}

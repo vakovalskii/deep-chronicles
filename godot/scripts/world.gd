@@ -13,6 +13,7 @@ func build():
 	_terrain()
 	_props()
 	_models()
+	_watchfires()
 	_portal(GameData.position_at(150, 258.5), Color("9c75ff"))
 	_portal(Vector3(2205, 0, -195), Color("c6a4ff"))
 	for t in GameData.world.towns: _portal(GameData.position_at(t.x + 18, t.z + 16), Color("70d5f0"))
@@ -34,9 +35,9 @@ func set_region(pos: Vector3):
 	var e = environment.environment
 	e.background_mode = Environment.BG_COLOR if underground else Environment.BG_SKY
 	e.background_color = Color("11121b")
-	e.ambient_light_energy = 0.3 if underground else 0.35
-	e.fog_light_color = Color("191723") if underground else Color("a2c2d4")
-	e.fog_density = 0.008 if underground else 0.0018
+	e.ambient_light_energy = 0.3 if underground else 0.32
+	e.fog_light_color = Color("191723") if underground else Color("576675")
+	e.fog_density = 0.008 if underground else 0.0015
 	sun.light_energy = 0.18 if underground else daylight_energy
 
 func _terrain():
@@ -45,6 +46,9 @@ func _terrain():
 	for key in ["grass", "forest", "sand", "dirt", "rock", "snow"]:
 		var path = "res://assets/terrain/%s.png" % key
 		material.set_shader_parameter(key, load(path if ResourceLoader.exists(path) else "res://generated/tex/t_%s.png" % key))
+	for key in ["ground", "paving"]:
+		for layer in ["albedo", "normal", "roughness"]:
+			material.set_shader_parameter(key + "_" + layer, load("res://assets/materials/%s_%s.jpg" % [key, layer]))
 	# Chunked meshes let the engine cull terrain behind the camera.
 	for cz in range(-1000, 1000, 100):
 		for cx in range(-1000, 1000, 100):
@@ -108,6 +112,13 @@ func _material(value: int, kind: String) -> Material:
 		m.uv1_triplanar = true; m.uv1_world_triplanar = true
 		m.uv1_scale = Vector3.ONE * 0.25
 		if kind in ["cobble", "dbrick", "dfloor", "roof_blue", "roof_red", "sandstone", "water"]: m.albedo_color = Color.WHITE
+	var pbr = "paving" if kind in ["cobble", "dfloor", "stone"] else ("masonry" if kind in ["brick", "dbrick"] else "")
+	if not pbr.is_empty():
+		m.albedo_texture = load("res://assets/materials/%s_albedo.jpg" % pbr)
+		m.normal_enabled = true; m.normal_texture = load("res://assets/materials/%s_normal.jpg" % pbr); m.normal_scale = 0.65
+		m.roughness_texture = load("res://assets/materials/%s_roughness.jpg" % pbr)
+		m.albedo_color = Color("929da7") if pbr == "masonry" else Color("acb0b2")
+		m.uv1_triplanar = true; m.uv1_world_triplanar = true; m.uv1_scale = Vector3.ONE * (0.33 if pbr == "masonry" else 0.11)
 	materials[key] = m; return m
 
 func _portal(pos: Vector3, col: Color):
@@ -156,3 +167,19 @@ func _models():
 			node.visibility_range_end = 360 if id in ["oak", "pine", "rock_a", "rock_b", "bush"] else 800
 			node.visibility_range_end_margin = 30
 			add_child(node)
+
+func _watchfires():
+	# A few warm pools guide the route out of the cold town; range limits mobile cost.
+	for town in GameData.world.towns:
+		for offset in [Vector2(87, -13), Vector2(87, -3), Vector2(-18, 10), Vector2(18, -16)]:
+			var pos = GameData.position_at(town.x + offset.x, town.z + offset.y)
+			var lamp = OmniLight3D.new(); lamp.position = pos + Vector3.UP * 2.0
+			lamp.light_color = Color("ffa254"); lamp.light_energy = 2.8; lamp.omni_range = 10; lamp.shadow_enabled = false; add_child(lamp)
+			var brazier = MeshInstance3D.new(); var bowl = CylinderMesh.new(); bowl.top_radius = 0.38; bowl.bottom_radius = 0.16; bowl.height = 0.45
+			brazier.mesh = bowl; brazier.position = pos + Vector3.UP * 1.55
+			var iron = StandardMaterial3D.new(); iron.albedo_color = Color("292e32"); iron.metallic = 0.75; iron.roughness = 0.65; brazier.material_override = iron; add_child(brazier)
+			var post = MeshInstance3D.new(); var shaft = CylinderMesh.new(); shaft.top_radius = 0.09; shaft.bottom_radius = 0.2; shaft.height = 1.4
+			post.mesh = shaft; post.material_override = iron; post.position = pos + Vector3.UP * 0.7; add_child(post)
+			var ember = MeshInstance3D.new(); var flame = SphereMesh.new(); flame.radius = 0.23; flame.height = 0.32
+			ember.mesh = flame; ember.position = pos + Vector3.UP * 1.82
+			var glow = StandardMaterial3D.new(); glow.albedo_color = Color("ff973d"); glow.emission_enabled = true; glow.emission = Color("ff6c23"); glow.emission_energy_multiplier = 2.5; ember.material_override = glow; add_child(ember)

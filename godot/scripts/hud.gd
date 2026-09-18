@@ -66,6 +66,11 @@ var hotbar_bindings: Array = []
 var hotbar_class = ""
 var hotbar_locked = true
 var hotbar_lock: CheckBox
+var party_state: Dictionary = {}
+var party_invite: Dictionary = {}
+var party_summary: Button
+var party_members_box: VBoxContainer
+var party_signature = ""
 var chat_frame: Control
 var autoloot_button: CheckBox
 var pickup_button: Button
@@ -226,6 +231,8 @@ func _game_hud():
 	var zoom_label = _label(zoom_row, "×%.1f" % (2.0 / minimap.zoom), 10); zoom_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL; zoom_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_button(zoom_row, "+", func(): minimap.change_zoom(0.8)).tooltip_text = "Приблизить миникарту"
 	minimap.zoom_changed.connect(func(value): zoom_label.text = "×%.1f" % (2.0 / value))
+	party_summary = Button.new(); party_summary.text = "Пати"; party_summary.position = Vector2(8, 120); party_summary.custom_minimum_size = Vector2(182, 24); game_ui.add_child(party_summary)
+	party_summary.pressed.connect(func(): toggle("party"))
 	var chat_box = _panel(game_ui, Vector2.ZERO, 282 if not touch else 306)
 	chat_box.get_parent().add_theme_stylebox_override("panel", _style(Color(0.03, 0.04, 0.035, 0.26), Color(0.48, 0.43, 0.31, 0.45), 0))
 	chat_box.get_parent().set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT)
@@ -346,7 +353,8 @@ func update_values(p: Dictionary, s: Dictionary, pos: Vector3, target, cooldowns
 		button.modulate = Color(0.55, 0.55, 0.55) if unavailable and not hotbar_locked else Color.WHITE
 	autoloot_button.disabled = not Network.authed
 	pickup_button.disabled = not Network.authed or p.get("dead", false)
-	chat_frame.offset_top = chat_frame.offset_bottom - int(chat.preferences.height)
+	chat.fit_height(get_viewport().get_visible_rect().size.y + chat_frame.offset_bottom - 152 - chat_frame.get_theme_stylebox("panel").get_minimum_size().y)
+	chat_frame.offset_top = chat_frame.offset_bottom - chat_frame.get_combined_minimum_size().y
 	if is_instance_valid(map_control): map_control.player_position = pos; map_control.queue_redraw()
 	minimap.player_position = pos; minimap.queue_redraw()
 
@@ -379,7 +387,7 @@ func show_window(kind: String, refresh = false):
 		window.position = Vector2(dimensions.x - half.x * 2 - 188, 76)
 	if window_positions.has(kind): window.position = window_positions[kind]
 	var row = _row(window_body); row.mouse_filter = Control.MOUSE_FILTER_STOP; row.gui_input.connect(window.drag_title)
-	var titles = {"inventory": "Инвентарь", "character": "Персонаж", "map": "Карта мира", "shop": "Торговец", "teleport": "Хранитель врат", "priest": "Жрец", "menu": "Меню игры", "settings": "Настройки", "controls": "Управление", "skills": "Умения", "actions": "Панель действий", "craft": "Изготовление", "equipment": "Путь снаряжения"}
+	var titles = {"inventory": "Инвентарь", "character": "Персонаж", "map": "Карта мира", "shop": "Торговец", "teleport": "Хранитель врат", "priest": "Жрец", "menu": "Меню игры", "settings": "Настройки", "controls": "Управление", "skills": "Умения", "actions": "Панель действий", "craft": "Изготовление", "equipment": "Путь снаряжения", "party": "Группа"}
 	var title = _label(row, titles.get(kind, kind), 12); title.size_flags_horizontal = Control.SIZE_EXPAND_FILL; title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER; title.modulate = Color("d4c49b")
 	_button(row, "×", close_window).tooltip_text = "Закрыть · Esc"
 	if kind == "map":
@@ -413,12 +421,13 @@ func show_window(kind: String, refresh = false):
 			_label(list, "Персонаж: %s · %s" % [profile.name, GameData.catalog.CLASSES[profile.cls].name], 20)
 			_wrapped(list, "Сервер: %s\n%s · Игроков в мире: %s" % [Network.endpoint, "Подключено" if Network.authed else "Переподключение…", Network.online_count])
 			var grid = GridContainer.new(); grid.columns = 2; list.add_child(grid)
-			for entry in [["Сумка · Tab / I", "inventory"], ["Персонаж · C", "character"], ["Умения · K", "skills"], ["Панель действий", "actions"], ["Оружие и броня", "equipment"], ["Карта мира · M", "map"], ["Настройки", "settings"], ["Управление", "controls"]]:
+			for entry in [["Сумка · Tab / I", "inventory"], ["Персонаж · C", "character"], ["Умения · K", "skills"], ["Группа / Пати", "party"], ["Панель действий", "actions"], ["Оружие и броня", "equipment"], ["Карта мира · M", "map"], ["Настройки", "settings"], ["Управление", "controls"]]:
 				_button(grid, entry[0], func(): show_window(entry[1])).size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			_button(list, "Вернуть камеру за спину · V", func(): action.emit("camera", null); close_window())
 			_button(list, "Полный экран / окно · F11", func(): action.emit("fullscreen", null))
 			_button(list, "Сменить персонажа / сервер", func(): action.emit("logout", null))
 			_button(list, "Вернуться в игру", close_window)
+		"party": _party(list)
 		"settings": _settings(list)
 		"controls":
 			for line in ["WASD / ЛКМ по земле — движение", "ЛКМ по цели — выбрать; ещё раз — атаковать", "F — атака · Q — следующая цель · E — разговор", "Z / 9 — подобрать ближайшую добычу; клик — подойти и поднять", "1–3 — умения · 4–5 — зелья здоровья и маны", "Tab / I — сумка · C — персонаж · K — умения · M — карта", "ПКМ и движение мыши — камера · Колесо — приближение", "V — камера за спиной · F11 — полный экран · Esc — меню", "Ctrl + атака — PvP; на телефоне включите PvP в окне героя", "Enter — чат · /w Имя текст — ЛС · /r текст — ответ", "+текст — торговый чат · Нажмите на имя в чате для ЛС", "Телефон: джойстик — движение; свайп по миру — камера", "Два пальца — масштаб; двойное нажатие на вещь — действие"]:
@@ -697,10 +706,11 @@ func _settings(list):
 	var row = _row(list); _label(row, "Размер текста чата")
 	var font_size = SpinBox.new(); font_size.min_value = 10; font_size.max_value = 18; font_size.step = 1; font_size.value = chat.preferences.size; row.add_child(font_size)
 	font_size.value_changed.connect(func(value): chat.set_preference("size", int(value)))
-	row = _row(list); _label(row, "Высота блока чата")
-	var height = SpinBox.new(); height.min_value = 240; height.max_value = 440; height.step = 20; height.value = chat.preferences.height; row.add_child(height)
-	height.value_changed.connect(func(value): chat.set_preference("height", int(value)))
-	_wrapped(list, "Границу между системным журналом и обычным чатом можно перетаскивать.", 12)
+	for entry in [["system_height", "Высота системного журнала", 54], ["player_height", "Высота обычного чата", 70]]:
+		row = _row(list); _label(row, entry[1])
+		var height = SpinBox.new(); height.min_value = entry[2]; height.max_value = 420; height.step = 10; height.value = chat.preferences[entry[0]]; row.add_child(height)
+		height.value_changed.connect(func(value): chat.set_preference(entry[0], int(value)))
+	_wrapped(list, "Потяните ручку над «Система» или «Чат»: высота каждой области меняется отдельно и сохраняется.", 12)
 	_label(list, "Изображение", 20)
 	_button(list, "Полный экран / окно", func(): action.emit("fullscreen", null))
 	_button(list, "Вернуть камеру за спину", func(): action.emit("camera", null))
@@ -795,3 +805,52 @@ func _equipment_guide(list):
 		_label(list, entry[0], 17); _wrapped(list, entry[1], 13)
 	_wrapped(list, "Усиление: до +3 безопасно. Дальше при неудаче предмет распадается на кристаллы. Сначала соберите базовый комплект и запасное оружие.", 13)
 	_button(list, "Рецепты и стоимость", func(): show_window("craft"))
+
+const PARTY_MODES = ["random", "last_hit", "pickup"]
+const PARTY_TITLES = ["Случайному участнику", "Добившему моба", "Первому подобравшему"]
+
+func update_party(value: Dictionary):
+	party_state = value
+	var members = value.get("members", [])
+	party_summary.text = "Пати · %s/6" % members.size() if not members.is_empty() else "Пати · пригласить"
+	party_summary.tooltip_text = "\n".join(members.map(func(m): return "%s · %s ур. · HP %s/%s · %s м" % [m.name, int(m.lvl), int(m.hp), int(m.maxHp), int(m.distance)]))
+	# Rebuild controls only when membership/mode changes; health ticks must not eat typing.
+	var signature = str(value.get("id")) + str(value.get("leader")) + str(value.get("mode")) + str(members.map(func(m): return m.id))
+	if window_kind == "party":
+		if signature != party_signature: show_window("party", true)
+		else: _party_members()
+	party_signature = signature
+
+func _party(list: VBoxContainer):
+	if not party_invite.is_empty():
+		_wrapped(list, "%s приглашает вас в группу. Добыча: %s." % [party_invite.name, PARTY_TITLES[maxi(0, PARTY_MODES.find(party_invite.mode))]])
+		var invitation_row = _row(list)
+		for entry in [["Принять", "accept"], ["Отклонить", "decline"]]:
+			_button(invitation_row, entry[0], func():
+				action.emit("party_command", {"t": "party", "action": entry[1], "from": party_invite.from}); party_invite = {}; show_window("party", true))
+	var members = party_state.get("members", [])
+	var leader = party_state.get("leader", -1) == get_parent().own_id
+	_wrapped(list, "До 6 участников. Опыт и SP делятся между живыми игроками в 60 м от моба. Общая награда учитывает наибольший уровень в группе рядом с целью.", 13)
+	party_members_box = VBoxContainer.new(); list.add_child(party_members_box); _party_members()
+	if members.is_empty() or leader:
+		var row = _row(list); var invite_name = LineEdit.new(); invite_name.placeholder_text = "Имя персонажа"; invite_name.max_length = 16; invite_name.size_flags_horizontal = Control.SIZE_EXPAND_FILL; row.add_child(invite_name)
+		var selected = get_parent().target
+		if is_instance_valid(selected) and selected.kind == "p": invite_name.text = selected.display_name
+		_button(row, "Пригласить", func(): action.emit("party_command", {"t": "party", "action": "invite", "name": invite_name.text}))
+	if not members.is_empty():
+		var mode = OptionButton.new()
+		for title in PARTY_TITLES: mode.add_item(title)
+		mode.select(maxi(0, PARTY_MODES.find(party_state.get("mode", "random")))); mode.disabled = not leader; list.add_child(mode)
+		mode.item_selected.connect(func(i): action.emit("party_command", {"t": "party", "action": "mode", "mode": PARTY_MODES[i]}))
+		_wrapped(list, "Режим выбирает лидер. «Подобравшему» отключает автолут группы: добыча ждёт на земле. Правила новой добычи фиксируются при смерти моба.", 12)
+		_button(list, "Выйти из группы", func(): action.emit("party_command", {"t": "party", "action": "leave"}))
+
+func _party_members():
+	if not is_instance_valid(party_members_box): return
+	for child in party_members_box.get_children(): child.free()
+	for m in party_state.get("members", []):
+		var row = _row(party_members_box)
+		var info = _label(row, "%s%s · %s ур. · HP %s/%s · %s" % ["♛ " if m.id == party_state.leader else "", m.name, int(m.lvl), int(m.hp), int(m.maxHp), "повержен" if m.dead else str(int(m.distance)) + " м"], 12)
+		info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		if party_state.get("leader", -1) == get_parent().own_id and m.id != get_parent().own_id:
+			_button(row, "×", func(): action.emit("party_command", {"t": "party", "action": "kick", "id": m.id})).tooltip_text = "Исключить из группы"

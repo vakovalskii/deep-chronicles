@@ -133,6 +133,7 @@ func _message(m: Dictionary):
 			initial_camera = true
 			hud.login_pass.clear()
 			if not same_character: hud.chat.clear_history()
+			hud.update_party({}); hud.party_invite = {}
 			hud.enter(profile)
 			if not startup_panel.is_empty(): hud.show_window(startup_panel); startup_panel = ""
 			hud.log_line("Добро пожаловать, %s! Хранитель врат перенесёт вас в зону охоты." % profile.name)
@@ -198,6 +199,10 @@ func _message(m: Dictionary):
 		"pm":
 			last_pm = m.from if m.from != profile.get("name") else m.to
 			var entry = m.duplicate(); entry.ch = "pm"; entry.peer = last_pm; hud.chat.add_message(entry)
+		"party": hud.update_party(m)
+		"party_invite": hud.party_invite = m; hud.show_window("party")
+		"party_err": hud.log_line(m.reason)
+		"party_notice": hud.log_line(m.text)
 		"pmerr": hud.log_line("%s: %s" % [m.to, m.reason])
 		"chatwait": hud.log_line("Подождите %.1f с перед следующим сообщением." % (m.wait / 1000.0))
 		"announce": hud.log_line(m.text)
@@ -219,9 +224,10 @@ func _event(e: Dictionary):
 		"cd": cooldowns[e.id] = Time.get_ticks_msec() + float(e.cd) * 1000
 		"attack_start":
 			if is_instance_valid(source):
-				source.play_action("attack", float(e.t))
+				source.begin_attack(float(e.t))
 				if source.base_model != "mage": combat_fx.swing(source); game_audio.play_at("swing", source.position)
 		"attack_release":
+			if is_instance_valid(source): source.release_attack()
 			if is_instance_valid(source) and source.base_model == "mage":
 				var spell_target = mobs.get(int(e.to.get("m", -1))) if e.to.has("m") else (hero if int(e.to.get("p", -1)) == own_id else players.get(int(e.to.get("p", -1))))
 				if is_instance_valid(spell_target): combat_fx.projectile(source, spell_target, Color("9fbdff")); game_audio.play_at("fire", source.position, -5)
@@ -374,7 +380,7 @@ func _move_hero(dt):
 	var direction = Vector3.ZERO
 	var distance = stats.speed * dt
 	if input.length() > 0.15:
-		if hero.action_until > 0 and hero.action_clip == "attack": hero.cancel_presentation()
+		if hero.action_until > 0 and hero.action_clip.begins_with("attack"): hero.cancel_presentation()
 		_cancel_attack(); has_destination = false; talking_to = null; pending_pickup = ""; marker.hide()
 		direction = Vector3(input.x, 0, input.y).rotated(Vector3.UP, camera_yaw).normalized()
 		distance *= minf(1, input.length())
@@ -404,7 +410,7 @@ func _move_hero(dt):
 			if is_instance_valid(talking_to): _open_npc(talking_to); talking_to = null
 		else: direction = offset.normalized(); distance = minf(distance, offset.length())
 	if direction.length_squared() > 0.1:
-		if not attacking and hero.action_until > 0 and hero.action_clip == "attack": hero.cancel_presentation()
+		if not attacking and hero.action_until > 0 and hero.action_clip.begins_with("attack"): hero.cancel_presentation()
 		run_speed = move_toward(run_speed, float(stats.speed), float(stats.speed) * 6.0 * dt)
 		distance = minf(distance, run_speed * dt)
 		var before = hero.position
@@ -481,7 +487,7 @@ func _open_npc(npc):
 func _action(kind: String, value):
 	if profile.is_empty(): return
 	match kind:
-		"inventory", "character", "map", "menu", "skills", "settings", "controls", "actions", "equipment": hud.toggle(kind)
+		"inventory", "character", "map", "menu", "skills", "settings", "controls", "actions", "equipment", "party": hud.toggle(kind)
 		"camera": camera_yaw = hero.rotation.y + PI; camera_pitch = 0.65; camera_distance = 24
 		"fullscreen": DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED if DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN else DisplayServer.WINDOW_MODE_FULLSCREEN)
 		"attack": attack()
@@ -508,6 +514,7 @@ func _action(kind: String, value):
 		"enchant": Network.send({"t": "ench", "scroll": value.scroll, "ref": value.ref})
 		"teleport": Network.send({"t": "tp", "id": value})
 		"wash": Network.send({"t": "wash"})
+		"party_command": Network.send(value)
 		"chat": _chat(str(value))
 
 func _chat(text: String):
@@ -527,7 +534,7 @@ func _chat(text: String):
 		var to = hud.chat.recipient.text.strip_edges()
 		if not to.is_empty(): Network.send({"t": "pm", "to": to, "text": text})
 	else:
-		var channel = ["all", "near", "trade"][hud.chat_channel.selected]
+		var channel = ["all", "near", "trade", "pm", "party"][hud.chat_channel.selected]
 		if text.begins_with("+"): channel = "trade"; text = text.substr(1)
 		Network.send({"t": "chat", "ch": channel, "text": text})
 

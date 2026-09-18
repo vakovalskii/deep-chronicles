@@ -106,7 +106,7 @@ func _login(data: Dictionary):
 	var url = hud.server_field.text.strip_edges()
 	if not url.begins_with("ws://") and not url.begins_with("wss://"):
 		hud.login_message.text = "Адрес сервера должен начинаться с ws:// или wss://"; return
-	if url != Network.endpoint or not Network.online:
+	if url != Network.endpoint or not Network.online or Network.stopped:
 		pending_login = data; Network.start(url)
 	else: Network.send(data)
 
@@ -130,12 +130,12 @@ func _message(m: Dictionary):
 			hud.log_line("Добро пожаловать, %s! Хранитель врат перенесёт вас в зону охоты." % profile.name)
 			print("NATIVE_AUTH_OK")
 		"autherr":
-			hud.login_message.text = str(m.reason)
 			hud.continue_button.visible = not Network.session.is_empty()
-			if not profile.is_empty(): hud.log_line(str(m.reason)); _return_to_login(false)
+			if not profile.is_empty(): _return_to_login(false, false)
+			hud.login_message.text = str(m.reason)
 		"kicked":
 			hud.log_line("Этот персонаж вошёл с другого устройства.")
-			_return_to_login(false); hud.login_message.text = "Вход с другого устройства. Войдите снова."
+			_return_to_login(false, false); hud.login_message.text = "Вход с другого устройства. Войдите снова."
 		"you":
 			if profile.is_empty(): return
 			profile = m.p; stats = GameData.stats(profile, buffs)
@@ -455,7 +455,7 @@ func _chat(text: String):
 		if text.begins_with("+"): channel = "trade"; text = text.substr(1)
 		Network.send({"t": "chat", "ch": channel, "text": text})
 
-func _return_to_login(forget: bool):
+func _return_to_login(forget: bool, reconnect = true):
 	if forget: Network.logout()
 	last_pm = ""; buffs.clear(); hud.active_buffs = []; hud.enchant_scroll = ""; hud.selected_item = {}; hud.chat.clear_history()
 	pvp_enabled = false; hud.pvp_enabled = false; joystick = Vector2.ZERO
@@ -463,7 +463,10 @@ func _return_to_login(forget: bool):
 	_clear_entities(); profile = {}; hud.close_window(); hud.game_ui.hide(); hud.login_panel.show()
 	if is_instance_valid(hero): hero.queue_free()
 	hero = null; hud.continue_button.visible = not forget and not Network.session.is_empty()
-	Network.start()
+	if reconnect: Network.start()
+	else:
+		Network.stopped = true; Network.online = false; Network.authed = false
+		if Network.socket: Network.socket.close()
 
 func _clear_entities():
 	target = null; attacking = false; talking_to = null; pending_pickup = ""; pickup_sent_at = 0

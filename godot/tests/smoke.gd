@@ -312,6 +312,14 @@ func _run():
 	if DisplayServer.get_name() != "headless":
 		await RenderingServer.frame_post_draw
 		await _screenshot("game.png")
+	# A second login is terminal, not a transient network fault. Otherwise two
+	# devices can hide the reason or keep taking the character from each other.
+	peer.close(); peer = WebSocketPeer.new(); peer.connect_to_url(net.endpoint)
+	await wait_for(func(): return peer.get_ready_state() == WebSocketPeer.STATE_OPEN)
+	peer.send_text(JSON.stringify({"t": "login", "name": "NativeMage", "pass": "isolated-test"}))
+	check(await wait_for(func(): return game.profile.is_empty() and net.stopped), "login on another device stops automatic reconnect")
+	await create_timer(1.2).timeout
+	check(game.hud.login_message.text.contains("другого устройства") and not net.authed, "duplicate-login reason remains visible without a reconnect loop")
 	_finish()
 
 func _bag(id: String) -> int:

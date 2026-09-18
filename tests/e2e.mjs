@@ -126,7 +126,19 @@ try {
     const after = await G(() => ({ xp: window.__g.P.xp, coins: window.__g.P.coins }));
     expect(after.xp > before.xp && after.coins === before.coins, JSON.stringify({ before, after }));
     await page.waitForFunction(() => [...window.__g.groundDrops.entries.values()].some(d => d.data.item === 'coins'));
-    await page.keyboard.press('KeyZ');
+    // Z picks the nearest reward: a random item can be closer than the coin pile.
+    // Observe each actual pickup instead of assuming the first reward is currency.
+    for (let attempt = 0; attempt < 4 && await G(() => window.__g.P.coins) === before.coins; attempt++) {
+      const id = await G(() => {
+        const g = window.__g, h = g.hero.position;
+        const distance = d => Math.hypot(d.obj.position.x - h.x, d.obj.position.z - h.z);
+        return [...g.groundDrops.entries.values()].filter(d => d.data.available && distance(d) < 25).sort((a, b) => distance(a) - distance(b))[0]?.data.id;
+      });
+      expect(id, 'нет доступной награды в радиусе подбора');
+      await page.keyboard.press('KeyZ');
+      await page.waitForFunction(id => !window.__g.groundDrops.entries.has(id), id, { timeout: 8000 });
+      await wait(150);
+    }
     await untilP(page, n => window.__g.P.coins > n, before.coins);
     expect(await page.isVisible('[data-pickup]'), 'нет кнопки подбора');
   });

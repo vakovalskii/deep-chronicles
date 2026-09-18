@@ -4,7 +4,7 @@ title: Сетевой протокол клиент ↔ сервер
 service: _platform
 status: active
 updated: 2026-09-18
-tags: [websocket, protocol, json]
+tags: [websocket, protocol, json, loot, pickup]
 links:
   documents: [server/server.js, godot/scripts/network.gd, godot/scripts/main.gd]
   depends_on: [docs/gitmark/reference/architecture.md]
@@ -28,6 +28,7 @@ WebSocket, JSON в каждом кадре, различитель — поле 
 | `st` | `{x, y, z, r, a}` | положение и битовая маска действия, 10 раз в секунду; лимит 25/с |
 | `atk` | `{id, kind:'p'\|'m', hold?}` | цель; `hold:true` — только взять на прицел; `id:null` — сбросить |
 | `skill` | `{id}` | применить умение |
+| `pickup` | `{id}` | подбор серверного объекта добычи: жизнь, 3 м, защита владельца, атомарная выдача |
 | `use` | `{id}` | зелье или свиток побега |
 | `equip` | `{idx, slot?}` / `unequip {slot}` | надеть/снять |
 | `buy` | `{id, n}` / `sell {idx, n}` | торговец, радиус 8 м |
@@ -37,18 +38,18 @@ WebSocket, JSON в каждом кадре, различитель — поле 
 | `wash` | — | смыть карму у жреца |
 | `chat` | `{ch:'all'\|'trade'\|'near', text}` | кулдауны 3000 / 10000 / 800 мс |
 | `pm` | `{to, text}` | личное сообщение, кулдаун 400 мс |
-| `dev` | `{x,z,coins,lvl,hp,item,n,xp}` | **только** при `DEV_CMD=1`; в проде отсутствует |
+| `dev` | `{x,z,coins,lvl,hp,item,n,xp,drop}` | **только** при `DEV_CMD=1`; в проде отсутствует |
 
 ## Сервер → клиент
 
 | `t` | полезная нагрузка | когда |
 |---|---|---|
-| `hi` | `{online}` | сразу после соединения (по нему же работает проба `server_probe.gd`) |
+| `hi` | `{online, features:{groundLoot:1}}` | сразу после соединения (по нему же работает проба `server_probe.gd`) |
 | `authok` | `{id, name, token, p, online}` | успешный вход; `p` — профиль целиком |
 | `autherr` | `{reason, kind}` | `kind:"auth"` — клиент забывает токен |
 | `kicked` | — | этим аккаунтом вошли в другом месте; клиент останавливает цикл |
 | `you` | `{p}` | профиль целиком, когда он изменился (`a.dirty`) |
-| `snap` | `{ts, o[], m[], me{}}` | каждый тик, см. ниже |
+| `snap` | `{ts, o[], m[], g[], me{}}` | каждый тик, см. ниже |
 | `ev` | `{e:[…]}` | пачка боевых событий за тик |
 | `mobs` | `{n:[[id, kind], …]}` | виды впервые увиденных мобов — чтобы клиент собрал модели |
 | `look` | `{id, name, look}` | внешний вид игрока при первом появлении и при смене экипировки |
@@ -60,6 +61,7 @@ WebSocket, JSON в каждом кадре, различитель — поле 
 | `chat` | `{ch, from, id, text}` · `pm {from, to, text}` | чат и личка |
 | `chatwait` | `{ch, wait}` · `pmerr {to, reason}` | кулдаун и ошибка лички |
 | `washok`/`washerr` | `{cost}` | смывание кармы |
+| `pickup_err` | `{id, reason}` | отказ подбора без изменения профиля |
 | `pvperr` | — | PvP запрещён (город) |
 
 ### Снапшот
@@ -71,6 +73,7 @@ WebSocket, JSON в каждом кадре, различитель — поле 
 - `m` — мобы: `[id, x, y, z, r, flags, hpPct]`, флаги — битовая маска
   `1 = идёт, 2 = бьёт, 8 = мёртв`. Мёртвые держатся в снапшоте 4 секунды, чтобы доиграла
   анимация смерти (`server/sim/mobs.js:49-51`). Клиент читает ещё бит `4 = кастует` (`actor.gd`).
+- `g` — полный список наземной добычи в видимости: `{id,item,n,x,y,z,ownerName,protectedUntil,expiresAt,available}`. Отсутствующие в следующем снимке ID удаляются с экрана.
 - `me` — своё: `{hp, mp, x, z, dead}`.
 - `ts` — серверное время; по нему клиент оценивает сдвиг часов и рисует чужих на 150 мс в прошлом.
 
@@ -78,11 +81,13 @@ WebSocket, JSON в каждом кадре, различитель — поле 
 
 `hit {m|p, dmg, crit, by?}` · `miss` · `mdie` · `hurt {dmg, dodge?, from|fromP, name, guard?}` ·
 `heal {kind, amount, skill?}` · `cd {id, cd}` · `cast {id, t}` · `cast_fx {id, to?}` ·
-`buff {id, dur}` · `loot {id}` · `kill {mob, name, xp, coins, boss}` · `lvl {lvl}` ·
+`buff {id, dur}` · `loot {id}` · `kill {mob, name, xp, coins, ground, boss}` · `pickup {id, item, n}` · `lvl {lvl}` ·
 `dead {by, loss, pk}` · `move {x, z}` · `ench {ok, color}` · `msg {text, cls}` (`cls` ∈ good/bad/rare).
 
 `pushNear` (`server/server.js:389-392`) дублирует событие всем в радиусе `VIEW`, дописывая
 `by: actorId` — так соседи видят чужой бой.
+
+При `kill.ground:true` опыт уже выдан, а монеты/вещи ещё лежат на земле. Зачисление происходит только после `pickup` и серверного `you`. Получение награды сразу сохраняется в SQLite, при неудаче записи предмет возвращается на землю. Право привязано к аккаунту на 20 с, затем подбор общий, исчезновение через 5 минут; неподнятая добыча не переживает рестарт. Источник чисел — `src/loot.js`. Полное описание: [GROUND_LOOT](docs/GROUND_LOOT.md).
 
 ## Что важно помнить
 

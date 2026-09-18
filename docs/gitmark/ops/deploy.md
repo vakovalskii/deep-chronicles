@@ -20,16 +20,16 @@ links:
 DEPLOY_HOST=... bash deploy/deploy.sh
 ```
 
-Что делает [`deploy/deploy.sh`](deploy/deploy.sh):
+Актуальный конвейер: `deploy/deploy.sh` → `deploy/release.mjs` → `deploy/promote.sh`.
 
-1. **Сначала `npm test`** — на красных тестах выкладка не начинается.
-2. rsync: `dist/` → `/opt/realms/dist/`, `server/` (без `data`) → `/opt/realms/server/`,
-   `src/` → `/opt/realms/src/`, плюс `package.json` и `package-lock.json`.
-3. scp юнита в `/etc/systemd/system/realms-ws.service`.
-4. На хосте: `npm ci --omit=dev` → `daemon-reload` → `enable` → `restart` → `is-active`.
+1. Native/server/web проверки (`native:verify --headless --offline --web`). С `--verified` допускается готовый успешный отчёт; все хеши входов, результатов и набор файлов проверяются заново.
+2. Готовые код и web-статика загружаются в `/opt/realms/releases/<commit-time>/`; зависимости устанавливаются в staging.
+3. Сохраняются архив предыдущего кода и локальная серверная SQLite-копия; служба останавливается для замены кода. Рабочая БД не приезжает с компьютера и не заменяется.
+4. После старта проверяется локальное `hi.features.groundLoot:1`, затем внешний TLS из Godot. При сбое promotion код откатывается. Успешный результат записывается в `.native-run/deployment.json`.
 
-Быстрая правка без тестов — [`deploy/quick.sh`](deploy/quick.sh): `npx vite build` + rsync
-`dist/`; с флагом `--ws` заодно шлёт `server/`, `src/` и перезапускает службу.
+`npm run native:verify -- --web --build=macos` → `npm run deploy -- --verified` позволяет сначала проверить и собрать клиент, затем выпустить те же проверенные файлы. Подробности: [NATIVE_PIPELINE](docs/NATIVE_PIPELINE.md).
+
+`deploy/quick.sh` остаётся старым ручным путём без резервной копии и полной приёмки; для изменения протокола использовать новый конвейер.
 
 ## Что где на хосте
 
@@ -55,6 +55,10 @@ DEPLOY_HOST=... bash deploy/deploy.sh
   Удалять базу — значит обнулить прогресс всем.
 - Сейв версии, отличной от `SAVE_VERSION`, молча пересоздаётся. Поднимая версию, считайте,
   что персонажи будут сброшены.
+
+## Выпуск дропа 18.09.2026
+
+Релиз `b9c7fe7dcbd8-20260918T074147720Z` обновил основной сервер и совместимый web-клиент. Внешняя проверка Godot подтвердила TLS и `groundLoot:1`. Сборки macOS/Windows подготовлены локально. Неподнятый дроп живёт до рестарта мира; поднятая награда сохранена в профиле.
 
 ## Открытый хвост
 

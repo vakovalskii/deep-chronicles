@@ -40,6 +40,7 @@ try {
   const validArgs = ['--release', '--headless', '--offline', '--touch', '--debug'];
   for (const arg of args) if (!validArgs.includes(arg) && !arg.startsWith('--build=')) throw Error(`Unknown pipeline option: ${arg}. Browser gameplay is retired.`);
   if (release && (target || args.includes('--debug'))) throw Error('--release cannot be combined with --build or --debug');
+  if (release && process.platform !== 'darwin') throw Error('The combined macOS + Windows release requires macOS; use --build=windows on Windows');
   if (!report.godot?.startsWith('4.7.2.stable')) throw new Error('Pipeline requires Godot 4.7.2 stable and matching export templates.');
   if (!process.version.startsWith('v22.')) throw new Error('Pipeline requires Node.js 22; see .nvmrc.');
   if (target && !['macos', 'windows', 'android', 'ios'].includes(target)) throw new Error('Build target must be macos, windows, android, or ios.');
@@ -47,6 +48,7 @@ try {
   await step('rules', process.execPath, ['--test', 'tests/unit.test.js', 'tests/progression.test.js']);
   await step('server', process.execPath, ['--no-warnings', '--test', 'tests/server.test.js']);
   await step('client-server', process.execPath, ['tools/godot/test.mjs', ...(args.includes('--headless') ? ['--headless'] : []), ...(args.includes('--touch') ? ['--touch'] : [])]);
+  if (release) await step('touch-client-server', process.execPath, ['tools/godot/test.mjs', '--touch', ...(args.includes('--headless') ? ['--headless'] : [])]);
   for (const file of ['godot/generated/catalog.json', 'godot/generated/world.json', 'godot/generated/heights.bin']) report.outputs[file] = digest(file);
   await step('weapons', godotBinary(), [...(args.includes('--headless') ? ['--headless'] : []), '--path', 'godot', '--script', 'res://tests/weapons.gd', '--', '--test-mode', `--output=${directory}/weapons.png`]);
   if (!args.includes('--offline')) await step('main-server', process.execPath, ['tools/godot/probe.mjs']);
@@ -55,6 +57,7 @@ try {
     for (const platform of ['macos', 'windows']) {
       await step(`build-${platform}`, process.execPath, ['tools/godot/build.mjs', platform]);
     }
+    await step('packaged-client', process.execPath, ['tools/godot/test.mjs', '--built', ...(args.includes('--headless') ? ['--headless'] : [])]);
     for (const file of ['godot/builds/macos/Хроники Глубин.zip', 'godot/builds/windows/Хроники Глубин.exe', 'godot/builds/windows/khroniki-glubin-windows.zip']) report.outputs[file] = digest(file);
     await step('site-build', process.execPath, ['tools/site/build.mjs']);
     await step('site-check', process.execPath, ['tests/site.mjs']);

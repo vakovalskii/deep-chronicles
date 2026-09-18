@@ -73,7 +73,7 @@ wss.on('connection', (ws, req) => {
   const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
   const p = { id: ++seq, ws, name: null, key: null, a: null, known: new Set(), knownMobs: new Set(), lastChat: {}, stN: 0, stT: 0 };
   players.set(p.id, p);
-  send(p, { t: 'hi', online: online(), features: { groundLoot: 1, progression: 1, autoloot: 1, crafting: 1, nativeOnly: 1, heartbeat: 1 } });
+  send(p, { t: 'hi', online: online(), features: { groundLoot: 1, progression: 1, autoloot: 1, crafting: 1, nativeOnly: 1, heartbeat: 1, combatTelegraphs: 1 } });
   ws.on('message', (raw) => {
     let m; try { m = JSON.parse(raw); } catch { return; }
     if (!m || typeof m !== 'object') return;
@@ -102,7 +102,7 @@ wss.on('connection', (ws, req) => {
       // выбор цели и автоатака: hold — просто взять на прицел, не нападая
       case 'atk': {
         if (a.dead) return;
-        if (m.id == null) { a.attacking = false; a.target = null; return; }
+        if (m.id == null) { a.swing = null; a.attacking = false; a.target = null; return; }
         a.target = m.kind === 'p' ? { p: m.id | 0 } : { m: m.id | 0 };
         a.attacking = !m.hold;
         return;
@@ -230,7 +230,7 @@ function damageMob(a, mb, dmg, crit, now) {
 function damagePlayer(mb, a, now) {
   if (a.dead) return;
   const s = PL.statsOf(a, now);
-  if (Math.random() < evaChance(mb.def.lvl, s.eva)) return a.out.push({ k: 'hurt', dodge: true });
+  if (Math.random() < evaChance(mb.def.lvl, s.eva)) return a.out.push({ k: 'hurt', dodge: true, from: mb.id });
   const { d } = calcDmg(mb.def.patk, s.pdef, 1, 0.05);
   a.P.hp -= d;
   a.out.push({ k: 'hurt', dmg: d, from: mb.id });
@@ -314,15 +314,27 @@ function applySkill(a, id, ref, now) {
 // автоатака: сервер сам отбивает удары, пока цель в радиусе
 function autoAttack(a, dt, now) {
   a.atkTimer -= dt;
-  if (!a.attacking || a.dead || a.cast) return;
+  if (!a.attacking || a.dead || a.cast) { a.swing = null; return; }
   const t = targetPos(a.target);
-  if (!alive(t)) { a.attacking = false; return; }
+  if (!alive(t)) { a.attacking = false; a.swing = null; return; }
   const s = PL.statsOf(a, now);
-  if (flatDist(a, t) > s.range + targetRadius(a.target) + LAG_M) return; // клиент ещё идёт к цели
-  if (PL.inTown(a)) { a.attacking = false; return PL.say(a, 'В городе сражаться нельзя', 'bad'); }
-  if (a.atkTimer > 0) return;
-  a.atkTimer = 1 / s.aspd;
+  if (flatDist(a, t) > s.range + targetRadius(a.target) + LAG_M) { a.swing = null; return; } // клиент ещё идёт к цели
+  if (PL.inTown(a)) { a.swing = null; a.attacking = false; return PL.say(a, 'В городе сражаться нельзя', 'bad'); }
+  const targetKey = JSON.stringify(a.target);
+  if (a.swing && a.swing.target !== targetKey) a.swing = null;
+  if (!a.swing) {
+    if (a.atkTimer > 0) return;
+    a.atkTimer = 1 / s.aspd;
+    const windup = Math.min(0.32, a.atkTimer * 0.32);
+    a.swing = { target: targetKey, remaining: windup };
+    pushNear(a, { k: 'attack_start', t: Math.min(0.75, a.atkTimer * 0.88), to: { ...a.target } });
+    return;
+  }
+  a.swing.remaining -= dt;
+  if (a.swing.remaining > 0) return;
+  a.swing = null;
   const mage = a.P.cls === 'mage';
+  pushNear(a, { k: 'attack_release', to: { ...a.target } });
   if (a.target.p != null) {
     const crit = Math.random() < s.crit ? 1 : 0;
     damageActor(a, t, mage ? s.matk * 0.6 : s.patk, 1, mage ? 'm' : 'p', crit, now);
@@ -447,7 +459,10 @@ setInterval(() => {
   const list = actors();
   // мобы
   const view = list.map((a) => ({ id: a.id, x: a.x, z: a.z, dead: a.dead, inTown: PL.inTown(a) }));
-  world.tick(dt, view, now, (mb, pv) => { const a = players.get(pv.id)?.a; if (a) damagePlayer(mb, a, now); });
+  world.tick(dt, view, now, (mb, pv) => { const a = players.get(pv.id)?.a; if (a) damagePlayer(mb, a, now); }, (mb, phase, attack, landed) => {
+    const event = { k: `mob_${phase}`, m: mb.id, p: attack.target, t: attack.duration, x: attack.x, z: attack.z, r: attack.r, reach: attack.reach, arc: attack.arc, landed };
+    for (const a of list) if (flatDist(a, mb) < VIEW) a.out.push(event);
+  });
   guardsTick(now);
   // игроки
   for (const a of list) {

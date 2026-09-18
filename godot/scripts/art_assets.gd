@@ -25,14 +25,17 @@ static func actor(id: String) -> Node3D:
 			source_scene.free()
 		var player = AnimationPlayer.new(); player.name = "AnimationPlayer"; result.add_child(player)
 		var library = AnimationLibrary.new()
-		var clips = {"idle": "Idle", "walk": "Jog_Fwd", "slow_walk": "Walk", "attack": "Sword_Attack", "cast": "Spell_Simple_Idle", "cast_enter": "Spell_Simple_Enter", "release": "Spell_Simple_Shoot", "hit": "Hit_Chest", "death": "Death01"}
+		var clips = {"idle": "Idle", "walk": "Walk", "run": "Sprint", "attack": "Sword_Attack", "attack_alt": "Sword_Attack", "cast": "Spell_Simple_Idle", "cast_enter": "Spell_Simple_Enter", "release": "Spell_Simple_Shoot", "hit": "Hit_Chest", "death": "Death01"}
 		if id in ["warrior", "warrior_chain"]: clips.idle = "Sword_Idle"
 		if id in ["mage", "gatekeeper", "priest", "wraith", "lich"]: clips.idle = "Spell_Simple_Idle"
 		if id == "mage": clips.attack = "Spell_Simple_Shoot"
 		if id == "merchant": clips.idle = "Idle_Talking"
+		if id in ["goblin", "orc", "ghoul", "treant", "golem"]:
+			clips.attack = "Punch_Cross"; clips.attack_alt = "Punch_Jab"; clips.idle = "Idle"
+		if id in ["wraith", "lich"]: clips.attack = "Spell_Simple_Shoot"; clips.attack_alt = "Spell_Simple_Shoot"
 		for key in clips:
 			var clip = canonical_clips[clips[key]].duplicate()
-			clip.loop_mode = Animation.LOOP_LINEAR if key in ["idle", "walk", "slow_walk", "cast"] else Animation.LOOP_NONE
+			clip.loop_mode = Animation.LOOP_LINEAR if key in ["idle", "walk", "run", "cast"] else Animation.LOOP_NONE
 			library.add_animation(key, clip)
 		player.add_animation_library("", library)
 	else:
@@ -43,16 +46,15 @@ static func actor(id: String) -> Node3D:
 				var source_name = entry.clips[key]
 				if not player.has_animation(source_name): continue
 				var clip = player.get_animation(source_name).duplicate()
-				clip.loop_mode = Animation.LOOP_LINEAR if key in ["idle", "walk", "slow_walk", "cast"] else Animation.LOOP_NONE
+				clip.loop_mode = Animation.LOOP_LINEAR if key in ["idle", "walk", "run", "cast"] else Animation.LOOP_NONE
 				library.add_animation(key, clip)
 			for key in player.get_animation_library_list(): player.remove_animation_library(key)
 			player.add_animation_library("", library)
 	var box = aabb(result)
 	var factor = float(entry.get("height", 2.4)) / maxf(box.size.y, 0.01)
-	# Median stance-foot Z velocity measured from the canonical clips, in rig units/sec.
 	if entry.get("rig", "") == "canonical":
 		result.set_meta("gait_walk_speed",1.04985*factor)
-		result.set_meta("gait_run_speed",5.13307*factor)
+		result.set_meta("gait_run_speed",6.81539*factor)
 	result.scale = Vector3.ONE * factor
 	result.position = Vector3(-box.get_center().x, -box.position.y, -box.get_center().z) * factor
 	result.rotation.y = float(entry.get("yaw", 0))

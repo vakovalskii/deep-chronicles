@@ -357,3 +357,44 @@ test('порт и храм: поверхность движения совпад
   assert.equal(heightAt(-364,324),12);
   assert.ok(heightAt(-290,410)<-6.5,'вода должна закрывать дно');
 });
+
+
+test('замах моба даёт время выйти из сектора; направление и жертва зафиксированы', () => {
+  const m = newMob(991, { mob: 'orc', x: 1000, z: 1000 }, () => 0.5);
+  const victim = { id: 71, x: 1000, z: 1002, dead: false, inTown: false };
+  const bystander = { id: 72, x: 1000, z: 1002, dead: false, inTown: false };
+  const hits = [], phases = [];
+  const ctx = { now: 1000, players: [victim, bystander], onHit: (_, p) => hits.push(p.id), onAttack: (_, phase, attack, landed) => phases.push({ phase, landed }) };
+  m.state = 'chase'; m.target = victim.id;
+  mobStep(m, ctx, .1);
+  assert.equal(phases[0].phase, 'windup'); assert.equal(hits.length, 0);
+  const r = m.r;
+  for (let i = 0; i < 3; i++) mobStep(m, ctx, .1);
+  assert.equal(hits.length, 0, 'урон не должен опережать замах');
+  victim.z = 998;
+  for (let i = 0; i < 4; i++) mobStep(m, ctx, .1);
+  assert.equal(hits.length, 0, 'уход за спину должен избежать урона, сосед не подменяет жертву');
+  assert.equal(m.r, r, 'моб не доворачивается во время замаха');
+  assert.deepEqual(phases.at(-1), { phase: 'strike', landed: false });
+  victim.z = 1002; m.atkCd = 0;
+  mobStep(m, ctx, .1);
+  for (let i = 0; i < 7; i++) mobStep(m, ctx, .1);
+  assert.deepEqual(hits, [71]);
+  assert.deepEqual(phases.at(-1), { phase: 'strike', landed: true });
+});
+
+test('замах отменяется при смерти цели/выходе в город; респавн не хранит старую атаку', () => {
+  for (const condition of ['dead', 'inTown', 'disconnected']) {
+    const m = newMob(992, { mob: 'wolf', x: 1000, z: 1000 }, () => .5);
+    const victim = { id: 71, x: 1000, z: 1002, dead: false, inTown: false };
+    const phases = [];
+    const ctx = { now: 1000, players: [victim], onHit: () => assert.fail('отменённая атака нанесла урон'), onAttack: (_, phase) => phases.push(phase) };
+    m.state = 'chase'; m.target = victim.id; mobStep(m, ctx, .1);
+    if (condition === 'disconnected') ctx.players = []; else victim[condition] = true;
+    for (let i = 0; i < 10; i++) mobStep(m, ctx, .1);
+    assert.deepEqual(phases, ['windup', 'cancel']); assert.equal(m.windup, null);
+    m.dead = true; m.respawnAt = 0; m.windup = {}; m.atkCd = 10; m.attackT = 1;
+    mobStep(m, ctx, .1);
+    assert.equal(m.windup, null); assert.equal(m.atkCd, 0); assert.equal(m.attackT, 0);
+  }
+});

@@ -21,8 +21,22 @@ export const missChance = (mobLvl, acc) => clamp(0.06 + (mobLvl + 33 - acc) * 0.
 export const evaChance = (mobLvl, eva) => clamp(0.05 + (eva - (mobLvl + 33)) * 0.01, 0.02, 0.3);
 
 export const MOB_ATK_CD = (def) => (def.boss ? 1.4 : 1.8);
-export const MOB_SPEED = (def) => 12 * MOVE_SCALE * (def.boss ? 0.8 : 1);
+export const MOB_SPEED = (def) => 12 * MOVE_SCALE * (def.boss || ['tree', 'golem'].includes(def.shape) ? 0.8 : 1);
 export const mobRadius = (def) => (def.size || 1) * 0.9;
+// Замах фиксирует направление. Игрок успевает выйти из сектора до удара;
+// клиент рисует ровно эти параметры, но попадание проверяется только здесь.
+export const mobAttack = (def) => ({
+  duration: def.boss || ['tree', 'golem'].includes(def.shape) ? 0.9 : def.shape === 'humanoid' ? 0.7 : 0.55,
+  reach: 2 + mobRadius(def) + 0.6,
+  arc: 2.3,
+});
+export function mobAttackContains(attack, player) {
+  const dx = player.x - attack.x, dz = player.z - attack.z, distance = Math.hypot(dx, dz);
+  if (distance > attack.reach) return false;
+  if (distance < 0.3) return true;
+  const angle = Math.atan2(dx, dz) - attack.r;
+  return Math.abs(Math.atan2(Math.sin(angle), Math.cos(angle))) <= attack.arc / 2;
+}
 
 // опыт с понижением за мобов сильно ниже игрока
 export function xpForKill(mobDef, heroLvl) {
@@ -79,7 +93,7 @@ export function newMob(id, spawn, rng = Math.random) {
     home: { x: spawn.x, z: spawn.z },
     x: spawn.x, y: heightAt(spawn.x, spawn.z), z: spawn.z, r: rand(0, 6.28, rng),
     hp: def.hp, state: 'idle', target: null, atkCd: 0, wanderT: rand(1, 6, rng), dest: null,
-    dead: false, respawnAt: 0, diedAt: 0, moving: false, attackT: 0, hitBy: new Map(),
+    dead: false, respawnAt: 0, diedAt: 0, moving: false, attackT: 0, windup: null, hitBy: new Map(),
   };
 }
 
@@ -89,12 +103,30 @@ export function mobStep(m, ctx, dt) {
   if (m.dead) {
     if (ctx.now > m.respawnAt) {
       m.dead = false; m.hp = m.def.hp; m.state = 'idle'; m.target = null;
+      m.windup = null; m.atkCd = 0; m.attackT = 0; m.moving = false;
       m.x = m.home.x; m.z = m.home.z; m.y = heightAt(m.x, m.z); m.hitBy.clear();
     }
     return false;
   }
   m.moving = false;
   m.attackT = Math.max(0, m.attackT - dt * 3);
+  m.atkCd = Math.max(0, m.atkCd - dt);
+  if (m.windup) {
+    const attack = m.windup;
+    const victim = ctx.players.find(p => p.id === attack.target && !p.dead && !p.inTown);
+    if (!victim || flatDist(m, m.home) > 60 || m.state !== 'chase') {
+      m.windup = null; ctx.onAttack?.(m, 'cancel', attack, false);
+    } else {
+      attack.remaining -= dt;
+      if (attack.remaining <= 1e-6) {
+        m.windup = null; m.attackT = 1;
+        const landed = mobAttackContains(attack, victim);
+        ctx.onAttack?.(m, 'strike', attack, landed);
+        if (landed) ctx.onHit(m, victim);
+      }
+      return true;
+    }
+  }
   const radius = mobRadius(m.def), speed = MOB_SPEED(m.def);
   // цель: та, что уже выбрана, иначе ближайший живой игрок вне города
   const cur = m.target != null ? ctx.players.find((p) => p.id === m.target) : null;
@@ -119,11 +151,15 @@ export function mobStep(m, ctx, dt) {
       const reach = 2 + radius;
       if (nd > reach) {
         const dx = near.x - m.x, dz = near.z - m.z, L = Math.hypot(dx, dz) || 1;
-        moveEntity(m, dx / L, dz / L, speed * dt, radius); m.r = Math.atan2(dx, dz); m.moving = true;
+        moveEntity(m, dx / L, dz / L, Math.min(speed * dt, Math.max(0, L - reach * 0.95)), radius); m.r = Math.atan2(dx, dz); m.moving = true;
       } else {
         m.r = Math.atan2(near.x - m.x, near.z - m.z);
-        m.atkCd -= dt;
-        if (m.atkCd <= 0) { m.atkCd = MOB_ATK_CD(m.def); m.attackT = 1; ctx.onHit(m, near); }
+        if (m.atkCd <= 0) {
+          const attack = mobAttack(m.def);
+          m.atkCd = MOB_ATK_CD(m.def);
+          m.windup = { ...attack, remaining: attack.duration, target: near.id, x: m.x, z: m.z, r: m.r };
+          ctx.onAttack?.(m, 'windup', m.windup, false);
+        }
       }
     }
   } else if (m.state === 'return') {

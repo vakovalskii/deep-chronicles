@@ -36,6 +36,10 @@ func wait_for(condition: Callable, seconds = 8.0) -> bool:
 		await create_timer(0.03).timeout
 	return false
 
+func wait_wall(seconds: float):
+	var deadline = Time.get_ticks_msec() + int(seconds * 1000)
+	await wait_for(func(): return Time.get_ticks_msec() >= deadline, seconds + 2)
+
 func _poll_peer():
 	if not peer: return
 	peer.poll()
@@ -75,6 +79,24 @@ func _run():
 	for row in data.world.modelPlacements:
 		if not ResourceLoader.exists("res://assets/props/%s.glb" % row[0]): assets_ok = false
 	check(assets_ok, "all hero, NPC, mob rigs and placed scenery assets exist")
+	var animated_creatures = true
+	for id in ["wolf", "boar", "rabbit", "spider", "scorpion"]:
+		var creature = art.actor(id); root.add_child(creature)
+		var player = creature.find_child("AnimationPlayer", true, false)
+		var skeleton = creature.find_child("Skeleton3D", true, false)
+		for clip in ["idle", "walk", "run", "windup", "attack", "cast", "hit", "death"]:
+			if not player.has_animation(clip): animated_creatures = false
+		player.play("run"); player.seek(0.12, true); player.advance(0)
+		var poses = []
+		for i in skeleton.get_bone_count(): poses.append(skeleton.get_bone_pose_rotation(i))
+		player.seek(0.42, true); player.advance(0)
+		var changed = 0
+		for i in skeleton.get_bone_count():
+			if not poses[i].is_equal_approx(skeleton.get_bone_pose_rotation(i)): changed += 1
+		if changed < 4: animated_creatures = false; print("Frozen creature rig: ", id, " changed=", changed)
+		creature.free()
+	check(animated_creatures, "five creature rigs have eight clips and articulated legs actually change pose")
+
 	game = load("res://scenes/main.tscn").instantiate(); root.add_child(game); current_scene = game
 	net.message.connect(func(m): received.append(m))
 	check(await wait_for(func(): return net.online), "Godot WebSocket connects to Node server")
@@ -95,11 +117,23 @@ func _run():
 		game.hero.position = region[0]
 		game.world.set_region(region[0]); game.world._process(10)
 		game.game_audio.follow(game.hero, game.camera, 2)
-		check(game.world.region_id == region[1] and game.game_audio.ambience_id == region[1] and game.game_audio.ambience.playing, "light and ambience match " + region[1])
+		check(game.world.region_id == region[1] and game.game_audio.ambience.playing, "light and ambience match " + region[1])
 	game.game_audio.clear()
-	check(game.game_audio.ambience_layers.values().all(func(layer): return not layer.playing), "all regional ambience stops on clear")
+	check(not game.game_audio.ambience.playing, "ambience stops on clear")
 	game.hero.position = saved_position; game.world.set_region(saved_position); game.world._process(10)
 	check(await wait_for(func(): return not game.mobs.is_empty()), "nearby mobs arrive as snapshots")
+	var tab = InputEventKey.new(); tab.physical_keycode = KEY_TAB; tab.keycode = KEY_TAB; tab.pressed = true
+	root.push_input(tab, true); await process_frame
+	check(game.hud.window_kind == "inventory", "real Tab opens the bag before GUI focus navigation")
+	root.push_input(tab, true); await process_frame
+	check(game.hud.window_kind.is_empty(), "Tab closes the bag on the second press")
+	game.hud.chat_input.grab_focus(); root.push_input(tab, true); await process_frame
+	check(game.hud.window_kind.is_empty(), "Tab while editing chat does not open inventory")
+	var focus = root.gui_get_focus_owner()
+	if focus: focus.release_focus()
+	await _test_audio_bank()
+	await _test_locomotion()
+
 	await create_timer(0.2).timeout
 	for kind in ["inventory", "character", "map", "shop", "teleport", "priest", "menu", "skills", "settings", "controls", "actions", "equipment", "craft"]:
 		game.hud.show_window(kind)
@@ -124,6 +158,11 @@ func _run():
 			slider.value = 0
 			check(AudioServer.is_bus_mute(AudioServer.get_bus_index("Effects")) and game.hud.Settings.read_value("audio", "Effects", -1) == 0, "sound slider mutes the real effects bus and persists independently")
 			slider.value = 65
+	for slider in game.hud.window.find_children("*", "HSlider", true, false):
+		if slider.get_meta("audio_bus", "") == "Music":
+			slider.value = 0
+			check(AudioServer.is_bus_mute(AudioServer.get_bus_index("Music")) and not AudioServer.is_bus_mute(AudioServer.get_bus_index("Effects")), "music slider mutes only music and leaves combat sounds audible")
+			slider.value = 45
 	game.hud.close_window()
 	check(game.hud.skill_buttons[0].get_global_rect().intersects(game.get_viewport().get_visible_rect()), "hotbar is inside viewport")
 	game.hud.log_line("system-only-marker", "rewards")
@@ -153,6 +192,7 @@ func _run():
 	_test_gait()
 	check(game.hud.pickup_button.visible and game.hud.pickup_button.text.contains("Поднять"), "pickup has an explicit permanent action button")
 	await _screenshot("chat-actions.png")
+	var fixes_before_move = received.filter(func(m): return m.t == "fix").size()
 	var start = game.hero.position
 	game.joystick = Vector2.RIGHT
 	await create_timer(0.35).timeout
@@ -163,7 +203,7 @@ func _run():
 	await create_timer(.15).timeout
 	check(game.hero.position.distance_to(stopped_at)<.01 and not game.hero.moving and game.hero.last_clip == "idle", "releasing movement stops position and gait without drifting")
 	var fixes = received.filter(func(m): return m.t == "fix").size()
-	check(fixes == 0, "server accepts native movement speed")
+	check(fixes == fixes_before_move, "server accepts native movement speed")
 	await _dev({"x": -435.1, "z": 400})
 	var before_slide = game.hero.position
 	var fixes_before_slide = received.filter(func(m): return m.t == "fix").size()
@@ -178,7 +218,16 @@ func _run():
 	_click("buy", "sword_long")
 	check(await wait_for(func(): return _bag("sword_long") >= 0), "shop purchase is server-authoritative")
 	game.hud.show_window("inventory")
-	_select_bag("sword_long"); _click("item_action", "sword_long")
+	await process_frame; await process_frame
+	var equipment_slots = game.hud.window.find_children("*", "Button", true, false).filter(func(b): return b.has_meta("equipment_slot"))
+	check(equipment_slots.size() == 12 and equipment_slots.all(func(b): return game.hud.window.get_global_rect().encloses(b.get_global_rect())), "all twelve equipment slots fit inside the compact inventory")
+	var source_item
+	var weapon_slot
+	for button in game.hud.window.find_children("*", "Button", true, false):
+		if button.get_meta("equipment_slot", "") == "weapon": weapon_slot = button
+		if button.get("payload") is Dictionary and button.payload.get("id") == "sword_long" and button.payload.has("idx"): source_item = button
+	check(is_instance_valid(source_item) and is_instance_valid(weapon_slot), "bag and equipped weapon expose real drag destinations")
+	if is_instance_valid(source_item) and is_instance_valid(weapon_slot): await _drag(source_item, weapon_slot)
 	check(await wait_for(func(): return game.profile.equip.weapon == "sword_long"), "inventory equip updates character")
 	await _dev({"item": "scroll_ench_w"})
 	_select_bag("scroll_ench_w"); _click("item_action", "scroll_ench_w")
@@ -362,6 +411,7 @@ func _run():
 	check(await wait_for(func(): return game.stats.sets.any(func(entry): return entry.id == "abyss" and entry.have == entry.parts.size())), "complete B mage set activates the shared server-stat bonus")
 	game.hud.show_window("character"); await _screenshot("mage-b-gear.png"); game.hud.close_window()
 	await _test_combat_presentation()
+	await _test_mob_telegraph()
 	# Real screenshot from the rendering backend, when running with a display.
 	if DisplayServer.get_name() != "headless":
 		await RenderingServer.frame_post_draw
@@ -374,7 +424,7 @@ func _run():
 	check(await wait_for(func(): return game.profile.is_empty() and net.stopped), "login on another device stops automatic reconnect")
 	await create_timer(1.2).timeout
 	check(game.hud.login_message.text.contains("другого устройства") and not net.authed, "duplicate-login reason remains visible without a reconnect loop")
-	check(game.hud.login_online.text.contains("нет связи") and game.combat_fx.active.is_empty() and not game.game_audio.ambience.playing, "logout clears effects, ambience and the stale online count")
+	check(game.hud.login_online.text.contains("нет связи") and game.combat_fx.active.is_empty() and not game.game_audio.ambience.playing and game.game_audio.music.players.all(func(p): return not p.playing), "logout clears music, effects, ambience and the stale online count")
 	_finish()
 
 func _test_combat_presentation():
@@ -407,6 +457,125 @@ func _test_combat_presentation():
 	check(game.combat_fx.active.size() <= 40 and game.game_audio.voices.size() == 24, "dense combat caps effect instances and audio voices")
 	game.combat_fx.clear()
 	await create_timer(0.5).timeout
+
+func _test_audio_bank():
+	var audio = game.game_audio
+	check(audio.music.cue == "music_town" and audio.music.players[audio.music.current_voice].playing, "town has an independently mixed authored music track")
+	var loaded = 0
+	var valid = true
+	for variants in audio.variants.values():
+		for stream in variants:
+			loaded += 1
+			if not stream or stream.get_length() <= 0: valid = false
+	check(valid and loaded == 67, "all 67 licensed recordings and music tracks decode as real audio streams")
+	var limiter_found = false
+	for i in AudioServer.get_bus_effect_count(0):
+		var effect = AudioServer.get_bus_effect(0, i)
+		if effect is AudioEffectHardLimiter and effect.ceiling_db <= -1: limiter_found = true
+	check(limiter_found, "the actual master bus limits overlapping combat peaks to -1 dB")
+	audio.play_at("swing", game.hero.position)
+	var first = audio.last_variant.get("swing", -1)
+	# Cooldowns use monotonic wall time; headless frame timers may run ahead.
+	var next_swing_at = Time.get_ticks_msec() + 80
+	await wait_for(func(): return Time.get_ticks_msec() >= next_swing_at)
+	audio.play_at("swing", game.hero.position)
+	check(first >= 0 and audio.last_variant.get("swing", -1) != first, "successive sword swings select different recorded samples")
+	var before = audio.play_counts.get("impact", 0)
+	audio.play_at("impact", game.hero.position + Vector3.RIGHT * 100)
+	check(audio.play_counts.get("impact", 0) == before, "distant combat cannot consume local audio voices")
+	if DisplayServer.get_name() != "headless":
+		var capture = AudioEffectCapture.new(); capture.buffer_length = 1.0
+		var index = AudioServer.get_bus_effect_count(0); AudioServer.add_bus_effect(0, capture)
+		for i in 12: audio.play_at("critical", game.hero.position + Vector3(i % 4, 0, floori(i / 4.0)) * 1.2)
+		await create_timer(0.25).timeout
+		var samples = capture.get_buffer(capture.get_frames_available())
+		var peak = 0.0; var finite = true
+		for sample in samples:
+			finite = finite and is_finite(sample.x) and is_finite(sample.y)
+			peak = maxf(peak, maxf(absf(sample.x), absf(sample.y)))
+		check(samples.size() > 0 and finite and peak > 0 and peak <= 0.9, "rendered audio reaches the mixer without NaNs, silence or clipping")
+		AudioServer.remove_bus_effect(0, index)
+
+func _test_locomotion():
+	await _dev({"x": -448, "z": 418})
+	var start = game.hero.position
+	var direction = Vector3.ZERO
+	for i in 16:
+		var trial = Vector3(sin(i * TAU / 16), 0, cos(i * TAU / 16))
+		var candidate = start + trial * 16
+		if data.move(candidate, Vector3.ZERO, 0.01).distance_to(candidate) < 0.1:
+			direction = trial; break
+	game.destination = start + direction * 16; game.has_destination = true
+	check(await wait_for(func(): return game.hero.moving and game.hero.last_clip == "run"), "actual click movement selects the full-body sprint clip")
+	await create_timer(0.2).timeout
+	check(game.hero.motion_speed > 5 and game.hero.motion_speed <= float(game.stats.speed) * 1.05 and game.stats.speed < 20, "running speed is reduced and animation follows measured displacement")
+	var skeleton = game.hero.model.find_child("Skeleton3D", true, false)
+	var bone = skeleton.find_bone("DEF-foot.L")
+	var pose = skeleton.get_bone_global_pose(bone)
+	await create_timer(0.11).timeout
+	check(not pose.is_equal_approx(skeleton.get_bone_global_pose(bone)), "the running skeleton moves its feet between real rendered frames")
+	await _screenshot("motion-running.png")
+	check(await wait_for(func(): return not game.has_destination), "hero reaches the clicked point with the slower server-compatible speed")
+	await create_timer(0.2).timeout
+	var steps = game.game_audio.play_counts.get("step_concrete", 0)
+	check(steps > 0, "distance-driven recorded stone footsteps accompany the run")
+	await create_timer(0.4).timeout
+	check(game.game_audio.play_counts.get("step_concrete", 0) == steps and game.hero.last_clip == "idle", "stopping stops both steps and running animation")
+
+func _test_mob_telegraph():
+	var spawn
+	for entry in data.world.spawns:
+		if entry.mob == "orc": spawn = entry; break
+	if not spawn: check(false, "orc spawn exists"); return
+	await _dev({"x": spawn.x, "z": spawn.z + 5, "hp": 500})
+	game.camera_distance = 13; game.camera_pitch = 0.48
+	var orc_id = data.world.spawns.find(spawn) + 1
+	check(await wait_for(func(): return game.mobs.has(orc_id) and game.mobs[orc_id].visible), "the live orc position arrives after entering its zone")
+	if not game.mobs.has(orc_id): return
+	var live_orc = game.mobs[orc_id]
+	var warning = {}
+	var from_message = received.size()
+	# Mobs wander: use their live position, never assume they stayed at a spawn.
+	# Choose a clear exit corridor, otherwise a tree can block a legitimate dodge.
+	var escape = Vector3.ZERO
+	for i in 32:
+		var direction = Vector3(sin(i * TAU / 32), 0, cos(i * TAU / 32))
+		var clear_path = true
+		for step in range(4, 25):
+			var point = data.position_at(live_orc.position.x + direction.x * step * 0.5, live_orc.position.z + direction.z * step * 0.5)
+			if data.move(point, Vector3.ZERO, 0.01).distance_to(point) > 0.05: clear_path = false; break
+		if clear_path: escape = direction; break
+	check(escape != Vector3.ZERO, "telegraph fixture has a collision-free escape corridor")
+	if escape == Vector3.ZERO: return
+	# No fixed delay here: react to the event without consuming half its wind-up.
+	net.send({"t": "dev", "x": live_orc.position.x + escape.x * 2, "z": live_orc.position.z + escape.z * 2, "hp": 500})
+	check(await wait_for(func():
+		for packet in received.slice(from_message):
+			if packet.t == "ev":
+				for event in packet.e:
+					if event.k == "mob_windup" and int(event.p) == game.own_id: warning.merge(event, true); return true
+		return false, 10), "an aggressive server mob announces its wind-up before damage")
+	if warning.is_empty(): return
+	var mob = game.mobs.get(int(warning.m))
+	game.set_target(mob)
+	check(is_instance_valid(mob) and mob.winding_up and game.combat_fx.telegraphs.has(mob.get_instance_id()), "server wind-up drives the monster pose and the matching ground sector")
+	check(game.game_audio.music.combat_remaining > 0, "a real mob threat switches the local music into combat")
+	await create_timer(0.05).timeout
+	check(game.game_audio.music.duck_db < 0 and game.game_audio.music.cue == "music_battle", "battle theme crossfades and ducks below attack sounds")
+	await _screenshot("mob-windup.png")
+	# Real client movement, not a developer warp: leave the fixed sector.
+	game.destination = game.hero.position + escape * 14
+	game.has_destination = true
+	var strike = {}
+	check(await wait_for(func():
+		for packet in received.slice(from_message):
+			if packet.t == "ev":
+				for event in packet.e:
+					if event.k == "mob_strike" and int(event.m) == int(warning.m): strike.merge(event, true); return true
+		return false, 3), "server resolves the telegraphed attack")
+	check(not strike.get("landed", true), "running out of the telegraph avoids the actual server hit")
+	await _dev({"x": -448, "z": 418, "hp": 500})
+	check(game.combat_fx.telegraphs.is_empty(), "teleport clears all monster warning geometry")
 
 func _bag(id: String) -> int:
 	for i in game.profile.inv.size():
@@ -499,14 +668,16 @@ func _test_chat_channels():
 	check(await wait_for(func(): return chat.history.any(func(m): return m.text == "peer incoming public")), "incoming public chat is retained while another tab is active")
 	check(not chat.log_view.get_parsed_text().contains("peer incoming public") and chat.unread.all > 0, "inactive tab filters messages and shows unread count")
 	chat.select_channel("all"); check(chat.unread.all == 0, "reading a tab clears its unread count")
+	# The server's PM rate limit uses real time, independent of headless frame dt.
+	await wait_wall(0.45)
 	chat.select_channel("pm"); chat.recipient.text = ""; chat.input.text = '"NativePeer quoted whisper'; chat.submit()
 	check(await wait_for(func(): return peer_inbox.any(func(m): return m.t == "pm" and m.text == "quoted whisper")), "quoted recipient command works from an empty PM tab")
-	await create_timer(0.45).timeout
+	await wait_wall(0.45)
 	peer.send_text(JSON.stringify({"t": "pm", "to": "NativeTest", "text": "peer reply"}))
 	check(await wait_for(func(): return chat.log_view.get_parsed_text().contains("peer reply")), "incoming whisper is shown in the PM tab")
 	chat.input.text = "/r native answer"; chat.submit()
 	check(await wait_for(func(): return peer_inbox.any(func(m): return m.t == "pm" and m.text == "native answer")), "reply command selects the last correspondent")
-	await create_timer(0.45).timeout
+	await wait_wall(0.45)
 	chat.input.text = "/w Nobody no recipient online"; chat.submit()
 	check(await wait_for(func(): return chat.system_view.get_parsed_text().contains("Nobody: не в сети")), "offline recipient error appears in the system pane")
 	chat.select_channel("all")
@@ -538,11 +709,12 @@ func _test_chat_scroll():
 func _test_gait():
 	var actor = load("res://scripts/actor.gd").new(); actor.kind = "p"; add_child(actor); actor.setup("warrior","Проверка движения"); actor.set_process(false)
 	actor.position = Vector3(.1,0,0); actor.measure_motion(Vector3.ZERO,.1); actor._process(.01)
-	check(actor.last_clip == "slow_walk" and actor.animator.speed_scale < 1, "slow actual travel selects a calibrated walking clip")
+	check(actor.last_clip == "walk" and actor.animator.speed_scale < 1, "slow actual travel selects a calibrated walking clip")
 	actor.position = Vector3(.6,0,0); actor.measure_motion(Vector3.ZERO,.1); actor._process(.01)
-	check(actor.last_clip == "walk" and absf(actor.animator.speed_scale - 6.0/float(actor.model.get_meta("gait_run_speed")))<.01, "jog playback follows measured displacement")
+	check(actor.last_clip == "run" and absf(actor.animator.speed_scale - 6.0/float(actor.model.get_meta("gait_run_speed")))<.01, "jog playback follows measured displacement")
+	actor.position = Vector3(1.2,0,0); actor.measure_motion(Vector3(.6,0,0),.1)
 	actor.play_action("attack",.6); actor._process(.01)
-	check(actor.last_clip == "walk" and actor.action_until == 0, "moving cancels full-body attack presentation without skating")
+	check(actor.last_clip == "run" and actor.action_until == 0, "moving cancels full-body attack presentation without skating")
 	actor.measure_motion(actor.position,.1); actor._process(.01)
 	check(actor.last_clip == "idle" and actor.travel_speed == 0, "blocked travel does not animate running in place")
 	actor.position = Vector3(100,0,0); actor.measure_motion(Vector3.ZERO,.016); actor._process(.01)

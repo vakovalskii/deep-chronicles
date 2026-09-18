@@ -55,7 +55,7 @@ export function newActor(id, name, P) {
     id, name, P, movement: { at: Date.now(), credit: 0, fresh: true },
     x: P.x, y: heightAt(P.x, P.z), z: P.z, r: 0,
     target: null,        // { m: mobId } | { p: playerId }
-    attacking: false, atkTimer: 0, cds: {}, buffs: [], cast: null,
+    attacking: false, atkTimer: 0, swing: null, cds: {}, buffs: [], cast: null,
     dead: P.dead === true || P.hp === 0, dirty: true, out: [],
     hitBy: new Map(), karma: 0, pk: 0, flagUntil: 0,
   };
@@ -94,7 +94,7 @@ export function gainXp(a, xp) {
   a.dirty = true;
 }
 export function killPlayer(a, byName, byPk) {
-  a.dead = true; a.P.hp = 0; a.attacking = false; a.target = null; a.cast = null;
+  a.dead = true; a.swing = null; a.P.hp = 0; a.attacking = false; a.target = null; a.cast = null;
   const loss = xpLossOnDeath(a.P.lvl, a.karma > 0);
   a.P.xp = Math.max(0, a.P.xp - loss);
   ev(a, { k: 'dead', by: byName, loss, pk: !!byPk });
@@ -109,6 +109,7 @@ export function respawn(a) {
   a.dirty = true;
 }
 export function place(a, x, z) {
+  a.swing = null; a.attacking = false; a.target = null; a.cast = null;
   a.x = x; a.z = z; a.y = heightAt(x, z);
   // Сервер уже перенес героя: новые позиции проверяются относительно места
   // назначения. На запоздавшие старые координаты клиент получает обычный fix.

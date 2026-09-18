@@ -3,13 +3,15 @@ var profile: Dictionary = {}
 var actor: Node3D
 var view: SubViewport
 var rotating = false
+var compact = false
 
 func _ready():
-	custom_minimum_size = Vector2(220, 210); stretch = true; mouse_filter = Control.MOUSE_FILTER_STOP
+	custom_minimum_size = Vector2(112, 220) if compact else Vector2(220, 210); stretch = true; mouse_filter = Control.MOUSE_FILTER_STOP
 	view = SubViewport.new(); view.size = Vector2i(360, 210); view.own_world_3d = true; view.render_target_update_mode = SubViewport.UPDATE_WHEN_VISIBLE; add_child(view)
 	var scene = Node3D.new(); view.add_child(scene)
 	var environment = WorldEnvironment.new(); var env = Environment.new(); environment.environment = env
-	env.background_mode = Environment.BG_COLOR; env.background_color = Color("171b23")
+	env.background_mode = Environment.BG_CLEAR_COLOR if compact else Environment.BG_COLOR; env.background_color = Color("171b23")
+	view.transparent_bg = compact
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR; env.ambient_light_color = Color("91a1ba"); env.ambient_light_energy = 0.7; scene.add_child(environment)
 	var key = DirectionalLight3D.new(); key.rotation_degrees = Vector3(-35, -30, 0); key.light_color = Color("ffe0b3"); key.light_energy = 1.4; scene.add_child(key)
 	var fill = OmniLight3D.new(); fill.position = Vector3(-2, 2, -2); fill.light_color = Color("759dde"); fill.light_energy = 2; scene.add_child(fill)

@@ -2,6 +2,8 @@ extends SceneTree
 const Art = preload("res://scripts/art_assets.gd")
 var Actor
 var models: Array = []
+var pose_clip = "idle"
+var pose_time = 0.0
 var output = "/tmp/khroniki-model-gallery.png"
 func _initialize(): _run.call_deferred()
 func _run():
@@ -14,12 +16,18 @@ func _run():
 	var ids = ["warrior", "mage", "merchant", "gatekeeper", "wolf"]
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--models="): ids = Array(arg.trim_prefix("--models=").split(","))
+		if arg.begins_with("--clip="): pose_clip = arg.trim_prefix("--clip=")
+		if arg.begins_with("--phase="): pose_time = float(arg.trim_prefix("--phase="))
 		if arg.begins_with("--output="): output = arg.trim_prefix("--output=")
 	for i in ids.size():
 		var actor = Actor.new(); actor.kind = "n"; scene.add_child(actor); actor.setup(ids[i], ids[i]); actor.position.x = (i - (ids.size()-1) * 0.5) * 3.2
 		models.append(actor)
 	var camera = Camera3D.new(); scene.add_child(camera); camera.position = Vector3(1.5, 5.2, maxf(9, ids.size() * 2.5)); camera.look_at(Vector3(0,1.3,0)); camera.fov = 45; camera.current = true
 	await create_timer(2).timeout
+	for actor in models:
+		actor.set_process(false)
+		if actor.animator and actor.animator.has_animation(pose_clip):
+			actor.animator.play(pose_clip); actor.animator.seek(pose_time, true); actor.animator.speed_scale = 0
 	await RenderingServer.frame_post_draw
 	root.get_texture().get_image().save_png(output)
 	print("GALLERY ", output)

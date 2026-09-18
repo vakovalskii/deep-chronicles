@@ -67,9 +67,9 @@ const Settings = preload("res://scripts/interface_settings.gd")
 var hotbar_bindings: Array = []
 var hotbar_class = ""
 var hotbar_locked = true
-var hotbar_lock: CheckButton
+var hotbar_lock: CheckBox
 var chat_frame: Control
-var autoloot_button: CheckButton
+var autoloot_button: CheckBox
 var pickup_button: Button
 const ACTION_NAMES = {"attack": "Атака", "target": "Следующая цель", "talk": "Разговор", "pickup": "Поднять добычу", "skills": "Умения", "inventory": "Сумка", "character": "Персонаж", "map": "Карта", "empty": "Пусто"}
 
@@ -89,15 +89,20 @@ func _ready():
 
 func _theme() -> Theme:
 	var t = Theme.new(); t.default_font_size = 14 if touch else 12
-	t.set_stylebox("panel", "PanelContainer", _style(Color(0.055, 0.055, 0.05, 0.88), Color("82765a"), 0))
+	t.set_stylebox("panel", "PanelContainer", _metal_style("bronze-panel", 7))
 	for state in ["normal", "hover", "pressed", "disabled", "focus"]:
-		var col = Color("171c24") if state == "normal" else Color("313747")
-		if state == "disabled": col = Color("171817")
-		t.set_stylebox(state, "Button", _style(col, Color("bdab7d") if state in ["hover", "focus"] else Color("706b5e"), 0))
+		var button_style = _metal_style("bronze-selected" if state in ["hover", "pressed", "focus"] else "bronze-button", 4)
+		for control in ["Button", "OptionButton"]: t.set_stylebox(state, control, button_style)
 		t.set_stylebox(state, "LineEdit", _style(Color("090c10"), Color("58544a"), 0))
 	t.set_color("font_color", "Label", Color("d8d7ce"))
 	t.set_color("font_color", "Button", Color("e8e1cf"))
 	t.set_color("font_disabled_color", "Button", Color("73736d"))
+	t.set_color("font_shadow_color", "Label", Color(0, 0, 0, 0.8)); t.set_constant("shadow_offset_y", "Label", 1)
+	t.set_constant("line_separation", "RichTextLabel", 0)
+	for state in ["scroll", "grabber", "grabber_highlight", "grabber_pressed"]:
+		var bar = _style(Color("615640") if state.begins_with("grabber") else Color(0.05, 0.06, 0.05, 0.65), Color("867759"), 0)
+		bar.content_margin_left = 3; bar.content_margin_right = 3; bar.content_margin_top = 2; bar.content_margin_bottom = 2
+		t.set_stylebox(state, "VScrollBar", bar)
 	t.set_constant("separation", "VBoxContainer", 4); t.set_constant("separation", "HBoxContainer", 4)
 	t.set_stylebox("background", "ProgressBar", _style(Color("12151c"), Color("72716b"), 0))
 	t.set_stylebox("fill", "ProgressBar", _style(Color("a32233"), Color.TRANSPARENT, 0))
@@ -105,6 +110,11 @@ func _theme() -> Theme:
 		var bar_style = t.get_stylebox(key, "ProgressBar")
 		bar_style.content_margin_top = 0; bar_style.content_margin_bottom = 0
 	return t
+
+func _metal_style(asset: String, padding: float) -> StyleBoxTexture:
+	var s = StyleBoxTexture.new(); s.texture = load("res://assets/ui/" + asset + ".svg")
+	for side in [SIDE_LEFT, SIDE_TOP, SIDE_RIGHT, SIDE_BOTTOM]: s.set_texture_margin(side, 6); s.set_content_margin(side, padding)
+	return s
 
 func _style(bg: Color, border: Color, _radius: int) -> StyleBoxFlat:
 	var s = StyleBoxFlat.new(); s.bg_color = bg; s.border_color = border
@@ -116,7 +126,7 @@ func _label(parent: Node, text: String, font_size = 13) -> Label:
 	var n = Label.new(); n.text = text; n.add_theme_font_size_override("font_size", font_size); parent.add_child(n); return n
 
 func _button(parent: Node, text: String, callback: Callable) -> Button:
-	var b = Button.new(); b.text = text; b.custom_minimum_size.y = 36 if touch else 25; b.pressed.connect(callback); parent.add_child(b); return b
+	var b = Button.new(); b.text = text; b.custom_minimum_size.y = 36 if touch else 22; b.pressed.connect(callback); parent.add_child(b); return b
 
 func _row(parent: Node) -> HBoxContainer:
 	var n = HBoxContainer.new(); parent.add_child(n); return n
@@ -186,27 +196,27 @@ func _auth(kind: String):
 
 func _game_hud():
 	game_ui = Control.new(); root.add_child(game_ui); game_ui.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT); game_ui.mouse_filter = Control.MOUSE_FILTER_IGNORE; game_ui.hide()
-	var v = _panel(game_ui, Vector2(8, 8), 222)
-	status_panel = v.get_parent(); v.add_theme_constant_override("separation", 2)
-	info = _label(v, "", 13)
-	hp_bar = ProgressBar.new(); hp_bar.custom_minimum_size = Vector2(206, 15); v.add_child(hp_bar)
-	mp_bar = ProgressBar.new(); mp_bar.custom_minimum_size = Vector2(206, 15); v.add_child(mp_bar)
+	var v = _panel(game_ui, Vector2(6, 6), 190 if not touch else 222)
+	status_panel = v.get_parent(); v.add_theme_constant_override("separation", 1)
+	info = _label(v, "", 11 if not touch else 13)
+	hp_bar = ProgressBar.new(); hp_bar.custom_minimum_size = Vector2(174 if not touch else 206, 12 if not touch else 15); v.add_child(hp_bar)
+	mp_bar = ProgressBar.new(); mp_bar.custom_minimum_size = hp_bar.custom_minimum_size; v.add_child(mp_bar)
 	mp_bar.add_theme_stylebox_override("fill", _style(Color("285897"), Color.TRANSPARENT, 0))
 	hp_bar.show_percentage = false; mp_bar.show_percentage = false
 	hp_text = _label(hp_bar, "", 11); hp_text.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT); hp_text.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER; hp_text.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	mp_text = _label(mp_bar, "", 11); mp_text.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT); mp_text.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER; mp_text.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	xp_bar = ProgressBar.new(); xp_bar.custom_minimum_size.y = 13; xp_bar.show_percentage = false; v.add_child(xp_bar)
+	xp_bar = ProgressBar.new(); xp_bar.custom_minimum_size.y = 11; xp_bar.show_percentage = false; v.add_child(xp_bar)
 	xp_bar.add_theme_stylebox_override("fill", _style(Color("615d93"), Color.TRANSPARENT, 0))
 	xp_text = _label(xp_bar, "", 10); xp_text.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT); xp_text.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER; xp_text.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	zone = _label(v, "", 10); status_label = _label(v, "", 10)
-	buffs_row = HBoxContainer.new(); game_ui.add_child(buffs_row); buffs_row.position = Vector2(240, 8)
+	buffs_row = HBoxContainer.new(); game_ui.add_child(buffs_row); buffs_row.position = Vector2(232 if touch else 204, 8)
 	buff_text = _label(buffs_row, "", 11)
 	target_panel = PanelContainer.new(); game_ui.add_child(target_panel); target_panel.hide()
 	target_panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
-	target_panel.offset_left = -145; target_panel.offset_right = 145; target_panel.offset_top = 8; target_panel.offset_bottom = 66
+	target_panel.offset_left = -120; target_panel.offset_right = 120; target_panel.offset_top = 6; target_panel.offset_bottom = 58
 	var target_v = VBoxContainer.new(); target_panel.add_child(target_v)
-	target_info = _label(target_v, "", 14); target_info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	target_bar = ProgressBar.new(); target_bar.show_percentage = false; target_bar.custom_minimum_size = Vector2(270, 13); target_v.add_child(target_bar)
+	target_info = _label(target_v, "", 12); target_info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	target_bar = ProgressBar.new(); target_bar.show_percentage = false; target_bar.custom_minimum_size = Vector2(222, 11); target_v.add_child(target_bar)
 	target_hint = _label(target_v, "", 10); target_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	var map_panel = PanelContainer.new(); game_ui.add_child(map_panel)
 	map_panel.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
@@ -218,9 +228,10 @@ func _game_hud():
 	var zoom_label = _label(zoom_row, "×%.1f" % (2.0 / minimap.zoom), 10); zoom_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL; zoom_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_button(zoom_row, "+", func(): minimap.change_zoom(0.8)).tooltip_text = "Приблизить миникарту"
 	minimap.zoom_changed.connect(func(value): zoom_label.text = "×%.1f" % (2.0 / value))
-	var chat_box = _panel(game_ui, Vector2.ZERO, 306)
+	var chat_box = _panel(game_ui, Vector2.ZERO, 282 if not touch else 306)
+	chat_box.get_parent().add_theme_stylebox_override("panel", _style(Color(0.03, 0.04, 0.035, 0.26), Color(0.48, 0.43, 0.31, 0.45), 0))
 	chat_box.get_parent().set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT)
-	chat_box.get_parent().offset_left = 8; chat_box.get_parent().offset_right = 314
+	chat_box.get_parent().offset_left = 6; chat_box.get_parent().offset_right = 288 if not touch else 312
 	chat_frame = chat_box.get_parent()
 	chat_box.get_parent().offset_top = -330 if not touch else -476
 	chat_box.get_parent().offset_bottom = -8 if not touch else -160
@@ -230,38 +241,39 @@ func _game_hud():
 	chat.settings_requested.connect(func(): toggle("settings"))
 	var bottom = VBoxContainer.new(); game_ui.add_child(bottom)
 	bottom.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM)
-	bottom.offset_left = -270; bottom.offset_right = 270; bottom.offset_top = -132; bottom.offset_bottom = -8
+	bottom.offset_left = -244; bottom.offset_right = 244; bottom.offset_top = -114 if not touch else -132; bottom.offset_bottom = -8
 	cast_bar = ProgressBar.new(); cast_bar.custom_minimum_size.y = 9; cast_bar.visible = false; bottom.add_child(cast_bar); cast_bar.show_percentage = false
 	cast_text = _label(bottom, "", 11); cast_text.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER; cast_text.hide()
 	var actions_panel = PanelContainer.new(); bottom.add_child(actions_panel)
 	var actions = _row(actions_panel)
-	_button(actions, "Атака · F", func(): action.emit("attack", null))
-	pickup_button = _button(actions, "Поднять · Z", func(): action.emit("pickup", null)); pickup_button.tooltip_text = "Поднять ближайшую доступную добычу"
-	_button(actions, "Цель · Tab", func(): action.emit("target", null))
-	autoloot_button = CheckButton.new(); autoloot_button.text = "Автолут"; actions.add_child(autoloot_button)
+	_button(actions, "Атака F", func(): action.emit("attack", null))
+	pickup_button = _button(actions, "Поднять Z", func(): action.emit("pickup", null)); pickup_button.tooltip_text = "Поднять ближайшую доступную добычу"
+	_button(actions, "Цель Q", func(): action.emit("target", null))
+	autoloot_button = CheckBox.new(); autoloot_button.text = "Автолут"; actions.add_child(autoloot_button)
 	autoloot_button.toggled.connect(func(value): action.emit("autoloot", value))
 	_button(actions, "Панель…", func(): toggle("actions"))
-	hotbar_lock = CheckButton.new(); hotbar_lock.text = "Замок"; hotbar_lock.tooltip_text = "Снимите замок, чтобы перетащить навыки из K и поменять ячейки местами"; actions.add_child(hotbar_lock)
+	hotbar_lock = CheckBox.new(); hotbar_lock.text = "Замок"; hotbar_lock.tooltip_text = "Снимите замок, чтобы перетащить навыки из K и поменять ячейки местами"; actions.add_child(hotbar_lock)
 	hotbar_lock.toggled.connect(set_hotbar_locked)
 	var hotbar_panel = PanelContainer.new(); bottom.add_child(hotbar_panel)
 	var hotbar = _row(hotbar_panel); hotbar.add_theme_constant_override("separation", 2)
 	for i in 10:
 		var index = i
 		var button = load("res://scripts/hotbar_slot.gd").new(); button.index = i
-		button.custom_minimum_size = Vector2(48 if not touch else 50, 44 if not touch else 48); button.expand_icon = true; button.add_theme_constant_override("icon_max_width", 30)
+		button.custom_minimum_size = Vector2(42 if not touch else 50, 40 if not touch else 48); button.expand_icon = true; button.add_theme_constant_override("icon_max_width", 30)
+		_slot_style(button)
 		hotbar.add_child(button); button.pressed.connect(func(): activate_slot(index)); button.swap_requested.connect(swap_slots)
 		button.binding_requested.connect(func(slot, id):
 			if not hotbar_locked and int(profile.get("skills", {}).get(id, 0)) > 0: assign_slot(slot, id))
 		button.add_theme_font_size_override("font_size", 10)
 		var number = _label(button, str(i + 1) if i < 9 else "0", 9); number.position = Vector2(3, 0); number.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		skill_buttons.append(button); hotbar_labels.append(number)
-	quick_hint = _label(bottom, "F — атака · Tab — цель · Z — подбор · E — разговор", 10); quick_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	quick_hint = _label(bottom, "F — атака · Q — цель · Tab — сумка · Z — подбор · E — разговор", 10); quick_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	var commands = PanelContainer.new(); game_ui.add_child(commands)
 	commands.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
-	commands.offset_left = -292; commands.offset_right = -8; commands.offset_top = -58; commands.offset_bottom = -8
+	commands.offset_left = -238; commands.offset_right = -8; commands.offset_top = -43; commands.offset_bottom = -8
 	var menu = _row(commands)
 	for entry in [["Герой", "character"], ["Сумка", "inventory"], ["Карта", "map"], ["Меню", "menu"]]:
-		var button = _button(menu, entry[0], func(): action.emit(entry[1], null)); button.custom_minimum_size = Vector2(65, 36); button.add_theme_font_size_override("font_size", 11)
+		var button = _button(menu, entry[0], func(): action.emit(entry[1], null)); button.custom_minimum_size = Vector2(51 if not touch else 60, 24 if not touch else 36); button.add_theme_font_size_override("font_size", 11)
 	if touch:
 		joystick = load("res://scripts/joystick.gd").new(); game_ui.add_child(joystick)
 		joystick.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT)
@@ -313,7 +325,7 @@ func update_values(p: Dictionary, s: Dictionary, pos: Vector3, target, cooldowns
 	target_panel.visible = is_instance_valid(target) and target.visible
 	target_info.text = target.display_name if is_instance_valid(target) else ""
 	target_info.modulate = Color("f2c67e") if is_instance_valid(target) and target.kind == "n" else Color("ffdfbc")
-	if target_panel.visible: target_hint.text = "Повержен" if target.dead else ("E — разговор" if target.kind == "n" else "HP %s%%  ·  F / повторный щелчок — атака" % int(target.hp))
+	if target_panel.visible: target_hint.text = "Повержен" if target.dead else ("E — разговор" if target.kind == "n" else "HP %s%%  ·  F — атака" % int(target.hp))
 	target_bar.visible = is_instance_valid(target) and target.kind != "n"
 	if target_bar.visible: target_bar.value = target.hp
 	dead_panel.visible = p.get("dead", false)
@@ -359,8 +371,9 @@ func show_window(kind: String, refresh = false):
 	window = load("res://scripts/window_frame.gd").new(); game_ui.add_child(window)
 	window.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
 	var dimensions = get_viewport().get_visible_rect().size
-	var desired = {"inventory": Vector2(360, 560), "character": Vector2(410, 630), "shop": Vector2(500, 540), "map": Vector2(760, 530), "menu": Vector2(360, 405), "settings": Vector2(450, 540), "actions": Vector2(440, 530), "skills": Vector2(530, 570), "teleport": Vector2(480, 470), "priest": Vector2(370, 230), "controls": Vector2(500, 510)}.get(kind, Vector2(500, 520))
+	var desired = {"inventory": Vector2(490, 478), "character": Vector2(410, 630), "shop": Vector2(500, 540), "map": Vector2(760, 530), "menu": Vector2(360, 405), "settings": Vector2(450, 540), "actions": Vector2(440, 530), "skills": Vector2(530, 570), "teleport": Vector2(480, 470), "priest": Vector2(370, 230), "controls": Vector2(500, 510)}.get(kind, Vector2(500, 520))
 	if touch: desired.x += 35; desired.y += 35
+	if kind == "inventory" and touch: desired = Vector2(420, 640)
 	var half = Vector2(minf(desired.x, dimensions.x - 16), minf(desired.y, dimensions.y - 16)) * 0.5
 	window.offset_left = -half.x; window.offset_right = half.x; window.offset_top = -half.y; window.offset_bottom = half.y
 	window_body = VBoxContainer.new(); window.add_child(window_body)
@@ -368,8 +381,8 @@ func show_window(kind: String, refresh = false):
 		window.position = Vector2(dimensions.x - half.x * 2 - 188, 76)
 	if window_positions.has(kind): window.position = window_positions[kind]
 	var row = _row(window_body); row.mouse_filter = Control.MOUSE_FILTER_STOP; row.gui_input.connect(window.drag_title)
-	var titles = {"inventory": "Снаряжение и сумка", "character": "Персонаж", "map": "Карта мира", "shop": "Торговец", "teleport": "Хранитель врат", "priest": "Жрец", "menu": "Меню игры", "settings": "Настройки", "controls": "Управление", "skills": "Умения", "actions": "Панель действий", "craft": "Изготовление", "equipment": "Путь снаряжения"}
-	_label(row, "◇  " + titles.get(kind, kind), 14).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var titles = {"inventory": "Инвентарь", "character": "Персонаж", "map": "Карта мира", "shop": "Торговец", "teleport": "Хранитель врат", "priest": "Жрец", "menu": "Меню игры", "settings": "Настройки", "controls": "Управление", "skills": "Умения", "actions": "Панель действий", "craft": "Изготовление", "equipment": "Путь снаряжения"}
+	var title = _label(row, titles.get(kind, kind), 12); title.size_flags_horizontal = Control.SIZE_EXPAND_FILL; title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER; title.modulate = Color("d4c49b")
 	_button(row, "×", close_window).tooltip_text = "Закрыть · Esc"
 	if kind == "map":
 		map_control = load("res://scripts/map.gd").new(); map_control.player_position = minimap.player_position; window_body.add_child(map_control); map_control.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -402,7 +415,7 @@ func show_window(kind: String, refresh = false):
 			_label(list, "Персонаж: %s · %s" % [profile.name, GameData.catalog.CLASSES[profile.cls].name], 20)
 			_wrapped(list, "Сервер: %s\n%s · Игроков в мире: %s" % [Network.endpoint, "Подключено" if Network.authed else "Переподключение…", Network.online_count])
 			var grid = GridContainer.new(); grid.columns = 2; list.add_child(grid)
-			for entry in [["Снаряжение · I", "inventory"], ["Персонаж · C", "character"], ["Умения · K", "skills"], ["Панель действий", "actions"], ["Оружие и броня", "equipment"], ["Карта мира · M", "map"], ["Настройки", "settings"], ["Управление", "controls"]]:
+			for entry in [["Сумка · Tab / I", "inventory"], ["Персонаж · C", "character"], ["Умения · K", "skills"], ["Панель действий", "actions"], ["Оружие и броня", "equipment"], ["Карта мира · M", "map"], ["Настройки", "settings"], ["Управление", "controls"]]:
 				_button(grid, entry[0], func(): show_window(entry[1])).size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			_button(list, "Вернуть камеру за спину · V", func(): action.emit("camera", null); close_window())
 			_button(list, "Полный экран / окно · F11", func(): action.emit("fullscreen", null))
@@ -410,7 +423,7 @@ func show_window(kind: String, refresh = false):
 			_button(list, "Вернуться в игру", close_window)
 		"settings": _settings(list)
 		"controls":
-			for line in ["WASD / ЛКМ по земле — движение", "ЛКМ по цели — выбрать; ещё раз — атаковать", "F — атака · Tab — следующая цель · E — разговор", "Z / 9 — подобрать ближайшую добычу; клик — подойти и поднять", "1–3 — умения · 4–5 — зелья здоровья и маны", "I — сумка · C — персонаж · K — умения · M — карта", "ПКМ и движение мыши — камера · Колесо — приближение", "V — камера за спиной · F11 — полный экран · Esc — меню", "Ctrl + атака — PvP; на телефоне включите PvP в окне героя", "Enter — чат · /w Имя текст — ЛС · /r текст — ответ", "+текст — торговый чат · Нажмите на имя в чате для ЛС", "Телефон: джойстик — движение; свайп по миру — камера", "Два пальца — масштаб; двойное нажатие на вещь — действие"]:
+			for line in ["WASD / ЛКМ по земле — движение", "ЛКМ по цели — выбрать; ещё раз — атаковать", "F — атака · Q — следующая цель · E — разговор", "Z / 9 — подобрать ближайшую добычу; клик — подойти и поднять", "1–3 — умения · 4–5 — зелья здоровья и маны", "Tab / I — сумка · C — персонаж · K — умения · M — карта", "ПКМ и движение мыши — камера · Колесо — приближение", "V — камера за спиной · F11 — полный экран · Esc — меню", "Ctrl + атака — PvP; на телефоне включите PvP в окне героя", "Enter — чат · /w Имя текст — ЛС · /r текст — ответ", "+текст — торговый чат · Нажмите на имя в чате для ЛС", "Телефон: джойстик — движение; свайп по миру — камера", "Два пальца — масштаб; двойное нажатие на вещь — действие"]:
 				_wrapped(list, line)
 	window_scroll.set_deferred("scroll_vertical", scroll_y)
 	if search_cursor >= 0 and kind == "inventory": bag_search.grab_focus(); bag_search.caret_column = search_cursor
@@ -509,15 +522,28 @@ func _inventory_grid(parent):
 	if enchant_scroll != "":
 		_wrapped(parent, "Выберите вещь для усиления. После +3 неудача уничтожает вещь. Шанс успеха: 66%.", 13)
 		_button(parent, "Отменить усиление", func(): enchant_scroll = ""; show_window("inventory"))
-	var columns = VBoxContainer.new(); parent.add_child(columns)
-	var worn = VBoxContainer.new(); columns.add_child(worn); _label(worn, "Снаряжение", 12)
-	var equip_grid = GridContainer.new(); equip_grid.columns = 4; worn.add_child(equip_grid)
+	var columns: BoxContainer = VBoxContainer.new() if touch else HBoxContainer.new(); parent.add_child(columns)
+	columns.add_theme_constant_override("separation", 8)
+	var worn = VBoxContainer.new(); columns.add_child(worn); _label(worn, "Снаряжение", 11)
+	var equip_grid: Control
+	if touch:
+		var grid = GridContainer.new(); grid.columns = 6; worn.add_child(grid); equip_grid = grid
+	else:
+		equip_grid = Control.new(); equip_grid.custom_minimum_size = Vector2(180, 248); worn.add_child(equip_grid)
+		var preview = load("res://scripts/character_preview.gd").new(); preview.compact = true; preview.profile = profile
+		equip_grid.add_child(preview); preview.position = Vector2(33, 16); preview.size = Vector2(114, 224)
+		preview.set_meta("inventory_preview", true)
+	var left_slots = ["weapon", "head", "armor", "gloves", "legs", "feet"]
+	var right_slots = ["shield", "neck", "ear1", "ear2", "ring1", "ring2"]
 	for slot in GameData.catalog.SLOTS:
 		var id = profile.equip.get(slot.id)
 		var payload = {"source": "inventory", "slot": slot.id, "id": id, "e": profile.get("enc", {}).get(slot.id, 0)} if id != null else {}
-		var b = _slot(equip_grid, payload, slot.name); b.slot_type = slot.type
-		if slot.id == "shield" and GameData.catalog.ITEMS.get(profile.equip.get("weapon"), {}).get("twoHand", false): b.text = "Двуручное"; b.tooltip_text = "Посох занимает обе руки. Надевание щита снимет посох."
-		if slot.id == "legs" and GameData.catalog.ITEMS.get(profile.equip.get("armor"), {}).get("full", false): b.text = "Доспех"; b.tooltip_text = "Полный доспех занимает этот слот. Надевание поножей снимет доспех."
+		var b = _slot(equip_grid, payload, slot.name); b.slot_type = slot.type; b.set_meta("equipment_slot", slot.id)
+		if not touch:
+			var left_index = left_slots.find(slot.id)
+			b.position = Vector2(0 if left_index >= 0 else 142, (left_index if left_index >= 0 else right_slots.find(slot.id)) * 40)
+		if slot.id == "shield" and GameData.catalog.ITEMS.get(profile.equip.get("weapon"), {}).get("twoHand", false): b.text = "2Р"; b.tooltip_text = "Посох занимает обе руки. Надевание щита снимет посох."
+		if slot.id == "legs" and GameData.catalog.ITEMS.get(profile.equip.get("armor"), {}).get("full", false): b.text = "Латы"; b.tooltip_text = "Полный доспех занимает этот слот. Надевание поножей снимет доспех."
 		b.item_dropped.connect(func(item): action.emit("equip_slot", {"idx": item.idx, "slot": slot.id}))
 	var bag = VBoxContainer.new(); bag.size_flags_horizontal = Control.SIZE_EXPAND_FILL; columns.add_child(bag)
 	_label(bag, "Предметы   ·   %s ячеек" % profile.inv.size(), 12)
@@ -531,8 +557,8 @@ func _inventory_grid(parent):
 	search.text_changed.connect(func(value): bag_query = value; _fill_bag())
 	var sort_menu = OptionButton.new(); sort_menu.add_item("Порядок"); sort_menu.add_item("Имя"); sort_menu.add_item("Ранг"); sort_menu.select(bag_sort); tools.add_child(sort_menu)
 	sort_menu.item_selected.connect(func(index): bag_sort = index; _fill_bag())
-	var scroll = ScrollContainer.new(); scroll.custom_minimum_size = Vector2(0, 156); scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL; bag.add_child(scroll)
-	bag_grid = GridContainer.new(); bag_grid.columns = 6; scroll.add_child(bag_grid); _fill_bag()
+	var scroll = ScrollContainer.new(); scroll.custom_minimum_size = Vector2(0, 220 if not touch else 208); scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL; bag.add_child(scroll)
+	bag_grid = GridContainer.new(); bag_grid.columns = 6; bag_grid.add_theme_constant_override("h_separation", 1); bag_grid.add_theme_constant_override("v_separation", 1); scroll.add_child(bag_grid); _fill_bag()
 	var selected: Dictionary = {}
 	var selected_index = int(selected_item.get("idx", -1))
 	if selected_index >= 0 and selected_index < profile.inv.size() and profile.inv[selected_index].id == selected_item.get("id"):
@@ -540,15 +566,15 @@ func _inventory_grid(parent):
 	if selected_item.has("slot"):
 		var slot = selected_item.slot; var id = profile.equip.get(slot)
 		if id != null: selected = {"source": "inventory", "slot": slot, "id": id, "e": profile.get("enc", {}).get(slot, 0)}
-	item_details = VBoxContainer.new(); item_details.custom_minimum_size.y = 70; parent.add_child(item_details)
+	item_details = VBoxContainer.new(); item_details.custom_minimum_size.y = 52; parent.add_child(item_details)
 	if not selected.is_empty(): _select_item(selected)
-	else: selected_item = {}; _wrapped(item_details, "Выберите предмет для просмотра.", 14)
+	else: selected_item = {}; _wrapped(item_details, "Выберите предмет · двойной щелчок — надеть или использовать.", 11)
 
 	# Fixed wallet stays visible even when the inventory contents scroll.
 	var wallet = VBoxContainer.new(); window_body.add_child(wallet)
-	wallet_label = _label(wallet, "●  %s  монет" % _money(int(profile.coins)), 17); wallet_label.modulate = Color("e5c779")
+	wallet_label = _label(wallet, "●  %s  монет" % _money(int(profile.coins)), 13); wallet_label.modulate = Color("e5c779")
 	wallet_label.tooltip_text = "Монеты зачисляет сервер: автолут или ручной подбор. Z — ближайшая добыча."
-	var weight = ProgressBar.new(); weight.custom_minimum_size.y = 14; weight.max_value = current_stats.cap; weight.value = current_stats.load; wallet.add_child(weight)
+	var weight = ProgressBar.new(); weight.custom_minimum_size.y = 11; weight.max_value = current_stats.cap; weight.value = current_stats.load; wallet.add_child(weight)
 	weight.tooltip_text = "Вес: %.1f / %s" % [current_stats.load, int(current_stats.cap)]
 
 func _money(value: int) -> String:
@@ -575,20 +601,30 @@ func _fill_bag():
 			if bag_sort == 2 and ia.get("grade", "none") != ib.get("grade", "none"):
 				return ["none", "d", "c", "b", "a", "s"].find(ia.get("grade", "none")) > ["none", "d", "c", "b", "a", "s"].find(ib.get("grade", "none"))
 			return str(ia.name).naturalnocasecmp_to(ib.name) < 0)
-	for i in maxi(24, entries.size()):
+	for i in maxi(36, ceili(entries.size() / 6.0) * 6):
 		var b = _slot(bag_grid, entries[i] if i < entries.size() else {}, ""); b.accept_equipped = true
 		b.item_dropped.connect(func(item): action.emit("unequip", item.slot))
 
 func _slot(parent, payload: Dictionary, empty_name: String) -> Button:
 	var b = load("res://scripts/item_slot.gd").new(); b.payload = payload
-	b.custom_minimum_size = Vector2(52 if not touch else 57, 46 if not touch else 51); b.expand_icon = true; b.add_theme_constant_override("icon_max_width", 34); parent.add_child(b)
-	if payload.is_empty(): b.text = empty_name; b.add_theme_font_size_override("font_size", 10)
+	b.custom_minimum_size = Vector2(36 if not touch else 48, 36 if not touch else 48); b.expand_icon = true; b.add_theme_constant_override("icon_max_width", 30 if not touch else 36); b.clip_text = true; _slot_style(b); parent.add_child(b)
+	if payload.is_empty(): b.tooltip_text = empty_name; b.add_theme_font_size_override("font_size", 9)
 	else:
 		b.icon = GameData.icon(payload.id); b.tooltip_text = _item_description(payload.id, int(payload.get("e", 0)))
-		b.text = "×%s" % int(payload.n) if payload.get("n", 1) > 1 else ("+%s" % int(payload.e) if payload.get("e", 0) > 0 else "")
+		var amount = "×%s" % int(payload.n) if payload.get("n", 1) > 1 else ("+%s" % int(payload.e) if payload.get("e", 0) > 0 else "")
+		if not amount.is_empty():
+			var count = _label(b, amount, 10); count.mouse_filter = Control.MOUSE_FILTER_IGNORE; count.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
+			count.offset_left = -32; count.offset_top = -13; count.offset_right = -2; count.offset_bottom = -1; count.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+			count.add_theme_color_override("font_outline_color", Color.BLACK); count.add_theme_constant_override("outline_size", 2)
 		if enchant_scroll != "": b.modulate = Color("ffe0a0") if GameData.enchant_error(payload.id, int(payload.get("e", 0)), enchant_scroll).is_empty() else Color("727d86")
 		b.pressed.connect(func(): _select_item(payload)); b.activated.connect(func(): _activate_item(payload))
 	return b
+
+func _slot_style(button: Button):
+	for state in ["normal", "hover", "pressed", "disabled", "focus"]:
+		var s = _style(Color(0.035, 0.05, 0.045, 0.88), Color("b7a473") if state in ["hover", "pressed", "focus"] else Color("535343"), 0)
+		s.content_margin_left = 2; s.content_margin_right = 2; s.content_margin_top = 2; s.content_margin_bottom = 2
+		button.add_theme_stylebox_override(state, s)
 
 func _activate_item(item: Dictionary):
 	if enchant_scroll != "":
@@ -648,7 +684,7 @@ func _skills(list):
 
 func _settings(list):
 	_label(list, "Звук", 20)
-	for entry in [["Master", "Общая громкость", 0.75], ["Effects", "Бой и заклинания", 0.65], ["Ambience", "Окружение", 0.3]]:
+	for entry in [["Master", "Общая громкость", 0.75], ["Effects", "Бой и заклинания", 0.65], ["Music", "Музыка", 0.45], ["Ambience", "Окружение", 0.3]]:
 		var audio_row = _row(list); _label(audio_row, entry[1], 12).custom_minimum_size.x = 155
 		var slider = HSlider.new(); slider.min_value = 0; slider.max_value = 100; slider.step = 1
 		slider.value = float(Settings.read_value("audio", entry[0], entry[2])) * 100
@@ -716,7 +752,8 @@ func _refresh_hotbar():
 	for i in hotbar_bindings.size():
 		var id = str(hotbar_bindings[i]); var button = skill_buttons[i]
 		button.locked = hotbar_locked; button.icon = GameData.icon(id)
-		button.text = {"attack": "Атака", "target": "Цель", "talk": "Говор.", "pickup": "Дроп", "skills": "Умения", "inventory": "Сумка", "character": "Герой", "map": "Карта"}.get(id, "")
+		button.text = ""
+		if id in ACTION_NAMES and id != "empty": button.icon = load("res://assets/ui/action-" + id + ".svg")
 		button.tooltip_text = binding_name(id) + "\nКлавиша: " + (str(i + 1) if i < 9 else "0")
 		if id in GameData.catalog.SKILLS: button.tooltip_text += "\n" + _skill_description(id)
 		if not hotbar_locked: button.tooltip_text += "\nПеретащите на другую ячейку для обмена"
@@ -735,7 +772,7 @@ func _actions_settings(list):
 
 func set_hotbar_locked(value: bool):
 	hotbar_locked = value; Settings.write_value("hotbar", "locked", value); _refresh_hotbar()
-	quick_hint.text = "F — атака · Tab — цель · Z — подбор · E — разговор" if value else "Редактирование: перетащите навык из K · включите «Замок» для боя"
+	quick_hint.text = "F — атака · Q — цель · Tab — сумка · Z — подбор · E — разговор" if value else "Редактирование: перетащите навык из K · включите «Замок» для боя"
 
 func _craft(list):
 	_label(list, "Монеты: %s" % _money(int(profile.coins)), 16)

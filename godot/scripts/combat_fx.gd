@@ -3,6 +3,7 @@ extends Node3D
 const MAX_EFFECTS = 40
 var active: Array = []
 var casts: Dictionary = {}
+var telegraphs: Dictionary = {}
 var counts: Dictionary = {}
 var glow: GradientTexture2D
 
@@ -42,6 +43,7 @@ func _spawn(kind: String, pos: Vector3, duration: float) -> Dictionary:
 
 func _dispose(fx: Dictionary):
 	if fx.has("owner_id") and casts.get(fx.owner_id) == fx: casts.erase(fx.owner_id)
+	if fx.has("owner_id") and telegraphs.get(fx.owner_id) == fx: telegraphs.erase(fx.owner_id)
 	if is_instance_valid(fx.node): fx.node.queue_free()
 
 func stop_cast(actor):
@@ -49,6 +51,36 @@ func stop_cast(actor):
 	var id = actor.get_instance_id()
 	if casts.has(id):
 		var fx = casts[id]; active.erase(fx); _dispose(fx)
+
+func stop_telegraph(actor):
+	if not is_instance_valid(actor): return
+	var id = actor.get_instance_id()
+	if telegraphs.has(id):
+		var fx = telegraphs[id]; active.erase(fx); _dispose(fx)
+
+func telegraph(actor, attack: Dictionary, aimed_at_me: bool):
+	stop_telegraph(actor)
+	var pos = GameData.position_at(float(attack.x), float(attack.z))
+	var fx = _spawn("telegraph", pos, float(attack.t) + 0.25)
+	fx.actor = weakref(actor); fx.owner_id = actor.get_instance_id(); fx.fixed = true
+	telegraphs[fx.owner_id] = fx
+	fx.duration = float(attack.t)
+	var mesh = ImmediateMesh.new()
+	var color = Color(1, 0.28, 0.12, 0.36) if aimed_at_me else Color(0.94, 0.64, 0.22, 0.22)
+	fx.sector = _mesh(fx.node, mesh, color)
+	fx.sector.material_override.blend_mode = BaseMaterial3D.BLEND_MODE_MIX
+	mesh.surface_begin(Mesh.PRIMITIVE_TRIANGLES)
+	var facing = float(attack.r); var arc = float(attack.arc); var reach = float(attack.reach)
+	for i in 32:
+		var a = facing - arc * 0.5 + arc * i / 32.0
+		var b = facing - arc * 0.5 + arc * (i + 1) / 32.0
+		for v in [Vector3.ZERO, Vector3(sin(a), 0, cos(a)) * reach, Vector3(sin(b), 0, cos(b)) * reach]:
+			v.y = GameData.height_at(pos.x + v.x, pos.z + v.z) - pos.y + 0.12
+			mesh.surface_add_vertex(v)
+	mesh.surface_end()
+	fx.warning = Label3D.new(); fx.warning.text = "!"; fx.warning.font_size = 58; fx.warning.pixel_size = 0.013
+	fx.warning.billboard = BaseMaterial3D.BILLBOARD_ENABLED; fx.warning.modulate = Color("ffb77d")
+	fx.warning.position.y = actor.label.position.y + 0.3; fx.node.add_child(fx.warning)
 
 func begin_cast(actor, color: Color, duration: float):
 	if not is_instance_valid(actor): return
@@ -102,8 +134,11 @@ func _process(dt):
 			var actor = fx.actor.get_ref()
 			if not is_instance_valid(actor) or actor.dead or not actor.visible:
 				active.erase(fx); _dispose(fx); continue
-			fx.node.global_position = actor.global_position
+			if not fx.get("fixed", false): fx.node.global_position = actor.global_position
 		match fx.kind:
+			"telegraph":
+				fx.sector.material_override.albedo_color.a = 0.18 + minf(1, fx.age / fx.duration) * 0.28
+				fx.warning.scale = Vector3.ONE * (1.0 + sin(fx.age * 16) * 0.08)
 			"cast":
 				var actor = fx.actor.get_ref()
 				fx.ring.rotation.y = fx.age * 1.2
@@ -140,7 +175,7 @@ func _process(dt):
 						part.position = Vector3(cos(a) * 0.9, 0.3 + u * 2.8, sin(a) * 0.9)
 					else: part.position = direction * u * fx.radius + Vector3.UP * (1 if fx.kind in ["impact", "critical"] else 0.15)
 					part.rotation = Vector3(u * 2, i, u)
-		if fx.kind != "cast":
+		if fx.kind not in ["cast", "telegraph"]:
 			for mesh in fx.node.find_children("*", "MeshInstance3D", true, false): mesh.material_override.albedo_color.a = 1.0 - u
 		if u >= 1:
 			active.erase(fx); _dispose(fx)
@@ -148,4 +183,4 @@ func _process(dt):
 
 func clear():
 	for fx in active: _dispose(fx)
-	active.clear(); casts.clear()
+	active.clear(); casts.clear(); telegraphs.clear()

@@ -33,7 +33,8 @@ async function step(name, command, argv, timeout = 300000) {
   });
   fs.writeFileSync(path.join(directory, `${name}.log`), output);
   const ok = code === 0 && !/SCRIPT ERROR:|^ERROR:|FAIL:/m.test(output);
-  report.steps.push({ name, command, args: argv, ok, seconds: (Date.now() - started) / 1000 }); save();
+  const warnings = output.split(/\r?\n/).filter(line => /WARNING:|^Warning:/.test(line));
+  report.steps.push({ name, command, args: argv, ok, warnings, seconds: (Date.now() - started) / 1000 }); save();
   if (!ok) throw new Error(`Failed: ${name}; see .native-run/verification/${name}.log`);
 }
 try {

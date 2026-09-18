@@ -9,7 +9,7 @@ const file='godot/assets/manifest.json';const manifest=JSON.parse(fs.readFileSyn
 const args=process.argv.slice(2);let n=0;
 for(const [id,budget] of Object.entries({...props,...humanoids,...creatures})) {
  if(args.length && !args.includes(id))continue;
- const source=`tools/models-out/${id}.glb`;if(!fs.existsSync(source))continue;
+ const source=id in creatures?`art/sources/creatures/${id}.glb`:`tools/models-out/${id}.glb`;if(!fs.existsSync(source))continue;
  const type=id in props?'props':id in creatures?'creatures':'characters';
  const output=`godot/assets/${type}/${id}.glb`;fs.mkdirSync(`godot/assets/${type}`,{recursive:true});
  if(!fs.existsSync(output)||fs.statSync(source).mtimeMs>fs.statSync(output).mtimeMs||args.length){
@@ -22,6 +22,6 @@ for(const [id,budget] of Object.entries({...props,...humanoids,...creatures})) {
  }
  const path='res://'+output.replace('godot/','');
  if(id in props)manifest.props[id]={path,triangles:budget};
- else manifest.actors[id==='warrior_cloth'?'warrior':id==='mage_native'?'mage':id]={path,height:budget,...(id in humanoids?{rig:'canonical'}:{clips:Object.fromEntries(['idle','walk','attack','cast','death'].map(k=>[k,k]))})};
+ else manifest.actors[id==='warrior_cloth'?'warrior':id==='mage_native'?'mage':id]={path,height:budget,...(id in humanoids?{rig:'canonical'}:{clips:Object.fromEntries(['idle','walk','run','windup','attack','cast','hit','death'].map(k=>[k,k]))})};
 }
 fs.writeFileSync(file,JSON.stringify(manifest,null,2)+'\n');console.log(`Art: ${n} assets prepared`);

@@ -235,7 +235,7 @@ func _game_hud():
 	var actions = _row(actions_panel)
 	_button(actions, "Атака · F", func(): action.emit("attack", null))
 	pickup_button = _button(actions, "Поднять · Z", func(): action.emit("pickup", null)); pickup_button.tooltip_text = "Поднять ближайшую доступную добычу"
-	_button(actions, "Цель · Tab", func(): action.emit("target", null))
+	_button(actions, "Цель · Q", func(): action.emit("target", null))
 	autoloot_button = CheckButton.new(); autoloot_button.text = "Автолут"; actions.add_child(autoloot_button)
 	autoloot_button.toggled.connect(func(value): action.emit("autoloot", value))
 	_button(actions, "Панель…", func(): toggle("actions"))
@@ -253,7 +253,7 @@ func _game_hud():
 		button.add_theme_font_size_override("font_size", 10)
 		var number = _label(button, str(i + 1) if i < 9 else "0", 9); number.position = Vector2(3, 0); number.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		skill_buttons.append(button); hotbar_labels.append(number)
-	quick_hint = _label(bottom, "F — атака · Tab — цель · Z — подбор · E — разговор", 10); quick_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	quick_hint = _label(bottom, "F — атака · Q — цель · Tab — сумка · Z — подбор · E — разговор", 10); quick_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	var commands = PanelContainer.new(); game_ui.add_child(commands)
 	commands.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
 	commands.offset_left = -292; commands.offset_right = -8; commands.offset_top = -58; commands.offset_bottom = -8
@@ -400,7 +400,7 @@ func show_window(kind: String, refresh = false):
 			_label(list, "Персонаж: %s · %s" % [profile.name, GameData.catalog.CLASSES[profile.cls].name], 20)
 			_wrapped(list, "Сервер: %s\n%s · Игроков в мире: %s" % [Network.endpoint, "Подключено" if Network.authed else "Переподключение…", Network.online_count])
 			var grid = GridContainer.new(); grid.columns = 2; list.add_child(grid)
-			for entry in [["Снаряжение · I", "inventory"], ["Персонаж · C", "character"], ["Умения · K", "skills"], ["Панель действий", "actions"], ["Оружие и броня", "equipment"], ["Карта мира · M", "map"], ["Настройки", "settings"], ["Управление", "controls"]]:
+			for entry in [["Сумка · Tab / I", "inventory"], ["Персонаж · C", "character"], ["Умения · K", "skills"], ["Панель действий", "actions"], ["Оружие и броня", "equipment"], ["Карта мира · M", "map"], ["Настройки", "settings"], ["Управление", "controls"]]:
 				_button(grid, entry[0], func(): show_window(entry[1])).size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			_button(list, "Вернуть камеру за спину · V", func(): action.emit("camera", null); close_window())
 			_button(list, "Полный экран / окно · F11", func(): action.emit("fullscreen", null))
@@ -408,7 +408,7 @@ func show_window(kind: String, refresh = false):
 			_button(list, "Вернуться в игру", close_window)
 		"settings": _settings(list)
 		"controls":
-			for line in ["WASD / ЛКМ по земле — движение", "ЛКМ по цели — выбрать; ещё раз — атаковать", "F — атака · Tab — следующая цель · E — разговор", "Z / 9 — подобрать ближайшую добычу; клик — подойти и поднять", "1–3 — умения · 4–5 — зелья здоровья и маны", "I — сумка · C — персонаж · K — умения · M — карта", "ПКМ и движение мыши — камера · Колесо — приближение", "V — камера за спиной · F11 — полный экран · Esc — меню", "Ctrl + атака — PvP; на телефоне включите PvP в окне героя", "Enter — чат · /w Имя текст — ЛС · /r текст — ответ", "+текст — торговый чат · Нажмите на имя в чате для ЛС", "Телефон: джойстик — движение; свайп по миру — камера", "Два пальца — масштаб; двойное нажатие на вещь — действие"]:
+			for line in ["WASD / ЛКМ по земле — движение", "ЛКМ по цели — выбрать; ещё раз — атаковать", "F — атака · Q — следующая цель · E — разговор", "Z / 9 — подобрать ближайшую добычу; клик — подойти и поднять", "1–3 — умения · 4–5 — зелья здоровья и маны", "Tab / I — сумка · C — персонаж · K — умения · M — карта", "ПКМ и движение мыши — камера · Колесо — приближение", "V — камера за спиной · F11 — полный экран · Esc — меню", "Ctrl + атака — PvP; на телефоне включите PvP в окне героя", "Enter — чат · /w Имя текст — ЛС · /r текст — ответ", "+текст — торговый чат · Нажмите на имя в чате для ЛС", "Телефон: джойстик — движение; свайп по миру — камера", "Два пальца — масштаб; двойное нажатие на вещь — действие"]:
 				_wrapped(list, line)
 	window_scroll.set_deferred("scroll_vertical", scroll_y)
 	if search_cursor >= 0 and kind == "inventory": bag_search.grab_focus(); bag_search.caret_column = search_cursor
@@ -645,7 +645,7 @@ func _skills(list):
 
 func _settings(list):
 	_label(list, "Звук", 20)
-	for entry in [["Master", "Общая громкость", 0.75], ["Effects", "Бой и заклинания", 0.65], ["Ambience", "Окружение", 0.3]]:
+	for entry in [["Master", "Общая громкость", 0.75], ["Effects", "Бой и заклинания", 0.65], ["Music", "Музыка", 0.45], ["Ambience", "Окружение", 0.3]]:
 		var audio_row = _row(list); _label(audio_row, entry[1], 12).custom_minimum_size.x = 155
 		var slider = HSlider.new(); slider.min_value = 0; slider.max_value = 100; slider.step = 1
 		slider.value = float(Settings.read_value("audio", entry[0], entry[2])) * 100
@@ -732,7 +732,7 @@ func _actions_settings(list):
 
 func set_hotbar_locked(value: bool):
 	hotbar_locked = value; Settings.write_value("hotbar", "locked", value); _refresh_hotbar()
-	quick_hint.text = "F — атака · Tab — цель · Z — подбор · E — разговор" if value else "Редактирование: перетащите навык из K · включите «Замок» для боя"
+	quick_hint.text = "F — атака · Q — цель · Tab — сумка · Z — подбор · E — разговор" if value else "Редактирование: перетащите навык из K · включите «Замок» для боя"
 
 func _craft(list):
 	_label(list, "Монеты: %s" % _money(int(profile.coins)), 16)

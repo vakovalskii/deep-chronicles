@@ -16,3 +16,6 @@ godot/export_credentials.cfg
 .native-run/
 .gitmark/
 .claude/scheduled_tasks.lock
+
+__pycache__/
+*.py[cod]

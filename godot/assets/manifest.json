@@ -37,8 +37,11 @@
       "clips": {
         "idle": "idle",
         "walk": "walk",
+        "run": "run",
+        "windup": "windup",
         "attack": "attack",
         "cast": "cast",
+        "hit": "hit",
         "death": "death"
       }
     },
@@ -58,8 +61,11 @@
       "clips": {
         "idle": "idle",
         "walk": "walk",
+        "run": "run",
+        "windup": "windup",
         "attack": "attack",
         "cast": "cast",
+        "hit": "hit",
         "death": "death"
       }
     },
@@ -69,8 +75,11 @@
       "clips": {
         "idle": "idle",
         "walk": "walk",
+        "run": "run",
+        "windup": "windup",
         "attack": "attack",
         "cast": "cast",
+        "hit": "hit",
         "death": "death"
       }
     },
@@ -115,8 +124,11 @@
       "clips": {
         "idle": "idle",
         "walk": "walk",
+        "run": "run",
+        "windup": "windup",
         "attack": "attack",
         "cast": "cast",
+        "hit": "hit",
         "death": "death"
       }
     },
@@ -126,8 +138,11 @@
       "clips": {
         "idle": "idle",
         "walk": "walk",
+        "run": "run",
+        "windup": "windup",
         "attack": "attack",
         "cast": "cast",
+        "hit": "hit",
         "death": "death"
       }
     }

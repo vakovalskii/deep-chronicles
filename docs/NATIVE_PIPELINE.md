@@ -102,3 +102,9 @@ GitHub workflow `.github/workflows/native.yml` проверяет Windows и mac
 Полный `--release` теперь также требует `touch-client-server` и `packaged-client`. Встроенный диагностический режим `--test-mode --self-test` работает только с явно заданным loopback-сервером. Релизные templates не поддерживают прежний запуск через --script/--path: проверяется та же упакованная игра через точку входа main.gd. `--network-probe` использует непосредственно Network, не отдельную реализацию транспорта, и не авторизуется. macOS + Windows общий выпуск выполняется на macOS; на Windows доступен --build=windows.
 
 Текстовые входы используют LF из `.gitattributes`; это предотвращает изменение CRLF→LF при импорте на Windows. При иных изменениях verify выводит список изменённых файлов, а не пропускает дрейф. Общий процесс сборки повторяем, побайтовая идентичность разных ОС не обещается.
+
+## Движение и звук, второй проход
+
+`native:audio -- --check` теперь проверяет 67 закреплённых CC0-файлов; `--fetch` восстанавливает источники, `--analyze` измеряет LUFS/true peak через ffmpeg. Источники существ закреплены в `art/sources/creatures`, локальная пересборка `native:art -- wolf rabbit boar spider scorpion`. `native:gallery -- --models=warrior,wolf,boar --clip=run --phase=0.22 --output=/tmp/run.png` даёт повторяемую позу.
+
+Native smoke проверяет настоящее движение/скелет/шаги, Tab/Q, декодирование банка, музыку и ducking, серверный замах и выход из его сектора. Только рендерный запуск проверяет выход AudioEffectCapture, headless проверяет маршрутизацию/ресурсы. Оружейный тест — 10 поз (idle/walk/run/attack/cast_enter у двух классов). Клиентские и серверные журналы сохраняются отдельно, предупреждения Godot считаются отказом.

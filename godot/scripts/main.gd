@@ -24,7 +24,7 @@ var talking_to: Node3D
 var joystick = Vector2.ZERO
 var camera_yaw = 0.45
 var camera_pitch = 0.56
-var camera_distance = 28.0
+var camera_distance = 21.0
 var state_timer = 0.0
 var ui_timer = 0.0
 var cast_time = 0.0
@@ -51,6 +51,7 @@ var pvp_enabled = false
 var initial_camera = true
 var combat_fx: Node3D
 var game_audio: Node3D
+var run_speed = 0.0
 
 func _ready():
 	var args = OS.get_cmdline_user_args()
@@ -208,9 +209,19 @@ func _event(e: Dictionary):
 	if profile.is_empty(): return
 	var source = hero if not e.has("by") or int(e.by) == own_id else players.get(int(e.by))
 	var victim = mobs.get(int(e.get("m", -1))) if e.has("m") else (hero if int(e.get("p", -1)) == own_id else players.get(int(e.get("p", -1))))
+	if e.k in ["attack_start", "hit", "miss", "cast_fx"] and source == hero and e.get("id", "") not in ["heal", "battle_cry"]: game_audio.music.combat()
+	if e.k == "hurt" or (e.k == "mob_windup" and int(e.get("p", -1)) == own_id): game_audio.music.combat()
 	match e.k:
 		"msg": hud.log_line(e.text)
 		"cd": cooldowns[e.id] = Time.get_ticks_msec() + float(e.cd) * 1000
+		"attack_start":
+			if is_instance_valid(source):
+				source.play_action("attack", float(e.t))
+				if source.base_model != "mage": combat_fx.swing(source); game_audio.play_at("swing", source.position)
+		"attack_release":
+			if is_instance_valid(source) and source.base_model == "mage":
+				var spell_target = mobs.get(int(e.to.get("m", -1))) if e.to.has("m") else (hero if int(e.to.get("p", -1)) == own_id else players.get(int(e.to.get("p", -1))))
+				if is_instance_valid(spell_target): combat_fx.projectile(source, spell_target, Color("9fbdff")); game_audio.play_at("fire", source.position, -5)
 		"hit", "miss":
 			if is_instance_valid(source) and source.cast_remaining <= 0 and source.action_until <= 0:
 				source.play_action("attack", 0.65)
@@ -225,16 +236,34 @@ func _event(e: Dictionary):
 					var critical = bool(e.get("crit", false))
 					combat_fx.burst(victim.position, Color("ffd284"), "critical" if critical else "impact", 1.3 if critical else 0.65)
 					game_audio.play_at("critical" if critical else "impact", victim.position)
-					if victim.action_until <= 0 and not victim.casting: victim.play_action("hit", 0.22)
+					victim.receive_hit()
+					if victim.kind == "m": game_audio.creature(victim, "hurt")
+		"mob_windup":
+			var mob = mobs.get(int(e.m))
+			if is_instance_valid(mob) and not mob.dead:
+				mob.position = GameData.position_at(float(e.x), float(e.z))
+				mob.begin_windup(float(e.t), float(e.r))
+				combat_fx.telegraph(mob, e, int(e.p) == own_id)
+				game_audio.creature(mob, "attack")
+		"mob_strike", "mob_cancel":
+			var mob = mobs.get(int(e.m))
+			if is_instance_valid(mob):
+				combat_fx.stop_telegraph(mob)
+				if e.k == "mob_strike":
+					mob.finish_windup()
+					if not e.get("landed", false) and int(e.p) == own_id:
+						_float(hero.position, "Уход от удара", Color("a8dbda"))
+				else: mob.cancel_presentation()
 		"hurt":
 			hud.log_line("Уклонение" if e.get("dodge", false) else "Получен урон: %s" % int(e.get("dmg", 0)), "combat")
 			_float(hero.position, "Уклонение" if e.get("dodge", false) else "−%s" % int(e.get("dmg", 0)), Color("ff7777"))
 			if not e.get("dodge", false):
 				combat_fx.burst(hero.position, Color("d59072"), "impact", 0.6); game_audio.play_at("impact", hero.position, -3)
-				if hero.action_until <= 0 and not hero.casting: hero.play_action("hit", 0.22)
+				hero.receive_hit()
 			if not is_instance_valid(target): set_target(mobs.get(int(e.get("from", -1)), players.get(int(e.get("fromP", -1)))))
 		"mdie":
-			if is_instance_valid(victim): victim.dead = true; victim.hp = 0; game_audio.play_at("death", victim.position)
+			if is_instance_valid(victim):
+				game_audio.creature(victim, "death"); victim.cancel_presentation(); victim.dead = true; victim.hp = 0; combat_fx.stop_telegraph(victim)
 			if target == victim: attacking = false; pending_skill = ""
 		"kill": hud.log_line("%s: +%s EXP, +%s SP. %s" % [e.name, int(e.xp), int(e.get("sp", 0)), "Добыча на земле · Z — подобрать." if e.get("ground", false) else "Автолут."], "rewards")
 		"pickup":
@@ -289,7 +318,7 @@ func _event(e: Dictionary):
 
 func _place(x: float, z: float):
 	if not is_instance_valid(hero): return
-	combat_fx.clear(); hero.cancel_presentation(); cast_time = 0
+	combat_fx.clear(); hero.cancel_presentation(); cast_time = 0; run_speed = 0
 	hero.position = GameData.position_at(x, z); has_destination = false; attacking = false; pending_skill = ""; talking_to = null; pending_pickup = ""
 	set_target(null); marker.hide(); initial_camera = true
 
@@ -342,6 +371,7 @@ func _move_hero(dt):
 	var direction = Vector3.ZERO
 	var distance = stats.speed * dt
 	if input.length() > 0.15:
+		if hero.action_until > 0 and hero.action_clip == "attack": hero.cancel_presentation()
 		_cancel_attack(); has_destination = false; talking_to = null; pending_pickup = ""; marker.hide()
 		direction = Vector3(input.x, 0, input.y).rotated(Vector3.UP, camera_yaw).normalized()
 		distance *= minf(1, input.length())
@@ -371,10 +401,14 @@ func _move_hero(dt):
 			if is_instance_valid(talking_to): _open_npc(talking_to); talking_to = null
 		else: direction = offset.normalized(); distance = minf(distance, offset.length())
 	if direction.length_squared() > 0.1:
+		if not attacking and hero.action_until > 0 and hero.action_clip == "attack": hero.cancel_presentation()
+		run_speed = move_toward(run_speed, float(stats.speed), float(stats.speed) * 6.0 * dt)
+		distance = minf(distance, run_speed * dt)
 		var before = hero.position
 		hero.position = GameData.move(hero.position, direction, distance)
 		hero.rotation.y = lerp_angle(hero.rotation.y, atan2(direction.x, direction.z), minf(1, dt * 15))
 		hero.moving = before.distance_squared_to(hero.position) > 0.00001
+	else: run_speed = 0
 
 func _update_camera(dt):
 	var aim = hero.position + Vector3.UP * 1.4
@@ -516,6 +550,14 @@ func _clear_entities():
 	for actor in mobs.values() + players.values(): actor.queue_free()
 	mobs.clear(); players.clear()
 
+func _input(event):
+	# Control забирает Tab для смены фокуса до unhandled_input.
+	# Оставляем ввод текста и меню входа, в игре открываем сумку.
+	if profile.is_empty() or not event is InputEventKey: return
+	if event.physical_keycode != KEY_TAB or not event.pressed or event.echo: return
+	if get_viewport().gui_get_focus_owner() is LineEdit or get_viewport().gui_get_focus_owner() is TextEdit: return
+	hud.toggle("inventory"); get_viewport().set_input_as_handled()
+
 func _unhandled_input(event):
 	if profile.is_empty(): return
 	if event is InputEventMouse or event is InputEventGesture or event is InputEventScreenTouch or event is InputEventScreenDrag:
@@ -529,7 +571,7 @@ func _unhandled_input(event):
 			KEY_F: attack()
 			KEY_E: talk_nearest()
 			KEY_Z: pickup_nearest()
-			KEY_TAB: next_target()
+			KEY_Q: next_target()
 			KEY_ESCAPE:
 				if hud.window_kind != "": hud.close_window()
 				else: set_target(null); _cancel_attack(); has_destination = false; hud.show_window("menu")

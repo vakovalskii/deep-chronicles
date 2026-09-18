@@ -14,11 +14,20 @@ const PORT = portProbe.address().port;
 await new Promise(resolve => portProbe.close(resolve));
 const DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'realms-')), DB = path.join(DIR, 'test.db');
 let srv;
+let serverOutput = '';
 before(async () => {
   srv = spawn('node', ['--no-warnings', 'server/server.js'], { env: { ...process.env, PORT: String(PORT), DB, DEV_CMD: '1', AUTH_TRIES: '1000' }, stdio: 'pipe' });
+  for (const stream of [srv.stdout, srv.stderr]) stream.on('data', chunk => { serverOutput += chunk; });
   await new Promise((r) => srv.stdout.once('data', r));
 });
-after(async () => { srv.kill(); await new Promise(r => srv.exitCode !== null ? r() : srv.once('exit', r)); fs.rmSync(DIR, { recursive: true, force: true }); });
+after(async () => {
+  fs.mkdirSync('.native-run', { recursive: true });
+  fs.writeFileSync('.native-run/server-integration.log', serverOutput);
+  srv.kill();
+  await new Promise(r => srv.exitCode !== null ? r() : srv.once('exit', r));
+  fs.rmSync(DIR, { recursive: true, force: true });
+  assert.doesNotMatch(serverOutput, /(?:^|\n)(?:Error:|TypeError:|ReferenceError:|FATAL)|UnhandledPromiseRejection|SQLITE_[A-Z]+/);
+});
 
 // клиент: ждёт сообщения нужного типа
 function client() {
@@ -418,4 +427,61 @@ test('изготовление по WS: списание материалов, �
     const saved=JSON.parse(db.prepare('SELECT save FROM accounts WHERE key = ?').get('кузнец').save);db.close();
     assert.equal(saved.coins,700);assert.deepEqual(saved.craftReceipts,['native-order-0001']);
   } finally {a.ws.close();await a.closed();}
+});
+
+test('оба клиента видят серверный замах моба; уход из сектора предотвращает урон', async () => {
+  const { buildProps } = await import('../src/world-core.js');
+  const spawns = buildProps().spawns; const mobId = spawns.findIndex(s => s.mob === 'orc') + 1; const spawn = spawns[mobId - 1];
+  const a = client(), b = client(); await Promise.all([a.open(), b.open()]);
+  const eventsA = [], eventsB = [];
+  for (const [c, log] of [[a, eventsA], [b, eventsB]]) c.ws.on('message', raw => { const m = JSON.parse(raw); if (m.t === 'ev') log.push(...m.e); });
+  const waitFor = async predicate => { for (let i = 0; i < 120; i++) { const v = predicate(); if (v) return v; await pause(50); } throw Error('combat event timeout'); };
+  try {
+    a.send({ t: 'register', name: 'ТелеграфЦель', pass: 'test-secret', cls: 'warrior' });
+    b.send({ t: 'register', name: 'ТелеграфЗритель', pass: 'test-secret', cls: 'warrior' });
+    const auth = await a.wait('authok'); await b.wait('authok');
+    // Observer outside aggro range; both still receive the same nearby combat.
+    b.send({ t: 'dev', x: spawn.x + 35, z: spawn.z, hp: 9999 });
+    a.send({ t: 'dev', x: spawn.x, z: spawn.z + 4, hp: 9999 });
+    let row;
+    for (let i=0;i<30&&!row;i++) row=(await a.wait('snap')).m.find(r=>r[0]===mobId && !(r[5]&8));
+    assert.ok(row, 'live orc snapshot');
+    a.send({t:'dev',x:row[1],z:row[3]+2,hp:9999});
+    const warning = await waitFor(() => eventsA.find(e => e.k === 'mob_windup' && e.p === auth.id));
+    assert.ok(warning.t >= .5 && warning.arc > 0 && warning.reach > 2);
+    assert.ok(!eventsA.some(e => e.k === 'hurt' && e.from === warning.m), 'warning must precede damage');
+    a.send({ t: 'dev', x: warning.x + 18, z: warning.z + 18 });
+    const strike = await waitFor(() => eventsA.find(e => e.k === 'mob_strike' && e.m === warning.m));
+    assert.equal(strike.landed, false);
+    assert.ok(!eventsA.some(e => e.k === 'hurt' && e.from === warning.m));
+    await waitFor(() => eventsB.some(e => e.k === 'mob_strike' && e.m === warning.m));
+    assert.deepEqual(eventsB.find(e => e.k === 'mob_windup' && e.m === warning.m), warning);
+    assert.deepEqual(eventsB.find(e => e.k === 'mob_strike' && e.m === warning.m), strike);
+  } finally { a.ws.close(); b.ws.close(); await Promise.all([a.closed(), b.closed()]); }
+});
+
+test('автоатака сначала объявляет замах; отмена команды и телепорт исключают отложенный урон', async () => {
+  const a = client(), b = client(); await Promise.all([a.open(), b.open()]);
+  const events = [];
+  a.ws.on('message', raw => { const m = JSON.parse(raw); if (m.t === 'ev') events.push(...m.e); });
+  const nextAttack = async start => { for (let i = 0; i < 80; i++) { const e = events.slice(start).find(e=>e.k==='attack_start'); if(e)return e; await pause(25); } throw Error('no attack windup'); };
+  try {
+    a.send({t:'register',name:'ЗамахИгрока',pass:'test-secret',cls:'warrior'}); await a.wait('authok');
+    b.send({t:'register',name:'ЦельЗамаха',pass:'test-secret',cls:'warrior'}); const victim=await b.wait('authok');
+    await at(a,-700,-500); await at(b,-700,-498);
+    let start=events.length;
+    a.send({t:'atk',kind:'p',id:victim.id});
+    const first=await nextAttack(start); assert.ok(first.t>0);
+    assert.ok(!events.slice(start).some(e=>e.k==='hit'), 'damage cannot precede the announced windup');
+    a.send({t:'atk',id:null}); await pause(700);
+    assert.ok(!events.slice(start).some(e=>e.k==='hit'), 'cancelled swing must not damage the victim');
+    await pause(400); start=events.length;
+    a.send({t:'atk',kind:'p',id:victim.id}); await nextAttack(start);
+    a.send({t:'dev',x:-448,z:418}); await pause(700);
+    assert.ok(!events.slice(start).some(e=>e.k==='hit'), 'teleported player cannot finish a stale attack');
+    await at(a,-700,-500); start=events.length;
+    a.send({t:'atk',kind:'p',id:victim.id}); await nextAttack(start);
+    for(let i=0;i<40&&!events.slice(start).some(e=>e.k==='hit');i++)await pause(25);
+    assert.ok(events.slice(start).some(e=>e.k==='hit'), 'a completed swing still applies server damage');
+  } finally { a.ws.close(); b.ws.close(); await Promise.all([a.closed(),b.closed()]); }
 });

@@ -12,7 +12,7 @@ import WebSocket, { WebSocketServer } from 'ws';
 const temp=fs.mkdtempSync(path.join(os.tmpdir(),'native-site-'));
 const reservation=net.createServer();await new Promise(r=>reservation.listen(0,'127.0.0.1',r));const port=reservation.address().port;await new Promise(r=>reservation.close(r));
 const backend=spawn(process.execPath,['--no-warnings','server/server.js'],{env:{...process.env,PORT:String(port),DB:path.join(temp,'world.db'),DEV_CMD:'0'},stdio:['ignore','pipe','pipe']});
-let browser,server,wss;
+let browser,server,wss,player;
 try {
   await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('backend timeout')),10000);backend.stdout.once('data',()=>{clearTimeout(timer);resolve();});backend.once('error',reject);});
   server=http.createServer((req,res)=>{
@@ -23,10 +23,16 @@ try {
     fs.createReadStream(file).pipe(res);
   });
   wss=new WebSocketServer({server});
-  wss.on('connection',client=>{const upstream=new WebSocket(`ws://127.0.0.1:${port}`);upstream.on('message',data=>{if(client.readyState===1)client.send(data.toString());});upstream.on('error',()=>client.close());client.on('close',()=>upstream.close());});
+  wss.on('connection',client=>{const upstream=new WebSocket(`ws://127.0.0.1:${port}`);upstream.on('message',data=>{if(client.readyState===1)client.send(data.toString());});upstream.on('error',()=>client.close());upstream.on('close',()=>client.close());client.on('message',data=>{if(upstream.readyState===1)upstream.send(data.toString());});client.on('close',()=>upstream.close());});
   await new Promise(r=>server.listen(0,'127.0.0.1',r));const url=`http://127.0.0.1:${server.address().port}`;
   browser=await chromium.launch({headless:true});const page=await browser.newPage({viewport:{width:1280,height:900}});const errors=[];page.on('pageerror',e=>errors.push(e.message));
   await page.goto(url);await page.getByText('Сервер доступен · игроков онлайн: 0',{exact:true}).waitFor();
+  player = new WebSocket(`ws://127.0.0.1:${port}`);
+  await new Promise(r=>player.once('open',r));
+  player.send(JSON.stringify({t:'register',name:'SiteOnlineTest',pass:'isolated-site-test',cls:'warrior'}));
+  await page.getByText('Сервер доступен · игроков онлайн: 1',{exact:true}).waitFor({timeout:5000});
+  player.close(); await new Promise(r=>player.once('close',r));
+  await page.getByText('Сервер доступен · игроков онлайн: 0',{exact:true}).waitFor({timeout:5000});
   assert.equal(await page.locator('canvas').count(),0);assert.match(await page.locator('.notice').textContent(),/Браузерная версия закрыта/);
   const release=JSON.parse(fs.readFileSync('dist/release.json'));
   for(const target of ['windows','macos']){const entry=release.files[target];assert.equal(await page.locator('#'+target).getAttribute('href'),entry.url);const bytes=fs.readFileSync('dist'+entry.url);assert.equal(bytes.length,entry.bytes);assert.equal(crypto.createHash('sha256').update(bytes).digest('hex'),entry.sha256);}
@@ -36,6 +42,6 @@ try {
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);assert.deepEqual(errors,[]);
   console.log('SITE_TEST_OK: live server status, native downloads and hashes, desktop/mobile layout, no browser game');
 }finally{
-  await browser?.close();wss?.clients.forEach(c=>c.terminate());await new Promise(r=>wss?wss.close(r):r());await new Promise(r=>server?server.close(r):r());
+  player?.terminate(); await browser?.close();wss?.clients.forEach(c=>c.terminate());await new Promise(r=>wss?wss.close(r):r());await new Promise(r=>server?server.close(r):r());
   backend.kill();await new Promise(r=>backend.exitCode!==null?r():backend.once('exit',r));fs.rmSync(temp,{recursive:true,force:true});
 }

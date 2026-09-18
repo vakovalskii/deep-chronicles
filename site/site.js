@@ -1,17 +1,32 @@
 const status = document.querySelector('#status');
-function probe() {
+let socket, retry, heartbeat, lastMessage = 0;
+function connect() {
+  clearTimeout(retry); clearInterval(heartbeat);
   status.textContent = 'Проверяем сервер…';
-  const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws`);
-  let answered = false;
-  const timer = setTimeout(() => { status.textContent = 'Нет ответа сервера'; ws.close(); }, 7000);
+  const ws = socket = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws`);
+  lastMessage = Date.now();
+  heartbeat = setInterval(() => {
+    if (Date.now() - lastMessage > 25000) { ws.close(); return; }
+    if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ t: 'ping' }));
+  }, 10000);
   ws.onmessage = ({ data }) => {
-    const m = JSON.parse(data); if (m.t !== 'hi') return;
-    answered = true; clearTimeout(timer);
-    status.textContent = `Сервер доступен · игроков онлайн: ${Number(m.online) || 0}`; ws.close();
+    if (socket !== ws) return;
+    let m; try { m = JSON.parse(data); } catch { return; }
+    lastMessage = Date.now();
+    const count = m.t === 'hi' ? m.online : m.t === 'online' ? m.n : null;
+    if (Number.isInteger(count) && count >= 0) status.textContent = `Сервер доступен · игроков онлайн: ${count}`;
   };
-  ws.onerror = () => { clearTimeout(timer); if (!answered) status.textContent = 'Сервер временно недоступен'; };
+  ws.onclose = () => {
+    if (socket !== ws) return;
+    clearInterval(heartbeat);
+    status.textContent = 'Сервер временно недоступен · онлайн неизвестен';
+    retry = setTimeout(connect, 5000);
+  };
+  ws.onerror = () => ws.close();
 }
-probe(); setInterval(probe, 30000);
+connect();
+window.addEventListener('pagehide', () => { clearTimeout(retry); clearInterval(heartbeat); const ws = socket; socket = null; ws?.close(); });
+window.addEventListener('pageshow', event => { if (event.persisted) connect(); });
 fetch('/release.json', { cache: 'no-store' }).then(r => { if (!r.ok) throw Error('release'); return r.json(); }).then(release => {
   for (const key of ['windows', 'macos']) {
     const file = release.files[key];

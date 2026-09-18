@@ -18,6 +18,8 @@ await new Promise(resolve => probe.close(resolve));
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'chronicles-native-'));
 const server = spawn(process.execPath, ['--no-warnings', 'server/server.js'], { cwd: root, env: { ...process.env, PORT: String(port), DB: path.join(dir, 'test.db'), DEV_CMD: '1', AUTH_TRIES: '1000' }, stdio: ['ignore', 'pipe', 'pipe'] });
 let godot;
+let serverOutput = '';
+for (const stream of [server.stdout, server.stderr]) stream.on('data', chunk => { serverOutput += chunk; });
 try {
   await new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('Test server startup timeout')), 10000);
@@ -37,8 +39,10 @@ try {
   });
   fs.mkdirSync(path.join(root, '.native-run'), { recursive: true });
   fs.writeFileSync(path.join(root, '.native-run', 'test.log'), output);
-  if (code !== 0 || !output.includes('failures=0') || /ERROR:|FAIL:/.test(output)) throw new Error('Native smoke test failed');
+  if (code !== 0 || !output.includes('failures=0') || /ERROR:|FAIL:|WARNING:/.test(output) || /(?:^|\n)(?:Error:|TypeError:|ReferenceError:|FATAL)|UnhandledPromiseRejection|SQLITE_[A-Z]+/.test(serverOutput)) throw new Error('Native smoke test failed');
 } finally {
+  fs.mkdirSync(path.join(root, '.native-run'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.native-run', 'test-server.log'), serverOutput);
   godot?.kill(); server.kill();
   await new Promise(resolve => server.exitCode !== null ? resolve() : server.once('exit', resolve));
   fs.rmSync(dir, { recursive: true, force: true });

@@ -36,6 +36,19 @@ var action_speed = 1.0
 var cast_remaining = 0.0
 var cast_skill = ""
 var previous_attack_flag = false
+var motion_speed = 0.0
+var motion_distance = 0.0
+var previous_position = Vector3.ZERO
+var have_motion_sample = false
+var stride_length = 7.2
+var windup_remaining = 0.0
+var winding_up = false
+var windup_clip_time = 0.0
+var hit_recoil = 0.0
+var model_rest_position = Vector3.ZERO
+var model_rest_rotation = Vector3.ZERO
+var health_bar: MeshInstance3D
+var health_fill: MeshInstance3D
 
 func setup(model_id: String, title: String, def: Dictionary = {}):
 	definition = def; display_name = title; base_model = model_id
@@ -50,6 +63,8 @@ func setup(model_id: String, title: String, def: Dictionary = {}):
 		model = Art.packed("res://generated/actors/%s.glb" % asset_id).instantiate()
 	add_child(model)
 	model_rest_y = model.position.y
+	model_rest_position = model.position; model_rest_rotation = model.rotation
+	stride_length = {"rabbit": 2.4, "wolf": 5.0, "boar": 4.5, "spider": 3.8, "scorpion": 3.8, "treant": 6.0, "golem": 5.8}.get(model_id, 7.2)
 	animator = model.find_child("AnimationPlayer", true, false)
 	if animator:
 		for clip in animator.get_animation_list():
@@ -69,6 +84,16 @@ func setup(model_id: String, title: String, def: Dictionary = {}):
 	label.modulate = Color("e7d8ab") if kind == "n" else Color.WHITE
 	label.outline_modulate = Color("18201b"); label.outline_size = 10
 	add_child(label)
+	if kind == "m":
+		health_bar = _health_quad(Vector2(1.45, 0.10), Color("211617")); health_bar.position.y = label.position.y - 0.3
+		health_fill = _health_quad(Vector2(1.4, 0.065), Color("bf4338")); health_fill.position.y = health_bar.position.y; health_fill.position.z = 0.012
+
+func _health_quad(size: Vector2, color: Color) -> MeshInstance3D:
+	var node = MeshInstance3D.new(); var quad = QuadMesh.new(); quad.size = size; node.mesh = quad
+	var mat = StandardMaterial3D.new(); mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED; mat.albedo_color = color
+	node.material_override = mat; node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(node); return node
 
 func apply_look(data: Dictionary):
 	if data == look: return
@@ -78,6 +103,7 @@ func apply_look(data: Dictionary):
 			var replacement = Art.actor(desired)
 			if replacement:
 				model.queue_free(); model = replacement; add_child(model); active_art = desired
+				model_rest_position = model.position; model_rest_y = model.position.y; model_rest_rotation = model.rotation
 				animator = model.find_child("AnimationPlayer", true, false); last_clip = ""
 				weapon_node = null; shield_node = null; helm_node = null
 				_attach_weapon("warrior")
@@ -133,13 +159,14 @@ func snapshot(row: Array, timestamp: float):
 	if snapshots.size() > 30: snapshots.pop_front()
 	var flags = int(row[5]); moving = (flags & 1) != 0; casting = (flags & 4) != 0
 	var attack_flag = (flags & 2) != 0
-	if attack_flag and not previous_attack_flag and action_until <= 0: play_action("attack")
+	if attack_flag and not previous_attack_flag and action_until <= 0 and windup_remaining <= 0: play_action("attack")
 	previous_attack_flag = attack_flag
 	dead = (flags & 8) != 0; hp = row[6]
 	status = int(row[7]) if row.size() > 7 else 0
 	seen = Time.get_ticks_msec(); visible = true
 
 func interpolate(time: float):
+	if winding_up: return
 	while snapshots.size() > 2 and snapshots[1].t <= time: snapshots.pop_front()
 	if snapshots.size() < 2: return
 	var a = snapshots[0]; var b = snapshots[1]
@@ -147,21 +174,47 @@ func interpolate(time: float):
 	position = a.p.lerp(b.p, factor); rotation.y = lerp_angle(a.r, b.r, minf(1, factor))
 
 func _process(dt):
+	var displacement = position - previous_position; displacement.y = 0
+	var traveled = displacement.length() if have_motion_sample and displacement.length() < 4.0 else 0.0
+	previous_position = position; have_motion_sample = true
+	motion_speed = lerpf(motion_speed, traveled / maxf(dt, 0.001), 1.0 - exp(-dt * 14.0))
+	if moving and not dead: motion_distance += traveled
 	attack_time = maxf(0, attack_time - dt)
 	action_until = maxf(0, action_until - dt)
 	cast_remaining = maxf(0, cast_remaining - dt)
 	if is_instance_valid(bubble): bubble.visible = Time.get_ticks_msec() < bubble_until and not dead
 	if not model: return
+	hit_recoil = maxf(0, hit_recoil - dt)
+	model.position = model_rest_position + Vector3(0, 0, -sin(hit_recoil / 0.22 * PI) * 0.12)
+	model.rotation = model_rest_rotation
+	if moving and not dead and action_until <= 0:
+		model.rotation.x += clampf(motion_speed / 18.0, 0, 1) * 0.065
 	death_elapsed = death_elapsed + dt if dead else 0.0
 	if kind == "m": model.position.y = model_rest_y - maxf(0, death_elapsed - 3.0) * 0.65
 	if not animator or not animator.has_animation("death"):
 		model.rotation.z = lerp_angle(model.rotation.z, PI / 2 if dead else 0, minf(1, dt * 10))
-	var clip = "cast" if casting or cast_remaining > 0 else ("walk" if moving else "idle")
+	var locomotion = "run" if motion_speed > 5.0 and animator and animator.has_animation("run") else "walk"
+	var clip = "cast" if casting or cast_remaining > 0 else (locomotion if moving and motion_speed > 0.2 else "idle")
 	if action_until > 0: clip = action_clip
 	elif attack_time > 0 and not casting: clip = "attack"
 	if dead: clip = "death" if animator and animator.has_animation("death") else "idle"
+	if winding_up and not dead:
+		windup_remaining -= dt
+		if windup_remaining < -0.5: winding_up = false; action_until = 0
+		if animator:
+			animator.seek(minf(windup_clip_time, animator.current_animation_position), true)
+		if windup_remaining <= 0 and animator: animator.speed_scale = 0.0
+		clip = action_clip
 	if animator and clip != last_clip and animator.has_animation(clip):
-		animator.play(clip, 0.1, action_speed if action_until > 0 and not dead else 1.0); last_clip = clip
+		animator.speed_scale = 1.0
+		animator.play(clip, 0.14, action_speed if action_until > 0 and not dead else 1.0); last_clip = clip
+	if animator and clip in ["walk", "run"] and not dead:
+		var stride = stride_length if clip == "run" else stride_length * 0.48
+		animator.speed_scale = clampf(motion_speed * animator.get_animation(clip).length / stride, 0.45, 2.1)
+	elif animator and not winding_up: animator.speed_scale = 1.0
+	if health_bar:
+		health_bar.visible = label.visible and not dead and (selected or hp < 100 or windup_remaining > 0)
+		health_fill.visible = health_bar.visible; health_fill.mesh.size.x = maxf(0.01, 1.4 * hp / 100.0)
 	if label:
 		label.text = display_name + (" · повержен" if dead else "")
 		label.modulate = Color("ffe3a6") if selected else (Color("ff7373") if status == 2 else (Color("d49bff") if status == 1 else (Color("e7d8ab") if kind == "n" else Color.WHITE)))
@@ -172,8 +225,29 @@ func play_action(clip: String, duration = 0.0):
 	action_until = duration if duration > 0 else length
 	action_speed = length / maxf(0.05, action_until)
 	action_clip = clip
-	animator.play(clip, 0.06, action_speed); animator.seek(0, true); last_clip = clip
+	animator.speed_scale = 1.0
+	animator.play(clip, 0.08, action_speed); animator.seek(0, true); last_clip = clip
 	if clip == "attack": attack_time = action_until
+
+func begin_windup(duration: float, facing: float):
+	if dead: return
+	rotation.y = facing; moving = false
+	var clip = "windup" if animator and animator.has_animation("windup") else "attack"
+	if not animator or not animator.has_animation(clip): return
+	windup_clip_time = animator.get_animation(clip).length * (0.95 if clip == "windup" else 0.3)
+	play_action(clip, duration * animator.get_animation(clip).length / maxf(0.01, windup_clip_time))
+	windup_remaining = duration; winding_up = true
+
+func finish_windup():
+	windup_remaining = 0; winding_up = false
+	play_action("attack", 0.38)
+	if animator and action_clip == "attack" and not animator.has_animation("windup"):
+		animator.seek(windup_clip_time, true)
+
+func receive_hit():
+	if dead: return
+	hit_recoil = 0.22
+	if action_until <= 0 and not casting and not winding_up: play_action("hit", 0.22)
 
 func begin_cast(id: String, duration: float):
 	cast_skill = id; cast_remaining = duration
@@ -185,6 +259,8 @@ func release_cast():
 
 func cancel_presentation():
 	cast_remaining = 0; cast_skill = ""; casting = false; action_until = 0; attack_time = 0
+	windup_remaining = 0; winding_up = false; hit_recoil = 0; motion_speed = 0; have_motion_sample = false
+	if animator: animator.speed_scale = 1.0
 
 func cast_origin() -> Vector3:
 	if is_instance_valid(weapon_node) and weapon_node.visible:

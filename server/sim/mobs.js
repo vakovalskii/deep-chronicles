@@ -10,8 +10,8 @@ export function createMobs() {
   const byId = new Map(list.map((m) => [m.id, m]));
 
   // один шаг мира: ИИ всех мобов. onHit — «моб бьёт игрока», решает вызывающий.
-  const tick = (dt, players, now, onHit) => {
-    const ctx = { players, now, onHit };
+  const tick = (dt, players, now, onHit, onAttack) => {
+    const ctx = { players, now, onHit, onAttack };
     for (const m of list) mobStep(m, ctx, dt);
   };
 
@@ -27,6 +27,7 @@ export function createMobs() {
   // смерть моба: опыт и добыча — тому, кто нанёс больше урона
   const kill = (m, now) => {
     m.dead = true; m.hp = 0; m.state = 'dead'; m.target = null;
+    m.windup = null; m.attackT = 0; m.moving = false;
     m.respawnAt = now + (m.def.respawn || 25) * 1000; m.diedAt = now;
     let top = null, best = 0;
     for (const [id, d] of m.hitBy) if (d > best) { best = d; top = id; }

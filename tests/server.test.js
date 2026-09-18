@@ -13,7 +13,7 @@ before(async () => {
   srv = spawn('node', ['--no-warnings', 'server/server.js'], { env: { ...process.env, PORT: String(PORT), DB, DEV_CMD: '1', AUTH_TRIES: '1000' }, stdio: 'pipe' });
   await new Promise((r) => srv.stdout.once('data', r));
 });
-after(() => { srv.kill(); fs.rmSync(DIR, { recursive: true, force: true }); });
+after(async () => { srv.kill(); await new Promise(r => srv.exitCode !== null ? r() : srv.once('exit', r)); fs.rmSync(DIR, { recursive: true, force: true }); });
 
 // клиент: ждёт сообщения нужного типа
 function client() {
@@ -258,4 +258,47 @@ test('PvP: урон считает сервер, в городе нельзя, �
   assert.ok(me2.karma > 0, 'карма не начислена');
   clearInterval(keep);
   A.c.ws.close(); B.c.ws.close(); await A.c.closed(); await B.c.closed();
+});
+
+test('дроп по WebSocket: два игрока видят награду, владелец подбирает один раз, профиль сохраняется', async () => {
+  const a = client(), b = client(); await Promise.all([a.open(), b.open()]);
+  try {
+    a.send({ t: 'register', name: 'Добытчик', pass: 'loot-test', cls: 'warrior' });
+    b.send({ t: 'register', name: 'Сосед', pass: 'loot-test', cls: 'mage' });
+    const [auth] = await Promise.all([a.wait('authok'), b.wait('authok')]);
+    a.send({ t: 'dev', x: -448, z: 418, drop: 'pelt' });
+    b.send({ t: 'dev', x: -448, z: 418 });
+    const snapWith = async (c, pred) => { for (let i = 0; i < 100; i++) { const m = await c.wait('snap'); if (pred(m.g || [])) return m.g; } throw Error('ground snapshot missing'); };
+    const first = await snapWith(a, g => g.some(d => d.ownerName === 'Добытчик'));
+    const coin = first.find(d => d.item === 'coins' && d.ownerName === 'Добытчик');
+    const item = first.find(d => d.item === 'pelt' && d.ownerName === 'Добытчик');
+    assert.ok(coin && item);
+    const other = await snapWith(b, g => g.some(d => d.id === coin.id));
+    assert.equal(other.find(d => d.id === coin.id).available, false);
+    b.send({ t: 'pickup', id: coin.id, n: 999999 });
+    assert.match((await b.wait('pickup_err')).reason, /принадлежит/);
+    a.send({ t: 'dev', x: -460, z: 418 }); await untilP(a, p => p.x === -460);
+    a.send({ t: 'pickup', id: coin.id }); assert.match((await a.wait('pickup_err')).reason, /ближе/);
+    a.send({ t: 'dev', x: coin.x, z: coin.z }); await untilP(a, p => Math.abs(p.x - coin.x) < 0.1);
+    a.send({ t: 'pickup', id: coin.id, n: 999999, item: 'sword_crystal' });
+    a.send({ t: 'pickup', id: coin.id });
+    assert.match((await a.wait('pickup_err')).reason, /уже/);
+    const money = await untilP(a, p => p.coins === auth.p.coins + 17);
+    assert.ok(!money.inv.some(e => e.id === 'sword_crystal'));
+    a.send({ t: 'dev', x: item.x, z: item.z }); await untilP(a, p => Math.abs(p.x - item.x) < 0.1);
+    a.send({ t: 'pickup', id: item.id });
+    await untilP(a, p => p.inv.some(e => e.id === 'pelt' && e.n === 1));
+    // Verify durability while the account is still connected, before disconnect autosave.
+    const { DatabaseSync } = await import('node:sqlite');
+    const db = new DatabaseSync(DB, { readOnly: true });
+    const saved = JSON.parse(db.prepare('SELECT save FROM accounts WHERE key = ?').get('добытчик').save); db.close();
+    assert.equal(saved.coins, auth.p.coins + 17); assert.equal(saved.inv.find(e => e.id === 'pelt').n, 1);
+    await snapWith(b, g => !g.some(d => d.id === coin.id || d.id === item.id));
+    a.ws.close(); await a.closed(); await pause(200);
+    const resumed = client(); await resumed.open();
+    try {
+      resumed.send({ t: 'auth', token: auth.token }); const ok = await resumed.wait('authok');
+      assert.equal(ok.p.coins, auth.p.coins + 17); assert.equal(ok.p.inv.find(e => e.id === 'pelt').n, 1);
+    } finally { resumed.ws.close(); await resumed.closed(); }
+  } finally { a.ws.close(); b.ws.close(); await Promise.all([a.closed(), b.closed()]); }
 });

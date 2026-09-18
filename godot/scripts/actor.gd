@@ -12,6 +12,8 @@ var animator: AnimationPlayer
 var label: Label3D
 var hp = 100.0
 var dead = false
+var death_elapsed = 0.0
+var model_rest_y = 0.0
 var moving = false
 var casting = false
 var attack_time = 0.0
@@ -41,10 +43,12 @@ func setup(model_id: String, title: String, def: Dictionary = {}):
 		var asset_id = "mage_generated" if model_id == "mage" else model_id
 		model = Art.packed("res://generated/actors/%s.glb" % asset_id).instantiate()
 	add_child(model)
+	model_rest_y = model.position.y
 	animator = model.find_child("AnimationPlayer", true, false)
 	if animator:
 		for clip in animator.get_animation_list():
 			if clip in ["idle", "walk", "cast"]: animator.get_animation(clip).loop_mode = Animation.LOOP_LINEAR
+			if clip == "death": animator.get_animation(clip).loop_mode = Animation.LOOP_NONE
 	if art_model and art_id in ["warrior", "warrior_chain", "mage"]: _attach_weapon("warrior" if art_id == "warrior_chain" else art_id)
 	else:
 		weapon_node = model.find_child("weapon", true, false)
@@ -138,6 +142,8 @@ func _process(dt):
 	attack_time = maxf(0, attack_time - dt)
 	if is_instance_valid(bubble): bubble.visible = Time.get_ticks_msec() < bubble_until and not dead
 	if not model: return
+	death_elapsed = death_elapsed + dt if dead else 0.0
+	if kind == "m": model.position.y = model_rest_y - maxf(0, death_elapsed - 3.0) * 0.65
 	if not animator or not animator.has_animation("death"):
 		model.rotation.z = lerp_angle(model.rotation.z, PI / 2 if dead else 0, minf(1, dt * 10))
 	var clip = "attack" if attack_time > 0 else ("cast" if casting else ("walk" if moving else "idle"))
@@ -145,6 +151,7 @@ func _process(dt):
 	if animator and clip != last_clip and animator.has_animation(clip):
 		animator.play(clip, 0.15); last_clip = clip
 	if label:
+		label.text = display_name + (" · повержен" if dead else "")
 		label.modulate = Color("ffe3a6") if selected else (Color("ff7373") if status == 2 else (Color("d49bff") if status == 1 else (Color("e7d8ab") if kind == "n" else Color.WHITE)))
 
 func _attach_weapon(id: String):

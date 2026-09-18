@@ -13,3 +13,5 @@
 - Touch использует увеличенные кнопки и джойстик. Проверка на десктопе не является проверкой Android/iOS.
 
 Файлы: `hud.gd`, `chat_panel.gd`, `window_frame.gd`, `character_preview.gd`, `actor.gd`, `main.gd`. Предпросмотр нового героя экспортируется из `server/sim/player.js::newChar`, существующего — из серверного профиля. Визуальные проверки: `npm run test:native` и `npm run test:native -- --touch`, включая скриншоты `login.png`, `create-character.png`, `character.png`, `inventory.png`, `target-selected.png`.
+
+Дополнительные изображения и выводы: [C4_RESEARCH.md](C4_RESEARCH.md). Кошелёк и вес закреплены под содержимым сумки; фильтры/поиск/сортировка работают с исходными индексами серверного инвентаря. Механика подбора: [GROUND_LOOT.md](GROUND_LOOT.md).

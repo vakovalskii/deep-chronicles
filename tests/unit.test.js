@@ -304,3 +304,26 @@ test('новичок начинает в экипировке, которую м
     assert.ok(P.hp > 0 && P.mp > 0 && P.coins > 0, `${cls}: пустые начальные значения`);
   }
 });
+
+// Ground rewards are server-owned and consumed atomically.
+import { createGroundLoot } from '../server/sim/loot.js';
+import { LOOT } from '../src/loot.js';
+test('дроп: право владельца переживает смену соединения; чужой подбор после защиты', () => {
+  const loot = createGroundLoot(), now = 1000;
+  const [coin, item] = loot.spawn({ x: -430, z: 385 }, { coins: 23, drops: ['pelt'] }, 'owner', 'Владелец', now);
+  assert.equal(loot.snapshotFor(coin, 100, 'stranger', now)[0].available, false);
+  assert.ok(loot.claim(coin.id, coin, 'stranger', now).error);
+  assert.equal(loot.claim(coin.id, { ...coin, id: 99 }, 'owner', now).drop.n, 23);
+  assert.ok(loot.claim(coin.id, coin, 'owner', now).error, 'дубль награды');
+  assert.equal(loot.claim(item.id, item, 'stranger', now + LOOT.protectionMs).drop.item, 'pelt');
+});
+test('дроп: мёртвый, далёкий, неверный ID и истёкший срок не дают награды', () => {
+  const loot = createGroundLoot(), now = 1000;
+  const [d] = loot.spawn({ x: -430, z: 385 }, { coins: 19, drops: [] }, 'owner', 'Владелец', now);
+  assert.ok(loot.claim(d.id, { ...d, dead: true }, 'owner', now).error);
+  assert.ok(loot.claim(d.id, { ...d, x: d.x + LOOT.pickupRange + 0.01 }, 'owner', now).error);
+  assert.ok(loot.claim(d.id, { ...d, y: d.y + 10 }, 'owner', now).error);
+  assert.ok(loot.claim('forged', d, 'owner', now).error);
+  assert.ok(loot.claim(d.id, d, 'owner', now + LOOT.lifetimeMs).error);
+  assert.deepEqual(loot.snapshotFor(d, 100, 'owner', now + LOOT.lifetimeMs), []);
+});

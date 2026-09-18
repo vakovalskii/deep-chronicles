@@ -26,7 +26,8 @@
     "test:web": "npm run test:unit && npm run test:server && npm run build:web && npm run test:e2e",
     "native:verify": "node tools/godot/verify.mjs",
     "native:probe": "node tools/godot/probe.mjs",
-    "native:weapons": "node tools/godot/weapons.mjs"
+    "native:weapons": "node tools/godot/weapons.mjs",
+    "native:references": "node tools/godot/references.mjs"
   },
   "dependencies": {
     "three": "^0.170.0",

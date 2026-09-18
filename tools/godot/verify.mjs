@@ -17,7 +17,7 @@ const report = {
   target: target || null, rendered: !args.includes('--headless'), steps: [], inputs: {}, outputs: {},
 };
 const digest = file => crypto.createHash('sha256').update(fs.readFileSync(path.join(root, file))).digest('hex');
-const inputFiles = capture('git', ['ls-files', '--cached', '--others', '--exclude-standard', '--', '.nvmrc', 'package.json', 'package-lock.json', 'godot/project.godot', 'godot/export_presets.cfg', 'godot/scripts', 'godot/scenes', 'godot/resources', 'godot/shaders', 'godot/assets', 'godot/tests', 'tools/godot', 'src', 'server', 'public/assets'])?.split('\n') || [];
+const inputFiles = capture('git', ['ls-files', '--cached', '--others', '--exclude-standard', '--', '.nvmrc', 'package.json', 'package-lock.json', 'godot/project.godot', 'godot/export_presets.cfg', 'godot/scripts', 'godot/scenes', 'godot/resources', 'godot/shaders', 'godot/assets', 'godot/tests', 'tools/godot', 'deploy', 'tests', 'src', 'server', 'public/assets'])?.split('\n') || [];
 for (const file of new Set(inputFiles)) if (file && fs.existsSync(path.join(root, file))) report.inputs[file] = digest(file);
 function save() { fs.writeFileSync(path.join(directory, 'report.json'), JSON.stringify(report, null, 2) + '\n'); }
 async function step(name, command, argv, timeout = 300000) {
@@ -45,6 +45,14 @@ try {
   for (const file of ['godot/generated/catalog.json', 'godot/generated/world.json', 'godot/generated/heights.bin']) report.outputs[file] = digest(file);
   await step('weapons', godotBinary(), [...(args.includes('--headless') ? ['--headless'] : []), '--path', 'godot', '--script', 'res://tests/weapons.gd', '--', '--test-mode', `--output=${directory}/weapons.png`]);
   if (!args.includes('--offline')) await step('main-server', process.execPath, ['tools/godot/probe.mjs']);
+  if (args.includes('--web')) {
+    await step('web-build', process.execPath, ['node_modules/vite/bin/vite.js', 'build']);
+    await step('web-browser', process.execPath, ['tests/e2e.mjs'], 600000);
+    for (const file of fs.readdirSync(path.join(root, 'dist'), { recursive: true })) {
+      const name = `dist/${file}`;
+      if (fs.statSync(path.join(root, name)).isFile()) report.outputs[name] = digest(name);
+    }
+  }
   if (target) {
     await step(`build-${target}`, process.execPath, ['tools/godot/build.mjs', target, ...(args.includes('--debug') ? ['--debug'] : [])]);
     const files = { macos: 'macos/Хроники Глубин.zip', windows: 'windows/Хроники Глубин.exe', android: 'android/khroniki-glubin.apk', ios: 'ios/khroniki-glubin.zip' };

@@ -139,6 +139,7 @@ func _run():
 		game.pick(game.camera.unproject_position(mob.position + Vector3.UP * 1.1))
 		check(await wait_for(func(): return game.target == mob and game.target_arrow.visible and game.hud.target_panel.visible and mob.selected), "clicking a mob displays its name, HP, arrow and selection ring")
 		await _screenshot("target-selected.png")
+		var coins_before = int(game.profile.coins)
 		game.attack(); game.use_skill("power_strike")
 		var killed = await wait_for(func(): return game.profile.get("kills", 0) > 0, 12)
 		if not killed:
@@ -148,7 +149,22 @@ func _run():
 					for event in message.e:
 						if event.k == "msg": print("Server: ", event.text)
 		check(killed, "native target + attack + skill kill a server mob and award progress")
+		check(int(game.profile.coins) == coins_before, "kill awards XP but coins stay on the ground")
+		check(await wait_for(func(): return game.ground_loot.values().any(func(d): return d.data.item == "coins")), "server kill spawns visible ground coins")
+		game.camera_distance = 15; game.camera_pitch = 0.85; game.camera_yaw += PI
+		await create_timer(0.65).timeout
+		check(mob.dead and mob.last_clip == "death" and mob.death_elapsed > 0, "animal plays its death animation and leaves a corpse")
+		await _screenshot("death-and-loot.png")
+		var coins_drop
+		for drop in game.ground_loot.values():
+			if drop.data.item == "coins": coins_drop = drop; break
+		if coins_drop:
+			var reward = int(coins_drop.data.n); var drop_id = str(coins_drop.data.id)
+			game.pick(game.camera.unproject_position(coins_drop.position + coins_drop.label.position))
+			check(await wait_for(func(): return int(game.profile.coins) == coins_before + reward and not game.ground_loot.has(drop_id)), "screen click picks up actual coins and server credits the wallet once")
+
 	else: check(false, "an unobstructed mob outside peace zones is available for combat test")
+	game.camera_distance = 28; game.camera_pitch = 0.56; game.camera_yaw = 0.45
 	game._cancel_attack()
 	await create_timer(0.25).timeout
 	check(game.hud.minimap.mob_markers.size() == game.mobs.values().filter(func(m): return m.visible and not m.dead and Time.get_ticks_msec() - m.seen < 1500).size(), "minimap removes dead and stale mobs")
@@ -161,6 +177,31 @@ func _run():
 		if m.t == "authok": peer_id = int(m.id)
 	await _dev({"x": -448, "z": 418})
 	check(await wait_for(func(): return game.players.has(peer_id) and game.players[peer_id].visible), "native multiplayer renders a remote player")
+	await _dev({"drop": "pelt"})
+	check(await wait_for(func(): return game.ground_loot.values().any(func(d): return d.data.item == "pelt")), "server item drop has a native model and name")
+	var pelt_drop
+	for drop in game.ground_loot.values():
+		if drop.data.item == "pelt": pelt_drop = drop; break
+	if pelt_drop:
+		var drop_id = str(pelt_drop.data.id)
+		check(await wait_for(func(): return peer_inbox.any(func(m): return m.t == "snap" and m.get("g", []).any(func(d): return d.id == drop_id))), "second client sees the same ground item ID")
+		await _dev({"x": pelt_drop.position.x - 6, "z": pelt_drop.position.z})
+		await create_timer(0.2).timeout
+		game.pick(game.camera.unproject_position(pelt_drop.position + pelt_drop.label.position))
+		check(await wait_for(func(): return _bag("pelt") >= 0 and not game.ground_loot.has(drop_id)), "click approaches a distant ground item and it enters the authoritative inventory")
+		peer_inbox.clear()
+		check(await wait_for(func(): return peer_inbox.any(func(m): return m.t == "snap" and not m.get("g", []).any(func(d): return d.id == drop_id))), "pickup disappears from both clients")
+	game.hud.show_window("inventory")
+	check(game.hud.wallet_label.text.contains(game.hud._money(int(game.profile.coins))), "inventory wallet shows the exact server balance")
+	_click("bag_filter", 3)
+	await process_frame
+	check(game.hud.bag_grid.get_children().any(func(b): return b.payload.get("id") == "pelt") and not game.hud.bag_grid.get_children().any(func(b): return b.payload.get("id") == "potion_hp"), "loot filter keeps loot and hides consumables")
+	game.hud.bag_filter = 0; game.hud.bag_query = "Шкура"; game.hud._fill_bag()
+	check(game.hud.bag_grid.get_children().filter(func(b): return not b.payload.is_empty()).all(func(b): return b.payload.idx == _bag(b.payload.id)), "filtered bag preserves original server indices")
+	game.hud.bag_query = ""; game.hud.show_window("inventory", true)
+	await _screenshot("inventory-loot.png")
+	game.hud.bag_filter = 0; game.hud.close_window()
+
 	game.hud.chat.input.text = "native public chat"; game.hud.chat.submit()
 	check(await wait_for(func(): return peer_inbox.any(func(m): return m.t == "chat" and m.text == "native public chat")), "public chat interoperates")
 	game.hud.chat.select_channel("pm"); game.hud.chat.recipient.text = "NativePeer"

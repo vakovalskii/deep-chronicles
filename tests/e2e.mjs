@@ -113,7 +113,7 @@ try {
     return m ? { id: m.id, x: m.obj.position.x, z: m.obj.position.z, name: m.def.name } : null;
   }, kind);
 
-  await step('бой: убийство моба даёт опыт и монеты', async () => {
+  await step('бой: опыт за убийство, монеты только после подбора', async () => {
     await page.waitForFunction(() => [...window.__g.mobs.values()].some((m) => !m.dead && m.obj.visible), null, { timeout: 15000 });
     const before = await G(() => ({ xp: window.__g.P.xp, coins: window.__g.P.coins, kills: window.__g.P.kills }));
     await G(() => window.__g.dev({ lvl: 20, hp: 99999 }));
@@ -124,7 +124,11 @@ try {
     await G((t) => { const g = window.__g; g.target = g.mobs.get(t.id); g.attack(); }, m);
     await page.waitForFunction((k) => window.__g.P.kills > k, before.kills, { timeout: 30000 });
     const after = await G(() => ({ xp: window.__g.P.xp, coins: window.__g.P.coins }));
-    expect(after.xp > before.xp && after.coins > before.coins, JSON.stringify({ before, after }));
+    expect(after.xp > before.xp && after.coins === before.coins, JSON.stringify({ before, after }));
+    await page.waitForFunction(() => [...window.__g.groundDrops.entries.values()].some(d => d.data.item === 'coins'));
+    await page.keyboard.press('KeyZ');
+    await untilP(page, n => window.__g.P.coins > n, before.coins);
+    expect(await page.isVisible('[data-pickup]'), 'нет кнопки подбора');
   });
 
   await step('читер: подмена профиля в консоли не доходит до сервера', async () => {
@@ -414,7 +418,9 @@ try {
     await other.click('#start-new'); await msg('занято');
     await other.click('#start-login'); await msg('Неверное');
     await other.fill('#cpass', 'пароль1'); await other.click('#start-login');
-    await other.waitForFunction(() => window.__g?.P, null, { timeout: 8000 });
+    await other.waitForFunction(() => window.__g?.P, null, { timeout: 30000, polling: 100 }).catch(async error => {
+      throw new Error(`Вход второго устройства: ${await other.locator('#start-msg').textContent().catch(() => 'форма закрыта')}; ${error.message}`);
+    });
     expect((await other.evaluate(() => window.__g.P.equip.weapon)) === 'staff_oak', 'на другом устройстве не тот персонаж');
     await page.waitForFunction(() => document.getElementById('syslog').textContent.includes('другого устройства'), null, { timeout: 5000 });
     await other.close();

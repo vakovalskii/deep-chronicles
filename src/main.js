@@ -1,3 +1,5 @@
+import { groundLootView } from './ground-loot.js';
+import { LOOT } from './loot.js';
 import * as THREE from 'three';
 import { CLASSES, SKILLS, ITEMS, MOBS, SHOP, GRADES, SLOTS, SETS, xpToNext, MAX_LEVEL } from './data.js';
 import { calcStats, enchValue, wearError, migrate, SAFE_ENCH, ENCH_CHANCE } from './stats.js';
@@ -20,6 +22,8 @@ renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 document.body.prepend(renderer.domElement);
 const scene = new THREE.Scene();
+const groundDrops = groundLootView(scene);
+let pendingPickup = null, pickupSentAt = 0;
 const SKY = new THREE.Color(0x9cc4e8), CRYPT_SKY = new THREE.Color(0x07060a);
 scene.background = SKY.clone(); // перекрывается куполом неба
 scene.fog = new THREE.Fog(SKY.clone(), 150, 620);
@@ -320,6 +324,7 @@ function attackTarget(t) {
   netSend({ t: 'atk', id: t.id, kind: t.isPlayer ? 'p' : 'm' });
 }
 function stopAttack() {
+  pendingPickup = null; pickupSentAt = 0;
   if (!attacking) return;
   attacking = false; pendingSkill = null; netSend({ t: 'atk', id: null });
 }
@@ -406,7 +411,7 @@ function netConnect() {
     if (net.ws !== ws) return;
     net.ok = false; net.authed = false;
     for (const r of remotes.values()) scene.remove(r.obj);
-    remotes.clear();
+    remotes.clear(); groundDrops.sync([]); pendingPickup = null;
     if (net.kicked) return;
     if (!P) startReady();
     setTimeout(netConnect, net.retry); net.retry = Math.min(15000, net.retry * 2);
@@ -444,7 +449,9 @@ function onNet(m) {
     r.name = m.name; r.look = m.look;
     if (m.look) applyLook(r.obj, m.look);
   }
+  if (m.t === 'pickup_err') { pendingPickup = null; log(m.reason, 'bad'); }
   if (m.t === 'snap') {
+    groundDrops.sync(m.g || []);
     const now = performance.now();
     // смещение часов сервера: берём минимальную задержку (самые быстрые пакеты), медленно отпускаем
     const d = Date.now() - (m.ts || Date.now());
@@ -554,10 +561,11 @@ function onEvent(e) {
     return;
   }
   if (e.k === 'kill') {
-    log(`${e.name} повержен. Опыт +${e.xp}, монеты +${e.coins}`, 'good');
+    log(`${e.name} повержен. Опыт +${e.xp}. ${e.ground ? 'Добыча на земле: кликните или нажмите Z.' : `Монеты +${e.coins}`}`, 'good');
     if (e.boss) banner(`${e.name} повержен!`);
     return;
   }
+  if (e.k === 'pickup') { log(`Подобрано: ${e.item === 'coins' ? 'Монеты' : ITEMS[e.item]?.name} ×${e.n}`, 'loot'); return; }
   if (e.k === 'loot') {
     const it = ITEMS[e.id]; if (!it) return;
     log(`Получено: ${it.name}`, it.rare ? 'rare' : 'loot');
@@ -735,6 +743,9 @@ renderer.domElement.addEventListener('contextmenu', (e) => e.preventDefault());
 function pickAt(cx, cy) {
   ndc.set((cx / innerWidth) * 2 - 1, -(cy / innerHeight) * 2 + 1);
   ray.setFromCamera(ndc, camera);
+  const dropHit = ray.intersectObjects([...groundDrops.entries.values()].map(d => d.obj), true)[0];
+  if (dropHit) { pickupDrop(dropHit.object.userData.groundDrop); return; }
+  pendingPickup = null;
   const pickables = [...[...mobs.values()].filter((m) => !m.dead && m.obj.visible && flatDist(m.obj.position, hero.position) < 120).map((m) => m.obj), ...npcs.map((n) => n.obj), ...[...remotes.values()].filter((r) => r.obj.visible).map((r) => r.obj)];
   let hit = ray.intersectObjects(pickables, true)[0];
   // на телефоне палец толще модели — ищем ближайшего к точке касания моба в радиусе 36 px
@@ -830,6 +841,7 @@ addEventListener('keydown', (e) => {
   if (e.code === 'Digit5') useItem('potion_mp');
   if (e.code === 'KeyV') { cam.yaw = hero.rotation.y + Math.PI; cam.pitch = 0.55; cam.dist = 18; }
   if (e.code === 'Enter') { e.preventDefault(); $('chatin').focus(); return; }
+  if (e.code === 'KeyZ') pickupNearest();
   if (e.code === 'KeyI') toggle('inv');
   if (e.code === 'KeyC') toggle('char');
   if (e.code === 'KeyM') toggle('bigmap');
@@ -926,11 +938,20 @@ function updateHero(dt) {
   // WASD — прямое управление относительно камеры
   const kx = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0) + joy.x, kz = (keys.KeyS ? 1 : 0) - (keys.KeyW ? 1 : 0) + joy.y;
   if (Math.abs(kx) + Math.abs(kz) > 0.15) {
-    dest = null; stopAttack(); talkTo = null;
+    dest = null; stopAttack(); talkTo = null; pendingPickup = null;
     const f = new THREE.Vector3(Math.sin(cam.yaw + Math.PI), 0, Math.cos(cam.yaw + Math.PI)), r = new THREE.Vector3(-f.z, 0, f.x);
     const amt = Math.min(1, Math.hypot(kx, kz));
     const dir = f.multiplyScalar(-kz).add(r.multiplyScalar(kx)).normalize();
     moveEntity(hero.position, dir, s.speed * amt * dt, 0.6); hero.rotation.y = Math.atan2(dir.x, dir.z); heroSt.moving = true;
+  }
+  if (pendingPickup) {
+    const d = groundDrops.entries.get(pendingPickup);
+    if (!d) pendingPickup = null;
+    else if (flatDist(hero.position, d.obj.position) > LOOT.pickupRange - 0.65) stepTo(d.obj.position, s.speed, dt);
+    else if (!pickupSentAt) {
+      netSend({ t: 'st', x: hero.position.x, y: hero.position.y, z: hero.position.z, r: hero.rotation.y, a: 0 });
+      netSend({ t: 'pickup', id: pendingPickup }); pickupSentAt = performance.now();
+    } else if (performance.now() - pickupSentAt > 2500) pendingPickup = null;
   }
   // разговор с NPC
   if (talkTo) {
@@ -1060,10 +1081,11 @@ function renderHud() {
 function renderSkills() {
   const c = CLASSES[P.cls];
   $('skills').innerHTML = c.skills.map((id, i) => `<div class="slot" data-skill="${id}" title="${SKILLS[id].name} · мана ${SKILLS[id].mp} · перезарядка ${SKILLS[id].cd} с · с ${SKILLS[id].lvl} ур.">${png(id) ? `<i class="ico">${png(id)}</i>` : `<i style="background:#${SKILLS[id].color.toString(16).padStart(6, '0')}"></i>`}<b>${i + 1}</b><small>${SKILLS[id].name}</small><div class="cd"></div></div>`).join('')
-    + ['potion_hp', 'potion_mp'].map((id, i) => `<div class="slot" data-item="${id}" title="${ITEMS[id].name}">${png(id) ? `<i class="ico">${png(id)}</i>` : `<i style="background:#${ITEMS[id].color.toString(16).padStart(6, '0')};border-radius:50%"></i>`}<b>${i + 4}</b><small>${ITEMS[id].name}</small><span class="n"></span></div>`).join('');
+    + ['potion_hp', 'potion_mp'].map((id, i) => `<div class="slot" data-item="${id}" title="${ITEMS[id].name}">${png(id) ? `<i class="ico">${png(id)}</i>` : `<i style="background:#${ITEMS[id].color.toString(16).padStart(6, '0')};border-radius:50%"></i>`}<b>${i + 4}</b><small>${ITEMS[id].name}</small><span class="n"></span></div>`).join('') + '<button class="slot" data-pickup="1" title="Подобрать ближайшую добычу"><b>Z</b><small>Подобрать</small></button>';
 }
 $('skills').addEventListener('click', (e) => {
   const s = e.target.closest('.slot'); if (!s) return;
+  if (s.dataset.pickup) { pickupNearest(); return; }
   if (s.dataset.skill) useSkill(s.dataset.skill); else useItem(s.dataset.item);
 });
 // ---- иконки предметов (SVG, цвет — цвет предмета) ----
@@ -1403,4 +1425,15 @@ $('start-logout').onclick = () => {
 startReady();
 netConnect();
 // хук для автотестов: dev-сервер или ?test
-if (import.meta.env.DEV || location.search.includes('test')) window.__g = { get P() { return P; }, mobs, get hero() { return hero; }, cam, teleportTo, dev: (o) => netSend({ t: 'dev', ...o }), goTo: (x, z) => netSend({ t: 'dev', x, z }), useSkill, joy, useItem, openNpc, equipIdx, unequip, enchant, stats, get enchMode() { return enchMode; }, renderInv, remotes, net, npcs, respawn, netSend, get dead() { return dead; }, get target() { return target; }, set target(v) { setTarget(v); }, attack() { attackTarget(target); } };
+if (import.meta.env.DEV || location.search.includes('test')) window.__g = { get P() { return P; }, groundDrops, mobs, get hero() { return hero; }, cam, teleportTo, dev: (o) => netSend({ t: 'dev', ...o }), goTo: (x, z) => netSend({ t: 'dev', x, z }), useSkill, joy, useItem, openNpc, equipIdx, unequip, enchant, stats, get enchMode() { return enchMode; }, renderInv, remotes, net, npcs, respawn, netSend, get dead() { return dead; }, get target() { return target; }, set target(v) { setTarget(v); }, attack() { attackTarget(target); } };
+
+function pickupDrop(d) {
+  if (!d || dead) return;
+  if (!d.data.available) return log(`Добыча пока принадлежит ${d.data.ownerName}`, 'bad');
+  stopAttack(); dest = null; talkTo = null; pendingPickup = d.data.id; pickupSentAt = 0;
+}
+function pickupNearest() {
+  const list = [...groundDrops.entries.values()].filter(d => d.data.available && flatDist(d.obj.position, hero.position) < 25);
+  list.sort((a, b) => flatDist(a.obj.position, hero.position) - flatDist(b.obj.position, hero.position));
+  if (list.length) pickupDrop(list[0]); else log('Рядом нет доступной добычи.', 'info');
+}

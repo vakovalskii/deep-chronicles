@@ -46,6 +46,12 @@ var cast_duration = 1.0
 var cast_name = ""
 var active_buffs: Array = []
 var selected_item: Dictionary = {}
+var bag_filter = 0
+var bag_query = ""
+var bag_sort = 0
+var bag_search: LineEdit
+var bag_grid: GridContainer
+var wallet_label: Label
 var shop_tab = "buy"
 var window_scroll: ScrollContainer
 var pvp_enabled = false
@@ -211,14 +217,14 @@ func _game_hud():
 		var index = i
 		var button = _button(hotbar, "", func():
 			if index < 5: action.emit("hotbar", index)
-			else: action.emit(["attack", "target", "talk", "camera", "skills"][index - 5], null))
+			else: action.emit(["attack", "target", "talk", "pickup", "skills"][index - 5], null))
 		button.custom_minimum_size = Vector2(44 if not touch else 48, 44 if not touch else 48); button.expand_icon = true; button.add_theme_constant_override("icon_max_width", 32)
 		var number = _label(button, str(i + 1) if i < 9 else "0", 9); number.position = Vector2(3, 0); number.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		if i < 5: skill_buttons.append(button); hotbar_labels.append(number)
 		else:
-			button.text = ["⚔", "◎", "E", "V", "K"][i - 5]
-			button.tooltip_text = ["Атака · F", "Следующая цель · Tab", "Разговор · E", "Камера за спиной · V", "Умения · K"][i - 5]
-	quick_hint = _label(bottom, "F — атака · Tab — цель · E — разговор · ПКМ — камера", 10); quick_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			button.text = ["⚔", "◎", "E", "Z", "K"][i - 5]
+			button.tooltip_text = ["Атака · F", "Следующая цель · Tab", "Разговор · E", "Подобрать добычу · Z", "Умения · K"][i - 5]
+	quick_hint = _label(bottom, "F — атака · Tab — цель · Z — подбор · E — разговор", 10); quick_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	var commands = PanelContainer.new(); game_ui.add_child(commands)
 	commands.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
 	commands.offset_left = -292; commands.offset_right = -8; commands.offset_top = -58; commands.offset_bottom = -8
@@ -305,6 +311,7 @@ func toggle(kind: String):
 	else: show_window(kind)
 
 func show_window(kind: String, refresh = false):
+	var search_cursor = bag_search.caret_column if refresh and is_instance_valid(bag_search) and bag_search.has_focus() else -1
 	var scroll_y = window_scroll.scroll_vertical if refresh and is_instance_valid(window_scroll) else 0
 	close_window(); window_kind = kind
 	window = load("res://scripts/window_frame.gd").new(); game_ui.add_child(window)
@@ -358,9 +365,10 @@ func show_window(kind: String, refresh = false):
 			_button(list, "Вернуться в игру", close_window)
 		"settings": _settings(list)
 		"controls":
-			for line in ["WASD / ЛКМ по земле — движение", "ЛКМ по цели — выбрать; ещё раз — атаковать", "F — атака · Tab — следующая цель · E — разговор", "1–3 — умения · 4–5 — зелья здоровья и маны", "I — сумка · C — персонаж · K — умения · M — карта", "ПКМ и движение мыши — камера · Колесо — приближение", "V — камера за спиной · F11 — полный экран · Esc — меню", "Ctrl + атака — PvP; на телефоне включите PvP в окне героя", "Enter — чат · /w Имя текст — ЛС · /r текст — ответ", "+текст — торговый чат · Нажмите на имя в чате для ЛС", "Телефон: джойстик — движение; свайп по миру — камера", "Два пальца — масштаб; двойное нажатие на вещь — действие"]:
+			for line in ["WASD / ЛКМ по земле — движение", "ЛКМ по цели — выбрать; ещё раз — атаковать", "F — атака · Tab — следующая цель · E — разговор", "Z / 9 — подобрать ближайшую добычу; клик — подойти и поднять", "1–3 — умения · 4–5 — зелья здоровья и маны", "I — сумка · C — персонаж · K — умения · M — карта", "ПКМ и движение мыши — камера · Колесо — приближение", "V — камера за спиной · F11 — полный экран · Esc — меню", "Ctrl + атака — PvP; на телефоне включите PvP в окне героя", "Enter — чат · /w Имя текст — ЛС · /r текст — ответ", "+текст — торговый чат · Нажмите на имя в чате для ЛС", "Телефон: джойстик — движение; свайп по миру — камера", "Два пальца — масштаб; двойное нажатие на вещь — действие"]:
 				_wrapped(list, line)
 	window_scroll.set_deferred("scroll_vertical", scroll_y)
+	if search_cursor >= 0 and kind == "inventory": bag_search.grab_focus(); bag_search.caret_column = search_cursor
 
 func _wrapped(parent: Node, text: String, font_size = 13) -> Label:
 	var label = _label(parent, text, font_size); label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -443,8 +451,6 @@ func _character(list):
 		_wrapped(list, "%s · %s/%s · %s\n%s" % [st.name, int(st.have), st.parts.size(), "Бонус активен" if st.have == st.parts.size() else "Неполный комплект", _bonus_text(st.bonus)])
 
 func _inventory_grid(parent):
-	_wrapped(parent, "Монеты: %s · Вес: %.1f / %s" % [int(profile.coins), current_stats.load, int(current_stats.cap)], 14)
-	var load_bar = ProgressBar.new(); load_bar.custom_minimum_size.y = 12; load_bar.max_value = current_stats.cap; load_bar.value = current_stats.load; load_bar.show_percentage = false; parent.add_child(load_bar)
 	if current_stats.load > current_stats.cap * 0.7: _wrapped(parent, "Перегруз: скорость −40%, восстановление −50%. Освободите сумку.", 13).modulate = Color("f3b37d")
 	if enchant_scroll != "":
 		_wrapped(parent, "Выберите вещь для усиления. После +3 неудача уничтожает вещь. Шанс успеха: 66%.", 13)
@@ -461,22 +467,63 @@ func _inventory_grid(parent):
 		b.item_dropped.connect(func(item): action.emit("equip_slot", {"idx": item.idx, "slot": slot.id}))
 	var bag = VBoxContainer.new(); bag.size_flags_horizontal = Control.SIZE_EXPAND_FILL; columns.add_child(bag)
 	_label(bag, "Предметы   ·   %s ячеек" % profile.inv.size(), 12)
-	var scroll = ScrollContainer.new(); scroll.custom_minimum_size = Vector2(0, 196); scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL; bag.add_child(scroll)
-	var grid = GridContainer.new(); grid.columns = 6; scroll.add_child(grid)
+	var filters = _row(bag)
+	for i in 4:
+		var index = i
+		var b = _button(filters, ["Все", "Экип.", "Расход.", "Добыча"][i], func(): bag_filter = index; show_window("inventory", true))
+		b.toggle_mode = true; b.button_pressed = bag_filter == i; b.set_meta("bag_filter", i)
+	var tools = _row(bag)
+	var search = LineEdit.new(); bag_search = search; search.placeholder_text = "Найти предмет…"; search.text = bag_query; search.size_flags_horizontal = Control.SIZE_EXPAND_FILL; tools.add_child(search); search.set_meta("bag_search", true)
+	search.text_changed.connect(func(value): bag_query = value; _fill_bag())
+	var sort_menu = OptionButton.new(); sort_menu.add_item("Порядок"); sort_menu.add_item("Имя"); sort_menu.add_item("Ранг"); sort_menu.select(bag_sort); tools.add_child(sort_menu)
+	sort_menu.item_selected.connect(func(index): bag_sort = index; _fill_bag())
+	var scroll = ScrollContainer.new(); scroll.custom_minimum_size = Vector2(0, 156); scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL; bag.add_child(scroll)
+	bag_grid = GridContainer.new(); bag_grid.columns = 6; scroll.add_child(bag_grid); _fill_bag()
 	var selected: Dictionary = {}
-	for i in maxi(30, profile.inv.size()):
-		var payload = {}
-		if i < profile.inv.size():
-			payload = profile.inv[i].duplicate(); payload["idx"] = i; payload["source"] = "inventory"
-			if selected_item.get("idx", -1) == i and selected_item.get("id") == payload.id: selected = payload
-		var b = _slot(grid, payload, ""); b.accept_equipped = true
-		b.item_dropped.connect(func(item): action.emit("unequip", item.slot))
+	var selected_index = int(selected_item.get("idx", -1))
+	if selected_index >= 0 and selected_index < profile.inv.size() and profile.inv[selected_index].id == selected_item.get("id"):
+		selected = profile.inv[selected_index].duplicate(); selected.idx = selected_index; selected.source = "inventory"
 	if selected_item.has("slot"):
 		var slot = selected_item.slot; var id = profile.equip.get(slot)
 		if id != null: selected = {"source": "inventory", "slot": slot, "id": id, "e": profile.get("enc", {}).get(slot, 0)}
 	item_details = VBoxContainer.new(); item_details.custom_minimum_size.y = 70; parent.add_child(item_details)
 	if not selected.is_empty(): _select_item(selected)
 	else: selected_item = {}; _wrapped(item_details, "Выберите предмет для просмотра.", 14)
+
+	# Fixed wallet stays visible even when the inventory contents scroll.
+	var wallet = VBoxContainer.new(); window_body.add_child(wallet)
+	wallet_label = _label(wallet, "●  %s  монет" % _money(int(profile.coins)), 17); wallet_label.modulate = Color("e5c779")
+	wallet_label.tooltip_text = "Монеты зачисляются сервером после подбора. Z — ближайшая добыча."
+	var weight = ProgressBar.new(); weight.custom_minimum_size.y = 14; weight.max_value = current_stats.cap; weight.value = current_stats.load; wallet.add_child(weight)
+	weight.tooltip_text = "Вес: %.1f / %s" % [current_stats.load, int(current_stats.cap)]
+
+func _money(value: int) -> String:
+	var digits = str(value); var result = ""
+	for i in digits.length():
+		if i > 0 and (digits.length() - i) % 3 == 0: result += " "
+		result += digits[i]
+	return result
+
+func _fill_bag():
+	if not is_instance_valid(bag_grid): return
+	for child in bag_grid.get_children(): child.free()
+	var entries: Array = []
+	for i in profile.inv.size():
+		var payload = profile.inv[i].duplicate(); var it = GameData.catalog.ITEMS[payload.id]
+		if not bag_query.is_empty() and not str(it.name).to_lower().contains(bag_query.to_lower()): continue
+		if bag_filter == 1 and not it.has("slot"): continue
+		if bag_filter == 2 and not it.has("use"): continue
+		if bag_filter == 3 and (it.has("slot") or it.has("use")): continue
+		payload.idx = i; payload.source = "inventory"; entries.append(payload)
+	if bag_sort > 0:
+		entries.sort_custom(func(a, b):
+			var ia = GameData.catalog.ITEMS[a.id]; var ib = GameData.catalog.ITEMS[b.id]
+			if bag_sort == 2 and ia.get("grade", "none") != ib.get("grade", "none"):
+				return ["none", "d", "c", "b", "a", "s"].find(ia.get("grade", "none")) > ["none", "d", "c", "b", "a", "s"].find(ib.get("grade", "none"))
+			return str(ia.name).naturalnocasecmp_to(ib.name) < 0)
+	for i in maxi(24, entries.size()):
+		var b = _slot(bag_grid, entries[i] if i < entries.size() else {}, ""); b.accept_equipped = true
+		b.item_dropped.connect(func(item): action.emit("unequip", item.slot))
 
 func _slot(parent, payload: Dictionary, empty_name: String) -> Button:
 	var b = load("res://scripts/item_slot.gd").new(); b.payload = payload

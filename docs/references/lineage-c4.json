@@ -1,0 +1,42 @@
+[
+  {
+    "id": "c4-combat",
+    "file": "c4-combat.jpg",
+    "era": "C4",
+    "source": "https://www.ixbt.com/games/lineage2-4.shtml",
+    "image": "https://www.ixbt.com/games/images/lineage2-4/04.jpg",
+    "sha256": "897229faf619ebc07e4ad76b8343aba382ca408c499f74332b8e5c7b70ffe221"
+  },
+  {
+    "id": "c4-party",
+    "file": "c4-party.jpg",
+    "era": "C4",
+    "source": "https://www.ixbt.com/games/lineage2-4.shtml",
+    "image": "https://www.ixbt.com/games/images/lineage2-4/13.jpg",
+    "sha256": "cf4e9c4c409e2a834af10a424dafacdf4e1717b46f85ba12ea5732236c69ff9e"
+  },
+  {
+    "id": "c4-raid",
+    "file": "c4-raid.jpg",
+    "era": "C4",
+    "source": "https://www.ixbt.com/games/lineage2-4.shtml",
+    "image": "https://www.ixbt.com/games/images/lineage2-4/11.jpg",
+    "sha256": "980d9d4afadc522bac94c69df44cc9c13a8bee6cee856190991fb368caaa4ae7"
+  },
+  {
+    "id": "c4-login",
+    "file": "c4-login.jpg",
+    "era": "C4",
+    "source": "https://lutris.net/games/lineage-2-chronicle-4/",
+    "image": "https://lutris.net/media/games/screenshots/login.jpg",
+    "sha256": "c82d333d17cc9f7614931175b5b76307fea124353f110a5b36bbf8d273fda2c5"
+  },
+  {
+    "id": "c4-c5-inventory",
+    "file": "c4-c5-inventory.bmp",
+    "era": "C4/C5 mixed archive",
+    "source": "https://l2exp.blogspot.com/2013/12/old-lineage-2-c4c5-screenshots-gallery.html",
+    "image": "https://1.bp.blogspot.com/--Cx-WL5nCys/UrGNo7Qk8nI/AAAAAAAAC6w/Cft7-8l4LSY/s1600/Shot00006.bmp",
+    "sha256": "840e91384901f185e577a9d58a1f2fd23553728ef6a73a92cc17ba8a7052dab0"
+  }
+]

@@ -9,6 +9,7 @@ import { zoneAt, TOWNS, DUNGEON, CRYPT, heightAt } from '../src/world-core.js';
 import { PVP, karmaForPk, karmaWashCost } from '../src/pvp.js';
 import { CLASSES, SKILLS, ITEMS } from '../src/data.js';
 import { calcDmg, missChance, evaChance, flatDist, clamp } from '../src/sim.js';
+import { createGroundLoot } from './sim/loot.js';
 import { createMobs } from './sim/mobs.js';
 import * as PL from './sim/player.js';
 
@@ -29,6 +30,7 @@ const players = new Map();
 let seq = 0;
 
 const world = createMobs();
+const groundLoot = createGroundLoot();
 const cryptDoor = { x: CRYPT.x, z: CRYPT.z + 8.5 };
 const dungeonExit = { x: DUNGEON.x0 + DUNGEON.cell / 2, z: DUNGEON.z0 + DUNGEON.cell / 2 };
 
@@ -68,7 +70,7 @@ wss.on('connection', (ws, req) => {
   const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
   const p = { id: ++seq, ws, name: null, key: null, a: null, known: new Set(), knownMobs: new Set(), lastChat: {}, stN: 0, stT: 0 };
   players.set(p.id, p);
-  send(p, { t: 'hi', online: online() });
+  send(p, { t: 'hi', online: online(), features: { groundLoot: 1 } });
   ws.on('message', (raw) => {
     let m; try { m = JSON.parse(raw); } catch { return; }
     if (m.t === 'auth' || m.t === 'login' || m.t === 'register') return onAuth(p, m, ip);
@@ -99,6 +101,23 @@ wss.on('connection', (ws, req) => {
         return;
       }
       case 'skill': return onSkill(p, a, String(m.id || ''), now);
+      case 'pickup': {
+        const result = groundLoot.claim(String(m.id || ''), a, p.key, now);
+        if (result.error) return send(p, { t: 'pickup_err', id: m.id, reason: result.error });
+        const d = result.drop;
+        const before = { coins: a.P.coins, inv: structuredClone(a.P.inv) };
+        if (d.item === 'coins') a.P.coins += d.n;
+        else PL.addItem(a.P, d.item, d.n);
+        try {
+          if (!acc.store(p.key, PL.profileOf(a))) throw new Error('profile not saved');
+        } catch {
+          a.P.coins = before.coins; a.P.inv = before.inv; groundLoot.restore(d);
+          return send(p, { t: 'pickup_err', id: d.id, reason: 'Не удалось сохранить подбор. Добыча осталась на земле.' });
+        }
+        a.dirty = true;
+        a.out.push({ k: 'pickup', id: d.id, item: d.item, n: d.n });
+        return;
+      }
       case 'use': return PL.cmdUse(a, String(m.id || ''));
       case 'equip': return PL.cmdEquip(a, m.idx | 0, m.slot);
       case 'unequip': return PL.cmdUnequip(a, String(m.slot || ''));
@@ -114,6 +133,7 @@ wss.on('connection', (ws, req) => {
         if (m.lvl != null) a.P.lvl = clamp(m.lvl | 0, 1, 40);
         if (m.hp != null) a.P.hp = num(m.hp, 1e6);
         if (m.item) PL.addItem(a.P, String(m.item), Math.max(1, m.n | 0));
+        if (m.drop && ITEMS[m.drop]) groundLoot.spawn(a, { coins: 17, drops: [m.drop] }, p.key, p.name, now);
         if (m.xp != null) PL.gainXp(a, num(m.xp, 1e7) | 0);
         a.dirty = true;
         return;
@@ -172,13 +192,13 @@ function damageMob(a, mb, dmg, crit, now) {
   pushNear(a, { k: 'hit', m: mb.id, dmg, crit });
   if (!died) return;
   const topId = world.kill(mb, now);
-  const winner = players.get(topId)?.a || a;
+  const recipient = players.get(topId) || players.get(a.id);
+  const winner = recipient.a;
   const rw = world.rewardFor(mb, winner.P.lvl);
   PL.gainXp(winner, rw.xp);
-  winner.P.coins += rw.coins;
   winner.P.kills++;
-  for (const id of rw.drops) { PL.addItem(winner.P, id); winner.out.push({ k: 'loot', id }); }
-  winner.out.push({ k: 'kill', mob: mb.kind, name: mb.def.name, xp: rw.xp, coins: rw.coins, boss: !!mb.def.boss });
+  groundLoot.spawn(mb, rw, recipient.key, recipient.name, now);
+  winner.out.push({ k: 'kill', mob: mb.kind, name: mb.def.name, xp: rw.xp, coins: rw.coins, ground: true, boss: !!mb.def.boss });
   winner.dirty = true;
   // убийство моба смывает карму PK
   if (winner.karma > 0) { winner.karma = Math.max(0, winner.karma - Math.max(1, Math.ceil(rw.xp / PVP.karmaPerXp))); sendMe(winner); }
@@ -395,6 +415,7 @@ function pushNear(a, e) {
 let last = Date.now();
 setInterval(() => {
   const now = Date.now(), dt = Math.min(0.5, (now - last) / 1000); last = now;
+  groundLoot.expire(now);
   const list = actors();
   // мобы
   const view = list.map((a) => ({ id: a.id, x: a.x, z: a.z, dead: a.dead, inTown: PL.inTown(a) }));
@@ -429,7 +450,7 @@ setInterval(() => {
     const fresh = [];
     for (const row of mobs) if (!p.knownMobs.has(row[0])) { p.knownMobs.add(row[0]); fresh.push([row[0], world.byId.get(row[0]).kind]); }
     if (fresh.length) send(p, { t: 'mobs', n: fresh });
-    send(p, { t: 'snap', ts: now, o, m: mobs, me: { hp: Math.round(a.P.hp), mp: Math.round(a.P.mp), x: +a.x.toFixed(2), z: +a.z.toFixed(2), dead: a.dead } });
+    send(p, { t: 'snap', ts: now, o, m: mobs, g: groundLoot.snapshotFor(a, VIEW, p.key, now), me: { hp: Math.round(a.P.hp), mp: Math.round(a.P.mp), x: +a.x.toFixed(2), z: +a.z.toFixed(2), dead: a.dead } });
     if (a.out.length) { send(p, { t: 'ev', e: a.out }); a.out = []; }
     if (a.dirty) {
       a.dirty = false;
@@ -453,3 +474,15 @@ setInterval(() => { for (const p of players.values()) store(p); }, 30_000);
 // пинг, чтобы nginx не рвал простаивающие соединения
 setInterval(() => { for (const p of players.values()) if (p.ws.readyState === 1) p.ws.ping(); }, 25000);
 console.log(`realms-ws :${PORT}, аккаунтов: ${acc.count()}, мобов: ${world.list.length}`);
+
+// Save active profiles before systemd or a local runner restarts the process.
+let stopping = false;
+function shutdown() {
+  if (stopping) return;
+  stopping = true;
+  for (const p of players.values()) store(p);
+  acc.close();
+  process.exit(0);
+}
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);

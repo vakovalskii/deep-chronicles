@@ -9,6 +9,9 @@ var hero: Node3D
 var profile: Dictionary = {}
 var stats: Dictionary = {}
 var buffs: Array = []
+var ground_loot: Dictionary = {}
+var pending_pickup = ""
+var pickup_sent_at = 0
 var mobs: Dictionary = {}
 var players: Dictionary = {}
 var npcs: Array = []
@@ -144,8 +147,11 @@ func _message(m: Dictionary):
 				if players.has(int(row[0])): players[int(row[0])].snapshot(row, m.get("ts", now))
 			for row in m.get("m", []):
 				if mobs.has(int(row[0])): mobs[int(row[0])].snapshot(row, m.get("ts", now))
+			_sync_ground(m.get("g", []))
 			if m.has("me"):
 				profile.hp = m.me.hp; profile.mp = m.me.mp; profile.dead = m.me.dead; hero.dead = m.me.dead
+		"pickup_err":
+			pending_pickup = ""; pickup_sent_at = 0; hud.log_line(m.reason)
 		"ev":
 			for e in m.e: _event(e)
 		"fix": _place(float(m.x), float(m.z))
@@ -196,7 +202,10 @@ func _event(e: Dictionary):
 		"mdie":
 			if is_instance_valid(victim): victim.dead = true; victim.hp = 0
 			if target == victim: attacking = false; pending_skill = ""
-		"kill": hud.log_line("%s повержен. +%s опыта, +%s монет." % [e.name, int(e.xp), int(e.coins)])
+		"kill": hud.log_line("%s повержен. +%s опыта. %s" % [e.name, int(e.xp), "Добыча на земле — кликните по ней или нажмите Z." if e.get("ground", false) else "+%s монет." % int(e.coins)])
+		"pickup":
+			hud.log_line("Подобрано: %s ×%s" % ["Монеты" if e.item == "coins" else GameData.catalog.ITEMS[e.item].name, int(e.n)])
+			_float(hero.position, "+%s монет" % int(e.n) if e.item == "coins" else GameData.catalog.ITEMS[e.item].name, Color("f5d885"))
 		"loot": hud.log_line("Получено: " + GameData.catalog.ITEMS.get(e.id, {}).get("name", e.id))
 		"lvl":
 			hud.log_line("Новый уровень: %s!" % int(e.lvl)); _float(hero.position, "Уровень %s!" % int(e.lvl), Color("ffe090")); _effect(hero.position, Color("ffe090"), 4)
@@ -220,14 +229,15 @@ func _event(e: Dictionary):
 		"ench": _effect(hero.position, Color("ffc96d") if e.ok else Color("787c89"), 2)
 		"dead":
 			hud.close_window()
+			pending_pickup = ""; pickup_sent_at = 0
 			profile.dead = true; hero.dead = true; attacking = false; cast_time = 0; has_destination = false
 			hud.log_line("Вы погибли: %s. Потеря опыта: %s." % [e.by, int(e.loss)])
 		"move": _place(float(e.x), float(e.z)); hud.close_window()
 
 func _place(x: float, z: float):
 	if not is_instance_valid(hero): return
-	hero.position = GameData.position_at(x, z); has_destination = false; attacking = false; pending_skill = ""; talking_to = null
-	marker.hide(); initial_camera = true
+	hero.position = GameData.position_at(x, z); has_destination = false; attacking = false; pending_skill = ""; talking_to = null; pending_pickup = ""
+	set_target(null); marker.hide(); initial_camera = true
 
 func _process(dt):
 	if profile.is_empty() or not is_instance_valid(hero):
@@ -242,6 +252,7 @@ func _process(dt):
 		if Time.get_ticks_msec() - actor.seen > 1500: actor.hide()
 		elif actor.visible: actor.interpolate(time)
 		actor.label.visible = actor.visible and hero.position.distance_to(actor.position) < 50
+	for drop in ground_loot.values(): drop.label.visible = hero.position.distance_to(drop.position) < 40
 	for npc in npcs: npc.label.visible = hero.position.distance_to(npc.position) < 60
 	if is_instance_valid(target) and target.visible:
 		selection.visible = not target.dead
@@ -275,9 +286,19 @@ func _move_hero(dt):
 	var direction = Vector3.ZERO
 	var distance = stats.speed * dt
 	if input.length() > 0.15:
-		_cancel_attack(); has_destination = false; talking_to = null; marker.hide()
+		_cancel_attack(); has_destination = false; talking_to = null; pending_pickup = ""; marker.hide()
 		direction = Vector3(input.x, 0, input.y).rotated(Vector3.UP, camera_yaw).normalized()
 		distance *= minf(1, input.length())
+	elif not pending_pickup.is_empty():
+		if not ground_loot.has(pending_pickup): pending_pickup = ""; pickup_sent_at = 0; return
+		var offset = ground_loot[pending_pickup].position - hero.position; offset.y = 0
+		if offset.length() > float(GameData.catalog.UI_RULES.loot.pickupRange) - 0.65:
+			direction = offset.normalized(); distance = minf(distance, offset.length())
+		elif pickup_sent_at == 0:
+			Network.send({"t": "st", "x": hero.position.x, "y": hero.position.y, "z": hero.position.z, "r": hero.rotation.y, "a": 0})
+			Network.send({"t": "pickup", "id": pending_pickup}); pickup_sent_at = Time.get_ticks_msec()
+		elif Time.get_ticks_msec() - pickup_sent_at > 2500:
+			pending_pickup = ""; pickup_sent_at = 0; hud.log_line("Сервер не подтвердил подбор. Попробуйте ещё раз.")
 	elif attacking and is_instance_valid(target) and not target.dead:
 		var reach = float(stats.range) + target.radius
 		if pending_skill != "": reach = float(GameData.catalog.SKILLS[pending_skill].get("range", stats.range)) + target.radius
@@ -309,6 +330,7 @@ func _update_camera(dt):
 	initial_camera = false; camera.look_at(aim)
 
 func set_target(actor):
+	pending_pickup = ""
 	if is_instance_valid(target): target.selected = false
 	if is_instance_valid(target) and target != actor: _cancel_attack()
 	target = actor
@@ -316,6 +338,7 @@ func set_target(actor):
 	if is_instance_valid(actor) and actor.kind in ["m", "p"]: Network.send({"t": "atk", "id": actor.entity_id, "kind": actor.kind, "hold": true})
 
 func _cancel_attack():
+	pending_pickup = ""; pickup_sent_at = 0
 	if attacking: Network.send({"t": "atk", "id": null})
 	attacking = false; pending_skill = ""
 
@@ -323,7 +346,7 @@ func attack():
 	if not is_instance_valid(target) or target.dead or target.kind == "n": return
 	if target.kind == "p" and not pvp_enabled and not Input.is_key_pressed(KEY_CTRL):
 		hud.log_line("Для PvP удерживайте Ctrl при атаке или включите PvP в окне персонажа."); return
-	attacking = true; has_destination = false; talking_to = null
+	attacking = true; has_destination = false; talking_to = null; pending_pickup = ""
 	Network.send({"t": "atk", "id": target.entity_id, "kind": target.kind})
 
 func use_skill(id: String):
@@ -370,6 +393,7 @@ func _action(kind: String, value):
 		"attack": attack()
 		"target": next_target()
 		"talk": talk_nearest()
+		"pickup": pickup_nearest()
 		"joystick": joystick = value
 		"respawn": Network.send({"t": "respawn"})
 		"logout": _return_to_login(true)
@@ -422,7 +446,9 @@ func _return_to_login(forget: bool):
 	Network.start()
 
 func _clear_entities():
-	target = null; attacking = false; talking_to = null
+	target = null; attacking = false; talking_to = null; pending_pickup = ""; pickup_sent_at = 0
+	for drop in ground_loot.values(): drop.queue_free()
+	ground_loot.clear()
 	for actor in mobs.values() + players.values(): actor.queue_free()
 	mobs.clear(); players.clear()
 
@@ -436,6 +462,7 @@ func _unhandled_input(event):
 			KEY_K: hud.toggle("skills")
 			KEY_F: attack()
 			KEY_E: talk_nearest()
+			KEY_Z: pickup_nearest()
 			KEY_TAB: next_target()
 			KEY_ESCAPE:
 				if hud.window_kind != "": hud.close_window()
@@ -446,7 +473,7 @@ func _unhandled_input(event):
 			KEY_6: attack()
 			KEY_7: next_target()
 			KEY_8: talk_nearest()
-			KEY_9: _action("camera", null)
+			KEY_9: pickup_nearest()
 			KEY_0: hud.toggle("skills")
 			KEY_F11: DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED if DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN else DisplayServer.WINDOW_MODE_FULLSCREEN)
 	elif event is InputEventMouseButton:
@@ -480,6 +507,14 @@ func _unhandled_input(event):
 
 func pick(screen: Vector2):
 	if not is_instance_valid(hero) or hero.dead: return
+	var nearest_drop; var drop_distance = 35.0
+	for drop in ground_loot.values():
+		if camera.is_position_behind(drop.position): continue
+		for point in [drop.position + Vector3.UP * 0.2, drop.position + drop.label.position]:
+			var d = camera.unproject_position(point).distance_to(screen)
+			if d < drop_distance: nearest_drop = drop; drop_distance = d
+	if nearest_drop:
+		pickup_drop(nearest_drop.data.id); return
 	var closest; var distance = 40.0
 	for actor in mobs.values() + players.values() + npcs:
 		if not actor.visible or actor.dead or camera.is_position_behind(actor.position): continue
@@ -500,7 +535,7 @@ func pick(screen: Vector2):
 				var middle = (pos + previous) * 0.5
 				if middle.y <= GameData.height_at(middle.x, middle.z): pos = middle
 				else: previous = middle
-			destination = GameData.position_at(pos.x, pos.z); has_destination = true; talking_to = null; _cancel_attack()
+			destination = GameData.position_at(pos.x, pos.z); has_destination = true; talking_to = null; pending_pickup = ""; _cancel_attack()
 			marker.position = destination + Vector3.UP * 0.1; marker.show(); return
 		previous = pos
 
@@ -553,3 +588,31 @@ func _capture():
 		else: state["ready"] = hud.login_panel.visible and Network.online
 		report.store_string(JSON.stringify(state))
 	print("NATIVE_SCREENSHOT_SAVED")
+
+func _sync_ground(entries: Array):
+	var seen: Dictionary = {}
+	for entry in entries:
+		seen[entry.id] = true
+		if not ground_loot.has(entry.id):
+			var drop = load("res://scripts/ground_loot.gd").new(); add_child(drop); drop.setup(entry); ground_loot[entry.id] = drop
+		else: ground_loot[entry.id].refresh(entry)
+	for id in ground_loot.keys():
+		if not seen.has(id):
+			ground_loot[id].queue_free(); ground_loot.erase(id)
+			if pending_pickup == id: pending_pickup = ""; pickup_sent_at = 0
+
+func pickup_drop(id: String):
+	if not ground_loot.has(id) or hero.dead: return
+	if not ground_loot[id].data.available:
+		hud.log_line("Добыча пока принадлежит " + ground_loot[id].data.ownerName); return
+	_cancel_attack(); has_destination = false; talking_to = null; marker.hide()
+	pending_pickup = id; pickup_sent_at = 0
+
+func pickup_nearest():
+	if not is_instance_valid(hero): return
+	var nearest = ""; var distance = 25.0
+	for drop in ground_loot.values():
+		var d = hero.position.distance_to(drop.position)
+		if drop.data.available and d < distance: nearest = drop.data.id; distance = d
+	if not nearest.is_empty(): pickup_drop(nearest)
+	else: hud.log_line("Рядом нет доступной добычи. Подойдите к месту гибели моба.")

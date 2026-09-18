@@ -36,6 +36,10 @@ func wait_for(condition: Callable, seconds = 8.0) -> bool:
 		await create_timer(0.03).timeout
 	return false
 
+func wait_wall(seconds: float):
+	var deadline = Time.get_ticks_msec() + int(seconds * 1000)
+	await wait_for(func(): return Time.get_ticks_msec() >= deadline, seconds + 2)
+
 func _poll_peer():
 	if not peer: return
 	peer.poll()
@@ -629,14 +633,16 @@ func _test_chat_channels():
 	check(await wait_for(func(): return chat.history.any(func(m): return m.text == "peer incoming public")), "incoming public chat is retained while another tab is active")
 	check(not chat.log_view.get_parsed_text().contains("peer incoming public") and chat.unread.all > 0, "inactive tab filters messages and shows unread count")
 	chat.select_channel("all"); check(chat.unread.all == 0, "reading a tab clears its unread count")
+	# The server's PM rate limit uses real time, independent of headless frame dt.
+	await wait_wall(0.45)
 	chat.select_channel("pm"); chat.recipient.text = ""; chat.input.text = '"NativePeer quoted whisper'; chat.submit()
 	check(await wait_for(func(): return peer_inbox.any(func(m): return m.t == "pm" and m.text == "quoted whisper")), "quoted recipient command works from an empty PM tab")
-	await create_timer(0.45).timeout
+	await wait_wall(0.45)
 	peer.send_text(JSON.stringify({"t": "pm", "to": "NativeTest", "text": "peer reply"}))
 	check(await wait_for(func(): return chat.log_view.get_parsed_text().contains("peer reply")), "incoming whisper is shown in the PM tab")
 	chat.input.text = "/r native answer"; chat.submit()
 	check(await wait_for(func(): return peer_inbox.any(func(m): return m.t == "pm" and m.text == "native answer")), "reply command selects the last correspondent")
-	await create_timer(0.45).timeout
+	await wait_wall(0.45)
 	chat.input.text = "/w Nobody no recipient online"; chat.submit()
 	check(await wait_for(func(): return chat.system_view.get_parsed_text().contains("Nobody: не в сети")), "offline recipient error appears in the system pane")
 	chat.select_channel("all")

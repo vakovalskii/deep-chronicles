@@ -5,6 +5,7 @@
   "scripts": {
     "native:assets": "node tools/godot/export.mjs",
     "native": "node tools/godot/run.mjs",
+    "native:local": "node tools/godot/run.mjs --local",
     "native:editor": "node tools/godot/run.mjs --editor",
     "test:native": "node tools/godot/test.mjs",
     "dev": "node tools/godot/run.mjs",
@@ -22,7 +23,10 @@
     "native:gallery": "node tools/godot/gallery.mjs",
     "dev:web": "node --no-warnings server/server.js & vite --host",
     "build:web": "vite build",
-    "test:web": "npm run test:unit && npm run test:server && npm run build:web && npm run test:e2e"
+    "test:web": "npm run test:unit && npm run test:server && npm run build:web && npm run test:e2e",
+    "native:verify": "node tools/godot/verify.mjs",
+    "native:probe": "node tools/godot/probe.mjs",
+    "native:weapons": "node tools/godot/weapons.mjs"
   },
   "dependencies": {
     "three": "^0.170.0",

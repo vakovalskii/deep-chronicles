@@ -10,6 +10,9 @@ var retry_at = 0
 var retry_delay = 1000
 var stopped = false
 var session: Dictionary = {}
+var sessions: Dictionary = {}
+var online_count = 0
+var connecting_at = 0
 var test_mode = false
 var last_packet_at = 0
 
@@ -18,14 +21,23 @@ func _ready():
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--server="): endpoint = a.trim_prefix("--server=")
 		if a == "--test-mode": test_mode = true
-	if not test_mode and FileAccess.file_exists("user://session.json"):
+	if not test_mode and FileAccess.file_exists("user://sessions.json"):
+		var saved = JSON.parse_string(FileAccess.get_file_as_string("user://sessions.json"))
+		if saved is Dictionary: sessions = saved
+	elif not test_mode and FileAccess.file_exists("user://session.json"):
 		var saved = JSON.parse_string(FileAccess.get_file_as_string("user://session.json"))
-		if saved is Dictionary: session = saved
+		if saved is Dictionary and saved.has("endpoint"): sessions[saved.endpoint] = saved
+	session = sessions.get(endpoint, {})
 
 func start(url = ""):
-	if not url.is_empty(): endpoint = url
+	if not url.is_empty():
+		if not url.begins_with("ws://") and not url.begins_with("wss://"):
+			status_changed.emit("Адрес сервера должен начинаться с ws:// или wss://"); return
+		endpoint = url
+	session = sessions.get(endpoint, {})
 	if socket: socket.close()
-	online = false; authed = false; stopped = false
+	online = false; authed = false; stopped = false; online_count = 0
+	connecting_at = Time.get_ticks_msec(); retry_at = 0
 	socket = WebSocketPeer.new()
 	socket.inbound_buffer_size = 1048576
 	var error = socket.connect_to_url(endpoint)
@@ -42,7 +54,7 @@ func _process(_dt):
 	if state == WebSocketPeer.STATE_OPEN:
 		if not online:
 			online = true; retry_delay = 1000; last_packet_at = Time.get_ticks_msec()
-			status_changed.emit("Подключено"); connected.emit()
+			status_changed.emit("Подключено · %s" % endpoint); connected.emit()
 		while socket.get_available_packet_count() > 0:
 			var data = JSON.parse_string(socket.get_packet().get_string_from_utf8())
 			if not data is Dictionary: continue
@@ -51,13 +63,16 @@ func _process(_dt):
 				authed = true
 				if data.has("token"):
 					session = {"endpoint": endpoint, "name": data.name, "token": data.token}
-					if not test_mode:
-						var file = FileAccess.open("user://session.json", FileAccess.WRITE)
-						if file: file.store_string(JSON.stringify(session))
+					sessions[endpoint] = session; _save_sessions()
+			if data.get("t") in ["hi", "authok"]: online_count = int(data.get("online", 0))
+			if data.get("t") == "online": online_count = int(data.n)
+			if data.get("t") == "autherr" and data.get("kind") == "auth": forget_session()
 			if data.get("t") == "kicked": stopped = true; authed = false
 			message.emit(data)
-		if Time.get_ticks_msec() - last_packet_at > 35000: socket.close()
+		if authed and Time.get_ticks_msec() - last_packet_at > 35000: socket.close()
 	elif state == WebSocketPeer.STATE_CLOSED: _disconnected()
+	elif state == WebSocketPeer.STATE_CONNECTING and Time.get_ticks_msec() - connecting_at > 15000:
+		socket.close(); _disconnected()
 
 func _disconnected():
 	socket = null; online = false; authed = false
@@ -76,9 +91,18 @@ func resume_session() -> bool:
 
 func logout():
 	if session.has("token"): send({"t": "logout", "token": session.token})
-	session.clear()
-	if not test_mode: DirAccess.remove_absolute("user://session.json")
+	forget_session()
 	authed = false
+
+func forget_session():
+	sessions.erase(endpoint); session = {}; _save_sessions()
+
+func _save_sessions():
+	if test_mode: return
+	var file = FileAccess.open("user://sessions.json", FileAccess.WRITE)
+	if file:
+		file.store_string(JSON.stringify(sessions)); file.close()
+		DirAccess.remove_absolute("user://session.json")
 
 func _notification(what):
 	if what == NOTIFICATION_APPLICATION_RESUMED and not stopped:

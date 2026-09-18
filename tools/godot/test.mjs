@@ -23,7 +23,9 @@ try {
     server.stderr.on('data', chunk => process.stderr.write(chunk));
   });
   const flags = process.argv.includes('--headless') ? ['--headless'] : [];
-  godot = spawn(binary, [...flags, '--path', 'godot', '--max-fps', '60', '--script', 'res://tests/smoke.gd', '--', '--test-mode', `--server=ws://127.0.0.1:${port}`], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
+  const artifacts = path.join(root, '.native-run', process.argv.includes('--touch') ? 'test-touch-artifacts' : 'test-artifacts');
+  fs.mkdirSync(artifacts, { recursive: true });
+  godot = spawn(binary, [...flags, '--path', 'godot', '--max-fps', '60', '--script', 'res://tests/smoke.gd', '--', '--test-mode', `--server=ws://127.0.0.1:${port}`, `--artifacts=${artifacts}`, ...(process.argv.includes('--touch') ? ['--touch'] : [])], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
   let output = '';
   for (const stream of [godot.stdout, godot.stderr]) stream.on('data', b => { output += b; process.stdout.write(b); });
   const code = await new Promise((resolve, reject) => {

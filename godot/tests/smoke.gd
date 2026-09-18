@@ -8,6 +8,7 @@ var received: Array = []
 var peer: WebSocketPeer
 var peer_inbox: Array = []
 var peer_id = 0
+var artifacts = ""
 
 func _initialize():
 	_run.call_deferred()
@@ -33,6 +34,8 @@ func _poll_peer():
 		if m is Dictionary: peer_inbox.append(m)
 
 func _run():
+	for arg in OS.get_cmdline_user_args():
+		if arg.begins_with("--artifacts="): artifacts = arg.trim_prefix("--artifacts=")
 	data = root.get_node("GameData"); net = root.get_node("Network")
 	if not "--test-mode" in OS.get_cmdline_user_args() or not net.endpoint.begins_with("ws://127.0.0.1:"):
 		push_error("Tests require an isolated local server and --test-mode"); quit(1); return
@@ -65,20 +68,23 @@ func _run():
 	game = load("res://scenes/main.tscn").instantiate(); root.add_child(game); current_scene = game
 	net.message.connect(func(m): received.append(m))
 	check(await wait_for(func(): return net.online), "Godot WebSocket connects to Node server")
-	game._login({"t": "register", "name": "NativeTest", "pass": "isolated-test", "cls": "warrior"})
+	await _screenshot("login.png")
+	game.hud.login_switch.pressed.emit()
+	check(is_instance_valid(game.hud.creation_preview) and game.hud.class_select.visible, "character creation previews the real Godot model")
+	await _screenshot("create-character.png")
+	game.hud.login_name.text = "NativeTest"; game.hud.login_pass.text = "isolated-test"
+	game.hud.login_submit.pressed.emit()
 	if not await wait_for(func(): return not game.profile.is_empty()):
 		check(false, "registration returned profile"); _finish(); return
 	check(game.profile.cls == "warrior" and game.profile.lvl == 1, "server creates the player")
 	check(game.hero.animator != null and game.hero.animator.has_animation("walk"), "native animated hero imported")
 	check(await wait_for(func(): return not game.mobs.is_empty()), "nearby mobs arrive as snapshots")
 	await create_timer(0.2).timeout
-	for kind in ["inventory", "character", "map", "shop", "teleport", "priest"]:
+	for kind in ["inventory", "character", "map", "shop", "teleport", "priest", "menu", "skills", "settings", "controls"]:
 		game.hud.show_window(kind)
 		await process_frame
 		check(is_instance_valid(game.hud.window) and game.get_viewport().get_visible_rect().encloses(game.hud.window.get_global_rect()), kind + " window fits the viewport")
-		if kind == "inventory" and DisplayServer.get_name() != "headless":
-			await RenderingServer.frame_post_draw
-			root.get_texture().get_image().save_png("user://native-inventory.png")
+		if DisplayServer.get_name() != "headless": await _screenshot(kind + ".png")
 	game.hud.close_window()
 	check(game.hud.skill_buttons[0].get_global_rect().intersects(game.get_viewport().get_visible_rect()), "hotbar is inside viewport")
 	var start = game.hero.position
@@ -89,27 +95,63 @@ func _run():
 	var fixes = received.filter(func(m): return m.t == "fix").size()
 	check(fixes == 0, "server accepts native movement speed")
 	await _dev({"x": -442, "z": 410, "coins": 10000, "lvl": 8})
-	game._action("buy", "sword_long")
+	game.hud.show_window("shop")
+	_click("buy", "sword_long")
 	check(await wait_for(func(): return _bag("sword_long") >= 0), "shop purchase is server-authoritative")
-	game._action("equip", _bag("sword_long"))
+	game.hud.show_window("inventory")
+	_select_bag("sword_long"); _click("item_action", "sword_long")
 	check(await wait_for(func(): return game.profile.equip.weapon == "sword_long"), "inventory equip updates character")
 	await _dev({"item": "scroll_ench_w"})
-	game._action("enchant", {"scroll": "scroll_ench_w", "ref": {"slot": "weapon"}})
+	_select_bag("scroll_ench_w"); _click("item_action", "scroll_ench_w")
+	for button in game.hud.window.find_children("*", "Button", true, false):
+		if button.get("payload") is Dictionary and button.payload.get("slot") == "weapon": button.pressed.emit(); break
+	_click("item_action", "sword_long")
 	check(await wait_for(func(): return game.profile.enc.get("weapon", 0) == 1), "enchanting returns server result")
+	await _dev({"item": "potion_mp", "n": 3})
+	var quantity = int(game.profile.inv[_bag("potion_mp")].n)
+	var money_before = game.profile.coins
+	game.hud.show_window("shop"); _click("shop_tab", "sell"); _click("sell_stack", "potion_mp")
+	check(await wait_for(func(): return _bag("potion_mp") < 0 and game.profile.coins == money_before + quantity * data.sell_price("potion_mp")), "sell tab sells the correct stack at the server price")
+	game.hud.skill_buttons[1].pressed.emit()
+	check(await wait_for(func(): return not game.hud.buff_text.text.is_empty() and game.stats.patk > data.stats(game.profile).patk), "buff and effective stats come from the server skill event")
 	await _dev({"x": -418, "z": 410})
-	game._action("teleport", "meadow")
+	game.hud.show_window("teleport"); _click("teleport", "meadow")
 	check(await wait_for(func(): return absf(game.hero.position.x + 260) < 2), "teleport places the native hero in the correct world coordinates")
 	await wait_for(func(): return game.mobs.values().any(func(m): return m.visible and not m.dead))
+	check(await wait_for(func(): return not game.hud.minimap.mob_markers.is_empty()), "minimap displays live server mobs")
+	await create_timer(0.3).timeout
+	await _screenshot("minimap-mobs.png")
 	var mob = null
+	var combat_position = Vector3.ZERO
 	for m in game.mobs.values():
-		if m.visible and not m.dead and m.definition.lvl <= 3: mob = m; break
+		if not m.visible or m.dead or m.definition.lvl > 3: continue
+		if data.world.towns.any(func(t): return Vector2(m.position.x - t.x, m.position.z - t.z).length() < t.r + 30): continue
+		for i in 8:
+			var angle = TAU * i / 8
+			var candidate = data.position_at(m.position.x + cos(angle) * 1.2, m.position.z + sin(angle) * 1.2)
+			if data.move(candidate, Vector3.ZERO, 0.01).distance_to(candidate) < 0.1:
+				mob = m; combat_position = candidate; break
+		if mob: break
 	if mob:
-		await _dev({"x": mob.position.x + 3, "z": mob.position.z, "hp": 500, "lvl": 18})
-		game.set_target(mob); game.attack()
-		game.use_skill("power_strike")
-		check(await wait_for(func(): return game.profile.get("kills", 0) > 0, 12), "native target + attack + skill kill a server mob and award progress")
-	else: check(false, "a low-level mob is available for combat test")
+		await _dev({"x": combat_position.x, "z": combat_position.z, "hp": 500, "lvl": 18})
+		# Use the same screen-space picking as the mouse/touch client.
+		await create_timer(0.25).timeout
+		game.pick(game.camera.unproject_position(mob.position + Vector3.UP * 1.1))
+		check(await wait_for(func(): return game.target == mob and game.target_arrow.visible and game.hud.target_panel.visible and mob.selected), "clicking a mob displays its name, HP, arrow and selection ring")
+		await _screenshot("target-selected.png")
+		game.attack(); game.use_skill("power_strike")
+		var killed = await wait_for(func(): return game.profile.get("kills", 0) > 0, 12)
+		if not killed:
+			print("Combat diagnostics: player=", game.hero.position, " mob=", mob.position, " hp=", mob.hp, " visible=", mob.visible, " attacking=", game.attacking)
+			for message in received:
+				if message.t == "ev":
+					for event in message.e:
+						if event.k == "msg": print("Server: ", event.text)
+		check(killed, "native target + attack + skill kill a server mob and award progress")
+	else: check(false, "an unobstructed mob outside peace zones is available for combat test")
 	game._cancel_attack()
+	await create_timer(0.25).timeout
+	check(game.hud.minimap.mob_markers.size() == game.mobs.values().filter(func(m): return m.visible and not m.dead and Time.get_ticks_msec() - m.seen < 1500).size(), "minimap removes dead and stale mobs")
 	# A second ordinary WS client proves the native client interoperates with the existing protocol.
 	peer = WebSocketPeer.new(); peer.connect_to_url(net.endpoint)
 	check(await wait_for(func(): return peer.get_ready_state() == WebSocketPeer.STATE_OPEN), "second player connects")
@@ -119,10 +161,19 @@ func _run():
 		if m.t == "authok": peer_id = int(m.id)
 	await _dev({"x": -448, "z": 418})
 	check(await wait_for(func(): return game.players.has(peer_id) and game.players[peer_id].visible), "native multiplayer renders a remote player")
-	game._chat("native public chat")
+	game.hud.chat.input.text = "native public chat"; game.hud.chat.submit()
 	check(await wait_for(func(): return peer_inbox.any(func(m): return m.t == "chat" and m.text == "native public chat")), "public chat interoperates")
-	game._chat("/w NativePeer native private chat")
+	game.hud.chat.select_channel("pm"); game.hud.chat.recipient.text = "NativePeer"
+	game.hud.chat.input.text = "native private chat"; game.hud.chat.submit()
 	check(await wait_for(func(): return peer_inbox.any(func(m): return m.t == "pm" and m.text == "native private chat")), "private chat interoperates")
+	check(await wait_for(func(): return game.hud.chat.log_view.get_parsed_text().contains("native private chat")), "private chat tab renders the server reply")
+	check(not game.hud.chat.log_view.get_parsed_text().contains("native public chat"), "private chat tab filters public messages")
+	game.hud.chat.select_channel("all")
+	check(game.hud.chat.log_view.get_parsed_text().contains("native public chat"), "public history is retained across tabs")
+	game.hud.chat.set_preference("sys", false); game.hud.log_line("hidden system notice")
+	check(not game.hud.chat.log_view.get_parsed_text().contains("hidden system notice"), "chat settings filter system messages")
+	game.hud.chat.set_preference("sys", true)
+	check(await wait_for(func(): return game.hud.minimap.player_markers.size() > 0 and net.online_count == 2), "server online count and remote players appear in the HUD and minimap")
 	var saved_level = game.profile.lvl
 	net.start()
 	check(await wait_for(func(): return net.authed and game.profile.lvl == saved_level and game.profile.equip.weapon == "sword_long"), "token reconnect retains progression and equipment")
@@ -138,11 +189,16 @@ func _run():
 	check(await wait_for(func(): return game.profile.hp > 60), "healing updates server health")
 	game.hud.show_window("inventory")
 	await process_frame
+	check(game.hud.enchant_scroll.is_empty() and game.hud.chat.recipient.text.is_empty(), "changing account clears old inventory and chat selection")
 	game.hud.close_window()
+	await _dev({"item": "sword_long", "lvl": 10})
+	game._action("equip", _bag("sword_long"))
+	check(await wait_for(func(): return game.hero.weapon_node.get_meta("weapon_kind") == "warrior"), "mage equipping a sword changes the actual weapon model")
+	check(game.hero.weapon_node.to_global(game.hero.weapon_node.get_meta("handle_center")).distance_to(game.hero.weapon_node.get_parent().global_position) < 0.001, "weapon handle stays exactly on the palm grip")
 	# Real screenshot from the rendering backend, when running with a display.
 	if DisplayServer.get_name() != "headless":
 		await RenderingServer.frame_post_draw
-		root.get_texture().get_image().save_png("user://native-smoke.png")
+		await _screenshot("game.png")
 	_finish()
 
 func _bag(id: String) -> int:
@@ -159,3 +215,23 @@ func _finish():
 	if net.socket: net.socket.close()
 	print("NATIVE_TEST_RESULT checks=%s failures=%s" % [checks, failures])
 	quit(0 if failures == 0 else 1)
+
+func _click(key: String, value):
+	for button in game.hud.window.find_children("*", "Button", true, false):
+		if button.has_meta(key) and button.get_meta(key) == value:
+			check(not button.disabled, "UI action is enabled: " + key)
+			if not button.disabled: button.pressed.emit()
+			return
+	check(false, "UI action exists: " + key)
+
+func _select_bag(id: String):
+	for button in game.hud.window.find_children("*", "Button", true, false):
+		if button.get("payload") is Dictionary and button.payload.get("id") == id and button.payload.has("idx"):
+			button.pressed.emit(); return
+	check(false, "inventory item exists: " + id)
+
+func _screenshot(name: String):
+	if DisplayServer.get_name() == "headless": return
+	await process_frame
+	await RenderingServer.frame_post_draw
+	root.get_texture().get_image().save_png(artifacts.path_join(name) if not artifacts.is_empty() else "user://native-" + name)

@@ -31,12 +31,14 @@ var own_id = 0
 var clock_offset = 0.0
 var have_clock = false
 var flag_until = 0
+var target_arrow: Label3D
 var selection: MeshInstance3D
 var marker: MeshInstance3D
 var touch_start: Dictionary = {}
 var touch_positions: Dictionary = {}
 var touch_dragged = false
 var pending_login: Dictionary = {}
+var resume_on_start = false
 var quick_start = false
 var quick_tried = false
 var capture_path = ""
@@ -48,6 +50,7 @@ var initial_camera = true
 func _ready():
 	for a in OS.get_cmdline_user_args():
 		if a == "--quick-start": quick_start = true
+		if a == "--resume": resume_on_start = true
 		if a.begins_with("--capture="): capture_path = a.trim_prefix("--capture=")
 	world = WorldScene.instantiate(); add_child(world); world.build()
 	camera = Camera3D.new(); camera.name = "Camera"; camera.fov = 55; camera.far = 1600; camera.near = 0.2; add_child(camera); camera.current = true
@@ -58,7 +61,12 @@ func _ready():
 		actor.position = GameData.position_at(n.x, n.z)
 		actor.apply_look({"body": n.color, "w": 0xb6c5d1 if n.role == "guard" else null, "mat": "chain" if n.role == "guard" else "cloth", "robe": n.role != "guard", "gear": {}})
 		npcs.append(actor)
-	selection = _ring(Color("f5c66c"), 1.2); marker = _ring(Color("75e3c7"), 0.7)
+	selection = _ring(Color("ff684a"), 1.2); marker = _ring(Color("c9d5ed"), 0.7)
+	selection.mesh.outer_radius = 1.4
+	selection.material_override.emission_enabled = true; selection.material_override.emission = Color("ff4830"); selection.material_override.emission_energy_multiplier = 1.1
+	target_arrow = Label3D.new(); target_arrow.text = "▼"; target_arrow.font_size = 58; target_arrow.pixel_size = 0.015
+	target_arrow.billboard = BaseMaterial3D.BILLBOARD_ENABLED; target_arrow.modulate = Color("ffcd74"); target_arrow.outline_modulate = Color("261208"); target_arrow.outline_size = 14
+	add_child(target_arrow); target_arrow.hide()
 	selection.hide(); marker.hide()
 	hud = Hud.new(); add_child(hud)
 	hud.action.connect(_action); hud.login_requested.connect(_login)
@@ -70,6 +78,8 @@ func _ready():
 func _connected():
 	if not pending_login.is_empty(): Network.send(pending_login); pending_login = {}; return
 	if not profile.is_empty(): Network.resume_session(); return
+	if resume_on_start and not quick_tried:
+		quick_tried = true; Network.resume_session(); return
 	if quick_start and not quick_tried:
 		quick_tried = true
 		if not Network.resume_session():
@@ -78,6 +88,8 @@ func _connected():
 
 func _login(data: Dictionary):
 	var url = hud.server_field.text.strip_edges()
+	if not url.begins_with("ws://") and not url.begins_with("wss://"):
+		hud.login_message.text = "Адрес сервера должен начинаться с ws:// или wss://"; return
 	if url != Network.endpoint or not Network.online:
 		pending_login = data; Network.start(url)
 	else: Network.send(data)
@@ -95,11 +107,12 @@ func _message(m: Dictionary):
 			hero.apply_look(_look_of(profile)); hero.dead = profile.get("dead", false)
 			buffs.clear(); cooldowns.clear(); cast_time = 0; has_destination = false; attacking = false
 			initial_camera = true
-			hud.enter(profile)
+			hud.login_pass.clear(); hud.chat.clear_history(); hud.enter(profile)
 			hud.log_line("Добро пожаловать, %s! Хранитель врат перенесёт вас в зону охоты." % profile.name)
 			print("NATIVE_AUTH_OK")
 		"autherr":
 			hud.login_message.text = str(m.reason)
+			hud.continue_button.visible = not Network.session.is_empty()
 			if not profile.is_empty(): hud.log_line(str(m.reason)); _return_to_login(false)
 		"kicked":
 			hud.log_line("Этот персонаж вошёл с другого устройства.")
@@ -145,10 +158,16 @@ func _message(m: Dictionary):
 			if profile.is_empty(): return
 			profile.karma = m.karma; profile.pk = m.pk; profile.pvp = m.pvp
 			flag_until = Time.get_ticks_msec() + int(m.get("flag", 0))
-		"chat": hud.log_line("[%s] %s: %s" % [{"all": "Общий", "trade": "Торговля", "near": "Рядом"}.get(m.ch, m.ch), m.from, m.text])
+		"chat":
+			hud.chat.add_message(m)
+			if hud.chat.preferences.bubbles:
+				if m.from == profile.get("name", "") and is_instance_valid(hero): hero.speak(m.text)
+				else:
+					for actor in players.values():
+						if actor.display_name == m.from and actor.visible: actor.speak(m.text)
 		"pm":
 			last_pm = m.from if m.from != profile.get("name") else m.to
-			hud.log_line("[Личное] %s → %s: %s" % [m.from, m.to, m.text])
+			var entry = m.duplicate(); entry.ch = "pm"; entry.peer = last_pm; hud.chat.add_message(entry)
 		"pmerr": hud.log_line("%s: %s" % [m.to, m.reason])
 		"chatwait": hud.log_line("Подождите %.1f с перед следующим сообщением." % (m.wait / 1000.0))
 		"announce": hud.log_line(m.text)
@@ -157,14 +176,7 @@ func _message(m: Dictionary):
 		"washerr": hud.log_line("Для очищения нужно %s монет." % int(m.cost))
 
 func _look_of(p: Dictionary) -> Dictionary:
-	var items = GameData.catalog.ITEMS
-	var weapon = items.get(p.equip.get("weapon"), {})
-	var armor = items.get(p.equip.get("armor"), {})
-	var gear = {}
-	for slot in ["head", "legs", "gloves", "feet", "shield"]: gear[slot] = items.get(p.equip.get(slot), {}).get("color")
-	gear.helmKind = items.get(p.equip.get("head"), {}).get("set")
-	var mat = {"chain": "chain", "bone": "plate", "leather": "leather"}.get(armor.get("set", ""), "cloth")
-	return {"cls": p.cls, "body": armor.get("color", GameData.catalog.CLASSES[p.cls].color), "w": weapon.get("color"), "staff": weapon.get("twoHand", false), "ench": p.get("enc", {}).get("weapon", 0), "robe": armor.get("robe", false) or p.cls == "mage", "mat": mat, "gear": gear}
+	return GameData.appearance(p)
 
 func _event(e: Dictionary):
 	if profile.is_empty(): return
@@ -189,10 +201,13 @@ func _event(e: Dictionary):
 		"lvl":
 			hud.log_line("Новый уровень: %s!" % int(e.lvl)); _float(hero.position, "Уровень %s!" % int(e.lvl), Color("ffe090")); _effect(hero.position, Color("ffe090"), 4)
 		"heal": _float(hero.position, "+%s" % int(e.amount), Color("83ffb0")); _effect(hero.position, Color("70e7bb"), 2)
-		"cast": cast_time = float(e.t); has_destination = false
+		"cast":
+			cast_time = float(e.t); has_destination = false
+			hud.cast_duration = cast_time; hud.cast_name = GameData.catalog.SKILLS.get(e.get("id", ""), {}).get("name", "Заклинание")
 		"buff":
 			var sk = GameData.catalog.SKILLS[e.id]
-			buffs.append({"stat": sk.stat, "mul": sk.mul, "until": Time.get_ticks_msec() + e.dur * 1000})
+			buffs = buffs.filter(func(b): return b.get("id") != e.id)
+			buffs.append({"id": e.id, "stat": sk.stat, "mul": sk.mul, "until": Time.get_ticks_msec() + e.dur * 1000})
 			hud.log_line(sk.name); _effect(hero.position, GameData.color(sk.color), 3)
 		"cast_fx":
 			var sk = GameData.catalog.SKILLS[e.id]
@@ -204,6 +219,7 @@ func _event(e: Dictionary):
 				else: _effect(source.position, GameData.color(sk.color), float(sk.get("radius", 2)))
 		"ench": _effect(hero.position, Color("ffc96d") if e.ok else Color("787c89"), 2)
 		"dead":
+			hud.close_window()
 			profile.dead = true; hero.dead = true; attacking = false; cast_time = 0; has_destination = false
 			hud.log_line("Вы погибли: %s. Потеря опыта: %s." % [e.by, int(e.loss)])
 		"move": _place(float(e.x), float(e.z)); hud.close_window()
@@ -214,7 +230,10 @@ func _place(x: float, z: float):
 	marker.hide(); initial_camera = true
 
 func _process(dt):
-	if profile.is_empty() or not is_instance_valid(hero): return
+	if profile.is_empty() or not is_instance_valid(hero):
+		if not capture_path.is_empty() and not screenshot_done and Network.online and Time.get_ticks_msec() > 8000:
+			screenshot_done = true; _capture()
+		return
 	dt = minf(dt, 0.1)
 	cast_time = maxf(0, cast_time - dt); hero.casting = cast_time > 0; hero.moving = false
 	if Network.authed and not hero.dead and cast_time <= 0: _move_hero(dt)
@@ -225,9 +244,13 @@ func _process(dt):
 		actor.label.visible = actor.visible and hero.position.distance_to(actor.position) < 50
 	for npc in npcs: npc.label.visible = hero.position.distance_to(npc.position) < 60
 	if is_instance_valid(target) and target.visible:
-		selection.show(); selection.position = target.position + Vector3.UP * 0.12
+		selection.visible = not target.dead
+		selection.position = target.position + Vector3.UP * 0.17
+		target_arrow.visible = not target.dead
+		target_arrow.position = target.position + Vector3.UP * (target.label.position.y + 0.7 + sin(Time.get_ticks_msec() * 0.004) * 0.08)
+		selection.material_override.albedo_color = Color("e7c67e") if target.kind == "n" else Color("ff684a")
 		selection.scale = Vector3.ONE * maxf(0.75, target.radius)
-	else: selection.hide()
+	else: selection.hide(); target_arrow.hide()
 	hero.status = 2 if profile.get("karma", 0) > 0 else (1 if flag_until > Time.get_ticks_msec() else 0)
 	_update_camera(dt); world.set_region(hero.position)
 	state_timer += dt; ui_timer += dt
@@ -237,7 +260,10 @@ func _process(dt):
 			Network.send({"t": "st", "x": hero.position.x, "y": hero.position.y, "z": hero.position.z, "r": hero.rotation.y, "a": (1 if hero.moving else 0) | (2 if hero.attack_time > 0 else 0) | (4 if hero.casting else 0) | (8 if hero.dead else 0)})
 	if ui_timer >= 0.2:
 		ui_timer = 0; stats = GameData.stats(profile, buffs)
+		hud.active_buffs = buffs
 		hud.update_values(profile, stats, hero.position, target, cooldowns, cast_time)
+		hud.minimap.update_entities(mobs, players, target)
+		if is_instance_valid(hud.map_control): hud.map_control.update_entities(mobs, players, target)
 	if not capture_path.is_empty() and not screenshot_done and Time.get_ticks_msec() > maxi(8000, auth_ready_at + 2500):
 		screenshot_done = true; _capture()
 
@@ -283,8 +309,10 @@ func _update_camera(dt):
 	initial_camera = false; camera.look_at(aim)
 
 func set_target(actor):
+	if is_instance_valid(target): target.selected = false
 	if is_instance_valid(target) and target != actor: _cancel_attack()
 	target = actor
+	if is_instance_valid(actor): actor.selected = true
 	if is_instance_valid(actor) and actor.kind in ["m", "p"]: Network.send({"t": "atk", "id": actor.entity_id, "kind": actor.kind, "hold": true})
 
 func _cancel_attack():
@@ -336,19 +364,25 @@ func _open_npc(npc):
 func _action(kind: String, value):
 	if profile.is_empty(): return
 	match kind:
-		"inventory", "character", "map": hud.toggle(kind)
+		"inventory", "character", "map", "menu", "skills", "settings", "controls": hud.toggle(kind)
+		"camera": camera_yaw = hero.rotation.y + PI; camera_pitch = 0.65; camera_distance = 24
+		"fullscreen": DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED if DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN else DisplayServer.WINDOW_MODE_FULLSCREEN)
 		"attack": attack()
 		"target": next_target()
 		"talk": talk_nearest()
 		"joystick": joystick = value
 		"respawn": Network.send({"t": "respawn"})
 		"logout": _return_to_login(true)
-		"pvp": pvp_enabled = not pvp_enabled; hud.log_line("PvP включён" if pvp_enabled else "PvP выключен")
+		"pvp":
+			pvp_enabled = not pvp_enabled; hud.pvp_enabled = pvp_enabled
+			hud.log_line("PvP включён" if pvp_enabled else "PvP выключен"); hud.show_window("character", true)
 		"hotbar":
 			if value < 3: use_skill(GameData.catalog.CLASSES[profile.cls].skills[value])
 			else: Network.send({"t": "use", "id": "potion_hp" if value == 3 else "potion_mp"})
 		"use", "buy": Network.send({"t": kind, "id": value, "n": 1})
 		"equip", "sell": Network.send({"t": kind, "idx": value, "n": 1})
+		"buy_stack": Network.send({"t": "buy", "id": value.id, "n": value.n})
+		"sell_stack": Network.send({"t": "sell", "idx": value.idx, "n": value.n})
 		"equip_slot": Network.send({"t": "equip", "idx": value.idx, "slot": value.slot})
 		"unequip": Network.send({"t": "unequip", "slot": value})
 		"enchant": Network.send({"t": "ench", "scroll": value.scroll, "ref": value.ref})
@@ -359,10 +393,19 @@ func _action(kind: String, value):
 func _chat(text: String):
 	text = text.strip_edges()
 	if text.is_empty(): return
+	if text.begins_with('/ш ') or text.begins_with('/л '): text = '/w ' + text.substr(3)
+	if text.begins_with('/о '): text = '/r ' + text.substr(3)
+	if text.begins_with('"'): text = '/w ' + text.substr(1)
 	if text.begins_with("/w "):
 		var parts = text.split(" ", false, 2)
 		if parts.size() >= 3: Network.send({"t": "pm", "to": parts[1], "text": parts[2]})
-	elif text.begins_with("/r ") and not last_pm.is_empty(): Network.send({"t": "pm", "to": last_pm, "text": text.substr(3)})
+		else: hud.log_line("Личное сообщение: /w Имя текст")
+	elif text.begins_with("/r "):
+		if not last_pm.is_empty(): Network.send({"t": "pm", "to": last_pm, "text": text.substr(3)})
+		else: hud.log_line("Пока некому ответить. Укажите /w Имя текст")
+	elif hud.chat_channel.selected == 3:
+		var to = hud.chat.recipient.text.strip_edges()
+		if not to.is_empty(): Network.send({"t": "pm", "to": to, "text": text})
 	else:
 		var channel = ["all", "near", "trade"][hud.chat_channel.selected]
 		if text.begins_with("+"): channel = "trade"; text = text.substr(1)
@@ -370,6 +413,9 @@ func _chat(text: String):
 
 func _return_to_login(forget: bool):
 	if forget: Network.logout()
+	last_pm = ""; buffs.clear(); hud.active_buffs = []; hud.enchant_scroll = ""; hud.selected_item = {}; hud.chat.clear_history()
+	pvp_enabled = false; hud.pvp_enabled = false; joystick = Vector2.ZERO
+	hud.login_pass.clear()
 	_clear_entities(); profile = {}; hud.close_window(); hud.game_ui.hide(); hud.login_panel.show()
 	if is_instance_valid(hero): hero.queue_free()
 	hero = null; hud.continue_button.visible = not forget and not Network.session.is_empty()
@@ -387,15 +433,21 @@ func _unhandled_input(event):
 			KEY_I: hud.toggle("inventory")
 			KEY_C: hud.toggle("character")
 			KEY_M: hud.toggle("map")
+			KEY_K: hud.toggle("skills")
 			KEY_F: attack()
 			KEY_E: talk_nearest()
 			KEY_TAB: next_target()
 			KEY_ESCAPE:
 				if hud.window_kind != "": hud.close_window()
-				else: set_target(null); _cancel_attack(); has_destination = false
+				else: set_target(null); _cancel_attack(); has_destination = false; hud.show_window("menu")
 			KEY_ENTER: hud.chat_input.grab_focus()
 			KEY_V: camera_yaw = hero.rotation.y + PI; camera_pitch = 0.65; camera_distance = 24
 			KEY_1, KEY_2, KEY_3, KEY_4, KEY_5: _action("hotbar", int(event.physical_keycode) - KEY_1)
+			KEY_6: attack()
+			KEY_7: next_target()
+			KEY_8: talk_nearest()
+			KEY_9: _action("camera", null)
+			KEY_0: hud.toggle("skills")
 			KEY_F11: DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED if DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN else DisplayServer.WINDOW_MODE_FULLSCREEN)
 	elif event is InputEventMouseButton:
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP: camera_distance = clampf(camera_distance * 0.9, 6, 65)
@@ -495,5 +547,9 @@ func _capture():
 	var image = get_viewport().get_texture().get_image()
 	image.save_png(capture_path)
 	var report = FileAccess.open(capture_path + ".json", FileAccess.WRITE)
-	if report: report.store_string(JSON.stringify({"health": hud.hp_text.text, "animation": hero.last_clip, "model": hero.active_art, "fps": Engine.get_frames_per_second(), "mobs": mobs.size(), "ready": not hud.hp_text.text.is_empty() and not hero.last_clip.is_empty()}))
+	if report:
+		var state = {"endpoint": Network.endpoint, "connected": Network.online, "authenticated": Network.authed, "online": Network.online_count, "fps": Engine.get_frames_per_second()}
+		if is_instance_valid(hero): state.merge({"health": hud.hp_text.text, "animation": hero.last_clip, "model": hero.active_art, "mobs": mobs.size(), "ready": not hud.hp_text.text.is_empty() and not hero.last_clip.is_empty()})
+		else: state["ready"] = hud.login_panel.visible and Network.online
+		report.store_string(JSON.stringify(state))
 	print("NATIVE_SCREENSHOT_SAVED")

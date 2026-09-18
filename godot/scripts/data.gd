@@ -107,3 +107,31 @@ func stats(p: Dictionary, buffs: Array = []) -> Dictionary:
 		if buff.until > Time.get_ticks_msec(): s[buff.stat] *= buff.mul
 	s.maxHp = floor(s.maxHp + 0.5); s.maxMp = floor(s.maxMp + 0.5)
 	return s
+
+func sell_price(id: String) -> int:
+	return int(catalog.UI_RULES.sellPrices.get(id, 0))
+
+func wear_error(p: Dictionary, it: Dictionary) -> String:
+	if not it.has("slot"): return "Это нельзя надеть"
+	if p.lvl < it.get("lvl", 1): return "Нужен уровень %s" % int(it.lvl)
+	if p.cls == "warrior" and it.get("twoHand", false): return "Воин не владеет посохом"
+	if p.cls == "warrior" and it.get("robe", false): return "Воин не носит мантии"
+	return ""
+
+func enchant_error(id: String, e: int, scroll: String) -> String:
+	var it = catalog.ITEMS[id]; var sc = catalog.ITEMS.get(scroll, {})
+	if not it.has("slot"): return "Выберите снаряжение"
+	if it.get("grade", "none") == "none": return "Этот предмет нельзя усилить"
+	if e >= catalog.UI_RULES.maxEnch: return "Достигнуто максимальное усиление"
+	if (it.slot == "weapon") != (sc.get("ench") == "w"): return "Нужен другой тип свитка"
+	return ""
+
+func appearance(p: Dictionary) -> Dictionary:
+	var items = catalog.ITEMS
+	var weapon = items.get(p.equip.get("weapon"), {})
+	var armor = items.get(p.equip.get("armor"), {})
+	var gear = {}
+	for slot in ["head", "legs", "gloves", "feet", "shield"]: gear[slot] = items.get(p.equip.get(slot), {}).get("color")
+	gear.helmKind = items.get(p.equip.get("head"), {}).get("set")
+	var mat = {"chain": "chain", "bone": "plate", "leather": "leather"}.get(armor.get("set", ""), "cloth")
+	return {"cls": p.cls, "body": armor.get("color", catalog.CLASSES[p.cls].color), "w": weapon.get("color"), "staff": weapon.get("twoHand", false), "ench": p.get("enc", {}).get("weapon", 0), "robe": armor.get("robe", false) or p.cls == "mage", "mat": mat, "gear": gear}

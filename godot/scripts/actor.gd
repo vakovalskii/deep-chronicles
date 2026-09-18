@@ -18,6 +18,7 @@ var attack_time = 0.0
 var radius = 0.6
 var seen = 0
 var snapshots: Array = []
+var selected = false
 var status = 0
 var look: Dictionary = {}
 var display_name = ""
@@ -25,6 +26,8 @@ var last_clip = ""
 var weapon_node: Node3D
 var shield_node: Node3D
 var helm_node: Node3D
+var bubble: Label3D
+var bubble_until = 0
 
 func setup(model_id: String, title: String, def: Dictionary = {}):
 	definition = def; display_name = title; base_model = model_id
@@ -68,12 +71,31 @@ func apply_look(data: Dictionary):
 				animator = model.find_child("AnimationPlayer", true, false); last_clip = ""
 				weapon_node = null; shield_node = null; helm_node = null
 				_attach_weapon("warrior")
+	if art_model and weapon_node:
+		var desired_weapon = "mage" if data.get("staff", base_model == "mage") else "warrior"
+		if weapon_node.get_meta("weapon_kind", "") != desired_weapon:
+			var skeleton = model.find_child("Skeleton3D", true, false)
+			for attachment_name in ["RightHandEquipment", "LeftArmEquipment"]:
+				var old = skeleton.get_node_or_null(attachment_name)
+				if old: old.free()
+			weapon_node = null; shield_node = null; _attach_weapon(desired_weapon)
 	look = data.duplicate(true)
 	var gear = data.get("gear", {})
 	if weapon_node: weapon_node.visible = data.get("w") != null
 	if shield_node: shield_node.visible = gear.get("shield") != null
 	if helm_node: helm_node.visible = gear.get("head") != null
-	if art_model: return
+	if art_model:
+		if weapon_node:
+			for mesh in weapon_node.find_children("*", "MeshInstance3D", true, false):
+				var material = mesh.get_active_material(0)
+				if material is StandardMaterial3D and material.metallic > 0.1:
+					material = material.duplicate()
+					if data.get("w") != null: material.albedo_color = GameData.color(data.w)
+					material.emission_enabled = data.get("ench", 0) >= 4; material.emission = Color("77cfff"); material.emission_energy_multiplier = 0.6
+					mesh.material_override = material
+		if shield_node and gear.get("shield") != null:
+			var material = shield_node.get_active_material(0).duplicate(); material.albedo_color = GameData.color(gear.shield); shield_node.material_override = material
+		return
 	var colors = {"body": data.get("body"), "helmet": gear.get("head"), "legs": gear.get("legs"), "gloves": gear.get("gloves"), "feet": gear.get("feet"), "shield": gear.get("shield")}
 	for node in model.find_children("*", "MeshInstance3D", true, false):
 		for surface in node.mesh.get_surface_count():
@@ -114,6 +136,7 @@ func interpolate(time: float):
 
 func _process(dt):
 	attack_time = maxf(0, attack_time - dt)
+	if is_instance_valid(bubble): bubble.visible = Time.get_ticks_msec() < bubble_until and not dead
 	if not model: return
 	if not animator or not animator.has_animation("death"):
 		model.rotation.z = lerp_angle(model.rotation.z, PI / 2 if dead else 0, minf(1, dt * 10))
@@ -122,7 +145,7 @@ func _process(dt):
 	if animator and clip != last_clip and animator.has_animation(clip):
 		animator.play(clip, 0.15); last_clip = clip
 	if label:
-		label.modulate = Color("ff7373") if status == 2 else (Color("d49bff") if status == 1 else (Color("e7d8ab") if kind == "n" else Color.WHITE))
+		label.modulate = Color("ffe3a6") if selected else (Color("ff7373") if status == 2 else (Color("d49bff") if status == 1 else (Color("e7d8ab") if kind == "n" else Color.WHITE)))
 
 func _attach_weapon(id: String):
 	var skeleton = model.find_child("Skeleton3D", true, false)
@@ -133,10 +156,34 @@ func _attach_weapon(id: String):
 		weapon.get_parent().remove_child(weapon)
 		weapon.owner = null
 		for child in weapon.find_children("*", "", true, false): child.owner = null
-		var attachment = BoneAttachment3D.new(); attachment.bone_name = "DEF-hand.R"
-		skeleton.add_child(attachment); attachment.add_child(weapon)
+		var attachment = BoneAttachment3D.new(); attachment.name = "RightHandEquipment"; attachment.bone_name = "DEF-hand.R"
+		skeleton.add_child(attachment)
+		var grip = Node3D.new(); grip.name = "WeaponGrip"; attachment.add_child(grip)
+		# Bone origin is the wrist; +Y follows the fingers. The canonical rig
+		# and equipment use +Z for the forward edge of the palm/blade.
+		grip.position = Vector3(0, 0.075, -0.015)
+		grip.add_child(weapon)
 		weapon.transform = Transform3D.IDENTITY
-		weapon.rotation.x = PI / 2
-		weapon.scale = Vector3.ONE * 0.75
+		weapon.rotation = Vector3.ZERO
+		weapon.scale = Vector3.ONE * (0.8 / model.scale.x)
+		var handle_center = Vector3(0, 0, 0.14 if id == "warrior" else 0.0)
+		weapon.position = -(weapon.basis * handle_center)
+		weapon.set_meta("handle_center", handle_center)
+		weapon.set_meta("weapon_kind", id)
 		weapon_node = weapon
+	var shield = donor.find_child("shield", true, false)
+	if shield:
+		shield.get_parent().remove_child(shield); shield.owner = null
+		var attachment = BoneAttachment3D.new(); attachment.name = "LeftArmEquipment"; attachment.bone_name = "DEF-forearm.L"
+		skeleton.add_child(attachment); attachment.add_child(shield)
+		shield.position = Vector3(0.1, 0.16, 0); shield.rotation = Vector3.ZERO; shield.scale *= 0.9 / model.scale.x
+		shield_node = shield; shield.visible = false
 	donor.free()
+
+func speak(text: String):
+	if not is_instance_valid(bubble):
+		bubble = Label3D.new(); bubble.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+		bubble.font_size = 30; bubble.pixel_size = 0.012; bubble.outline_size = 8
+		bubble.modulate = Color("fff5d8"); bubble.position.y = label.position.y + 0.5; add_child(bubble)
+	bubble.text = text.left(60) + ("…" if text.length() > 60 else "")
+	bubble_until = Time.get_ticks_msec() + 5000

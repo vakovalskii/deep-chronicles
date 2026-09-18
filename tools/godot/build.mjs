@@ -1,0 +1,13 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { godotBinary, run, root } from './runtime.mjs';
+const presets = {macos:['macOS','macos/Хроники Глубин.zip'],windows:['Windows Desktop','windows/Хроники Глубин.exe'],android:['Android','android/khroniki-glubin.apk'],ios:['iOS','ios/khroniki-glubin.zip']};
+const target=process.argv[2] || 'macos';if(!presets[target])throw new Error('Target: macos | windows | android | ios');
+const [preset,relative]=presets[target];const output=path.join(root,'godot/builds',relative);
+fs.mkdirSync(path.dirname(output),{recursive:true});
+await run(process.execPath,['tools/godot/export.mjs']);
+const godot=godotBinary();
+await run(godot,['--headless','--path','godot','--editor','--import','--quit']);
+await run(godot,['--headless','--path','godot',process.argv.includes('--debug')?'--export-debug':'--export-release',preset,output]);
+if(target==='macos')await run('ditto',['-x','-k',output,path.dirname(output)]);
+console.log('Build:',output);

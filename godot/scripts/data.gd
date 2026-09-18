@@ -1,0 +1,109 @@
+extends Node
+## Only display and movement prediction are calculated here; progression stays on the server.
+var catalog: Dictionary
+var world: Dictionary
+var heights: PackedFloat32Array
+var grid: Dictionary = {}
+var icons: Dictionary = {}
+
+func _ready():
+	catalog = JSON.parse_string(FileAccess.get_file_as_string("res://generated/catalog.json"))
+	world = JSON.parse_string(FileAccess.get_file_as_string("res://generated/world.json"))
+	heights = FileAccess.get_file_as_bytes("res://generated/heights.bin").to_float32_array()
+	var obs = world.obstacles.duplicate()
+	for n in world.npcs:
+		if n.role != "guard": obs.append({"x": n.x, "z": n.z, "r": 0.9})
+	for o in obs:
+		for x in range(floori((o.x - o.r - 1) / 24), floori((o.x + o.r + 1) / 24) + 1):
+			for z in range(floori((o.z - o.r - 1) / 24), floori((o.z + o.r + 1) / 24) + 1):
+				var k = Vector2i(x, z)
+				if not grid.has(k): grid[k] = []
+				grid[k].append(o)
+
+func color(value) -> Color:
+	return Color.hex((int(value) << 8) | 255)
+
+func height_at(x: float, z: float) -> float:
+	if x > 2100: return 0.0
+	var t = world.terrain
+	var fx = clampf((x - t.start) / t.step, 0, t.count - 1.001)
+	var fz = clampf((z - t.start) / t.step, 0, t.count - 1.001)
+	var ix = int(fx)
+	var iz = int(fz)
+	var a = iz * int(t.count) + ix
+	return lerpf(lerpf(heights[a], heights[a + 1], fx - ix), lerpf(heights[a + int(t.count)], heights[a + int(t.count) + 1], fx - ix), fz - iz)
+
+func position_at(x: float, z: float) -> Vector3:
+	return Vector3(x, height_at(x, z), z)
+
+func zone_at(pos: Vector3) -> Dictionary:
+	if pos.x > 2100: return {"id": "crypt", "name": "Катакомбы", "lv": "18–28"}
+	for t in world.towns:
+		if Vector2(pos.x - t.x, pos.z - t.z).length() < t.r + 20:
+			return {"id": t.id, "name": t.name, "lv": "мирная зона", "town": true}
+	var best = world.zones[0]
+	var distance = INF
+	for z in world.zones:
+		var d = Vector2(pos.x - z.x, pos.z - z.z).length() / z.r
+		if d < distance: best = z; distance = d
+	return best
+
+func move(pos: Vector3, direction: Vector3, distance: float) -> Vector3:
+	# Substeps prevent tunnelling when a rendered frame takes longer than usual.
+	var steps = maxi(1, ceili(distance / 0.5))
+	for i in steps:
+		pos += direction * distance / steps
+		for o in grid.get(Vector2i(floori(pos.x / 24), floori(pos.z / 24)), []):
+			var d = Vector2(pos.x - o.x, pos.z - o.z)
+			var length = d.length()
+			if length < o.r + 0.6 and length > 0.0001:
+				d *= (o.r + 0.6) / length
+				pos.x = o.x + d.x; pos.z = o.z + d.y
+		if pos.x < 2100:
+			pos.x = clampf(pos.x, -780, 780); pos.z = clampf(pos.z, -780, 780)
+	pos.y = height_at(pos.x, pos.z)
+	return pos
+
+func icon(id: String) -> Texture2D:
+	if not icons.has(id):
+		var p = "res://generated/icons/%s.png" % id
+		icons[id] = load(p) if ResourceLoader.exists(p) else null
+	return icons[id]
+
+func xp_next(level: int) -> int:
+	return roundi(60 * pow(level, 2.25))
+
+func ench_value(it: Dictionary, key: String, e: int) -> float:
+	var v = float(it.get(key, 0))
+	if v == 0 or e == 0: return v
+	var step = maxf(1, floor(v * (0.06 if it.get("slot") == "weapon" else 0.05) + 0.5))
+	return v + step * (mini(e, 3) + 2 * maxi(0, e - 3))
+
+func stats(p: Dictionary, buffs: Array = []) -> Dictionary:
+	var c = catalog.CLASSES[p.cls]
+	var a = c.attr; var b = c.base; var g = c.grow; var l = p.lvl - 1
+	var s = {"attr": a, "maxHp": (b.hp + g.hp * l) * (1 + (a.con - 30) * 0.01), "maxMp": (b.mp + g.mp * l) * (1 + (a.men - 30) * 0.01), "patk": (b.patk + g.patk * l) * (1 + (a.str - 30) * 0.01), "matk": (b.matk + g.matk * l) * (1 + (a.int - 30) * 0.01), "pdef": b.pdef + g.pdef * l, "mdef": (b.mdef + g.mdef * l) * (1 + (a.men - 30) * 0.01), "aspd": b.aspd * (1 + (a.dex - 30) * 0.01), "speed": b.speed * (1 + (a.dex - 30) * 0.004), "crit": b.crit + (a.dex - 30) * 0.002, "cast": 1 + (a.wit - 20) * 0.01, "acc": sqrt(a.dex) * 6 + p.lvl, "eva": sqrt(a.dex) * 6 + p.lvl, "range": c.range, "load": 0.0, "cap": round(40 + a.con * 1.2), "regen": 1.0, "sets": []}
+	for slot in p.equip:
+		var it = catalog.ITEMS.get(p.equip[slot], {})
+		for k in ["patk", "matk", "pdef", "mdef"]: s[k] += ench_value(it, k, int(p.get("enc", {}).get(slot, 0)))
+		s.maxHp += it.get("hp", 0); s.maxMp += it.get("mp", 0); s.crit += it.get("crit", 0); s.load += it.get("w", 0)
+	# Keep JS summation order (bag then equipment), including half-rounding edges.
+	s.load = 0.0
+	for e in p.inv: s.load += catalog.ITEMS.get(e.id, {}).get("w", 0) * e.n
+	for id in p.equip.values(): s.load += catalog.ITEMS.get(id, {}).get("w", 0)
+	for id in catalog.SETS:
+		var st = catalog.SETS[id].duplicate(true)
+		st["have"] = 0; st["id"] = id
+		for part in st.parts:
+			if part in p.equip.values(): st.have += 1
+		if st.have > 0: s.sets.append(st)
+		if st.have == st.parts.size():
+			for key in st.bonus:
+				var target = "maxHp" if key == "hp" else ("maxMp" if key == "mp" else key)
+				s[target] += st.bonus[key]
+	s.load = floor(s.load * 10 + 0.5) / 10
+	if s.load > s.cap * 0.7: s.speed *= 0.6; s.regen = 0.5
+	for buff in buffs:
+		if buff.until > Time.get_ticks_msec(): s[buff.stat] *= buff.mul
+	s.maxHp = floor(s.maxHp + 0.5); s.maxMp = floor(s.maxMp + 0.5)
+	return s

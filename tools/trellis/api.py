@@ -49,7 +49,10 @@ def work():
             img = Image.open(io.BytesIO(j.pop('data')))
             if img.mode != 'RGBA' or img.getextrema()[3][0] == 255:
                 img = remove(img.convert('RGB'), session=sess)
-            mesh = pipe.run(img, seed=j['seed'])[0]
+            # 512 is the reliable batch setting on a 24 GB GPU. The higher
+            # resolution is opt-in: dense architecture can otherwise exhaust
+            # CUDA memory even when a human model fits at the same resolution.
+            mesh = pipe.run(img, seed=j['seed'], pipeline_type=j['resolution'])[0]
             mesh.simplify(j['pre'])
             glb = o_voxel.postprocess.to_glb(
                 vertices=mesh.vertices, faces=mesh.faces, attr_volume=mesh.attrs, coords=mesh.coords,
@@ -63,6 +66,7 @@ def work():
         finally:
             j['secs'] = round(time.time() - j['started'])
             mesh = glb = None  # освобождаем память GPU до следующей задачи
+            gc.collect()
             torch.cuda.empty_cache()
             print(jid, j['status'], j['secs'], 's', flush=True)
 threading.Thread(target=work, daemon=True).start()
@@ -94,7 +98,8 @@ class H(BaseHTTPRequestHandler):
         with lock:
             if jobs.get(jid, {}).get('status') in ('queued', 'running'): return self._json(409, {'error': 'уже в работе', 'id': jid})
             jobs[jid] = {'id': jid, 'status': 'queued', 'queued': time.time(), 'data': self.rfile.read(n),
-                         'dec': int(a.get('dec', 30000)), 'tex': int(a.get('tex', 1024)), 'seed': int(a.get('seed', 7)), 'pre': int(a.get('pre', 300000))}
+                         'dec': int(a.get('dec', 30000)), 'tex': int(a.get('tex', 1024)), 'seed': int(a.get('seed', 7)), 'pre': int(a.get('pre', 150000)),
+                         'resolution': a.get('resolution', '512') if a.get('resolution', '512') in ('512', '1024_cascade') else '512'}
         q.put(jid)
         self._json(202, {'id': jid, 'position': q.qsize()})
 

@@ -1,0 +1,142 @@
+extends Node3D
+## A native scene with imported mesh and AnimationPlayer; no browser runtime.
+const Art = preload("res://scripts/art_assets.gd")
+var art_model = false
+var base_model = ""
+var active_art = ""
+var entity_id = 0
+var kind = "m"
+var definition: Dictionary = {}
+var model: Node3D
+var animator: AnimationPlayer
+var label: Label3D
+var hp = 100.0
+var dead = false
+var moving = false
+var casting = false
+var attack_time = 0.0
+var radius = 0.6
+var seen = 0
+var snapshots: Array = []
+var status = 0
+var look: Dictionary = {}
+var display_name = ""
+var last_clip = ""
+var weapon_node: Node3D
+var shield_node: Node3D
+var helm_node: Node3D
+
+func setup(model_id: String, title: String, def: Dictionary = {}):
+	definition = def; display_name = title; base_model = model_id
+	radius = float(def.get("size", 1)) * 0.9 if kind == "m" else 0.6
+	var art_id = str(def.get("role", model_id)) if kind == "n" else model_id
+	if art_id == "guard": art_id = "warrior_chain"
+	active_art = art_id
+	model = Art.actor(art_id)
+	art_model = model != null
+	if not model:
+		var asset_id = "mage_generated" if model_id == "mage" else model_id
+		model = Art.packed("res://generated/actors/%s.glb" % asset_id).instantiate()
+	add_child(model)
+	animator = model.find_child("AnimationPlayer", true, false)
+	if animator:
+		for clip in animator.get_animation_list():
+			if clip in ["idle", "walk", "cast"]: animator.get_animation(clip).loop_mode = Animation.LOOP_LINEAR
+	if art_model and art_id in ["warrior", "warrior_chain", "mage"]: _attach_weapon("warrior" if art_id == "warrior_chain" else art_id)
+	else:
+		weapon_node = model.find_child("weapon", true, false)
+		shield_node = model.find_child("shield", true, false)
+		helm_node = model.find_child("helmet", true, false)
+	if shield_node: shield_node.visible = false
+	if helm_node: helm_node.visible = false
+	if kind == "n" and weapon_node: weapon_node.visible = false
+	label = Label3D.new(); label.text = title
+	label.position.y = maxf(2.9, 2.7 * float(def.get("size", 1)))
+	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED; label.font_size = 38; label.pixel_size = 0.012
+	label.modulate = Color("e7d8ab") if kind == "n" else Color.WHITE
+	label.outline_modulate = Color("18201b"); label.outline_size = 10
+	add_child(label)
+
+func apply_look(data: Dictionary):
+	if data == look: return
+	if art_model and base_model == "warrior" and kind != "n":
+		var desired = "warrior_chain" if data.get("mat", "cloth") in ["chain", "plate"] else "warrior"
+		if desired != active_art:
+			var replacement = Art.actor(desired)
+			if replacement:
+				model.queue_free(); model = replacement; add_child(model); active_art = desired
+				animator = model.find_child("AnimationPlayer", true, false); last_clip = ""
+				weapon_node = null; shield_node = null; helm_node = null
+				_attach_weapon("warrior")
+	look = data.duplicate(true)
+	var gear = data.get("gear", {})
+	if weapon_node: weapon_node.visible = data.get("w") != null
+	if shield_node: shield_node.visible = gear.get("shield") != null
+	if helm_node: helm_node.visible = gear.get("head") != null
+	if art_model: return
+	var colors = {"body": data.get("body"), "helmet": gear.get("head"), "legs": gear.get("legs"), "gloves": gear.get("gloves"), "feet": gear.get("feet"), "shield": gear.get("shield")}
+	for node in model.find_children("*", "MeshInstance3D", true, false):
+		for surface in node.mesh.get_surface_count():
+			var mat = node.get_active_material(surface)
+			if mat is StandardMaterial3D:
+				mat = mat.duplicate()
+				var key = mat.resource_name
+				if colors.get(key) != null: mat.albedo_color = GameData.color(colors[key])
+				if key == "body":
+					var tex = "robe" if data.get("robe", false) else {"cloth": "leather", "plate": "plate", "chain": "chain", "leather": "leather"}.get(data.get("mat", "cloth"), "leather")
+					mat.albedo_texture = load("res://generated/tex/%s.png" % tex)
+				node.set_surface_override_material(surface, mat)
+	if weapon_node:
+		for node in weapon_node.find_children("*", "MeshInstance3D", true, false):
+			var mat = StandardMaterial3D.new(); mat.albedo_color = GameData.color(data.get("w", 0xaaaaaa) if data.get("w") != null else 0xaaaaaa)
+			if data.get("ench", 0) >= 4:
+				mat.emission_enabled = true; mat.emission = Color("77cfff"); mat.emission_energy_multiplier = 1.2
+			node.material_override = mat
+
+func snapshot(row: Array, timestamp: float):
+	var pos = Vector3(row[1], row[2], row[3])
+	if snapshots.is_empty() or position.distance_to(pos) > 30:
+		snapshots.clear(); position = pos; rotation.y = row[4]
+	snapshots.append({"t": timestamp, "p": pos, "r": row[4]})
+	if snapshots.size() > 30: snapshots.pop_front()
+	var flags = int(row[5]); moving = (flags & 1) != 0; casting = (flags & 4) != 0
+	if (flags & 2) != 0: attack_time = 0.3
+	dead = (flags & 8) != 0; hp = row[6]
+	status = int(row[7]) if row.size() > 7 else 0
+	seen = Time.get_ticks_msec(); visible = true
+
+func interpolate(time: float):
+	while snapshots.size() > 2 and snapshots[1].t <= time: snapshots.pop_front()
+	if snapshots.size() < 2: return
+	var a = snapshots[0]; var b = snapshots[1]
+	var factor = clampf((time - a.t) / maxf(1, b.t - a.t), 0, 1.5)
+	position = a.p.lerp(b.p, factor); rotation.y = lerp_angle(a.r, b.r, minf(1, factor))
+
+func _process(dt):
+	attack_time = maxf(0, attack_time - dt)
+	if not model: return
+	if not animator or not animator.has_animation("death"):
+		model.rotation.z = lerp_angle(model.rotation.z, PI / 2 if dead else 0, minf(1, dt * 10))
+	var clip = "attack" if attack_time > 0 else ("cast" if casting else ("walk" if moving else "idle"))
+	if dead: clip = "death" if animator and animator.has_animation("death") else "idle"
+	if animator and clip != last_clip and animator.has_animation(clip):
+		animator.play(clip, 0.15); last_clip = clip
+	if label:
+		label.modulate = Color("ff7373") if status == 2 else (Color("d49bff") if status == 1 else (Color("e7d8ab") if kind == "n" else Color.WHITE))
+
+func _attach_weapon(id: String):
+	var skeleton = model.find_child("Skeleton3D", true, false)
+	if not skeleton: return
+	var donor = Art.packed("res://generated/actors/%s.glb" % id).instantiate()
+	var weapon = donor.find_child("weapon", true, false)
+	if weapon:
+		weapon.get_parent().remove_child(weapon)
+		weapon.owner = null
+		for child in weapon.find_children("*", "", true, false): child.owner = null
+		var attachment = BoneAttachment3D.new(); attachment.bone_name = "DEF-hand.R"
+		skeleton.add_child(attachment); attachment.add_child(weapon)
+		weapon.transform = Transform3D.IDENTITY
+		weapon.rotation.x = PI / 2
+		weapon.scale = Vector3.ONE * 0.75
+		weapon_node = weapon
+	donor.free()

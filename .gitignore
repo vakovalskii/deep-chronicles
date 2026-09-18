@@ -9,3 +9,8 @@ tools/models-src/
 .DS_Store
 tools/models-out/
 !public/assets/models/
+godot/.godot/
+godot/generated/
+godot/builds/
+godot/export_credentials.cfg
+.native-run/

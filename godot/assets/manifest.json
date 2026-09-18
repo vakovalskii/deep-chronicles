@@ -1,0 +1,189 @@
+{
+  "actors": {
+    "warrior": {
+      "path": "res://assets/characters/warrior_cloth.glb",
+      "height": 2.5,
+      "rig": "canonical"
+    },
+    "mage": {
+      "path": "res://assets/characters/mage_native.glb",
+      "height": 2.5,
+      "rig": "canonical"
+    },
+    "merchant": {
+      "path": "res://assets/characters/merchant.glb",
+      "height": 2.5,
+      "rig": "canonical"
+    },
+    "gatekeeper": {
+      "path": "res://assets/characters/gatekeeper.glb",
+      "height": 2.6,
+      "rig": "canonical"
+    },
+    "priest": {
+      "path": "res://assets/characters/cleric.gltf",
+      "height": 2.5,
+      "clips": {
+        "idle": "Idle",
+        "walk": "Walk",
+        "attack": "Staff_Attack",
+        "cast": "Spell1",
+        "death": "Death"
+      }
+    },
+    "wolf": {
+      "path": "res://assets/creatures/wolf.glb",
+      "height": 1.6,
+      "clips": {
+        "idle": "idle",
+        "walk": "walk",
+        "attack": "attack",
+        "cast": "cast",
+        "death": "death"
+      }
+    },
+    "warrior_chain": {
+      "path": "res://assets/characters/warrior_chain.glb",
+      "height": 2.5,
+      "rig": "canonical"
+    },
+    "goblin": {
+      "path": "res://assets/characters/goblin.glb",
+      "height": 2.1,
+      "rig": "canonical"
+    },
+    "rabbit": {
+      "path": "res://assets/creatures/rabbit.glb",
+      "height": 0.95,
+      "clips": {
+        "idle": "idle",
+        "walk": "walk",
+        "attack": "attack",
+        "cast": "cast",
+        "death": "death"
+      }
+    },
+    "boar": {
+      "path": "res://assets/creatures/boar.glb",
+      "height": 1.9,
+      "clips": {
+        "idle": "idle",
+        "walk": "walk",
+        "attack": "attack",
+        "cast": "cast",
+        "death": "death"
+      }
+    },
+    "orc": {
+      "path": "res://assets/characters/orc.glb",
+      "height": 3.2,
+      "rig": "canonical"
+    },
+    "treant": {
+      "path": "res://assets/characters/treant.glb",
+      "height": 5,
+      "rig": "canonical"
+    },
+    "golem": {
+      "path": "res://assets/characters/golem.glb",
+      "height": 4.8,
+      "rig": "canonical"
+    },
+    "skeleton": {
+      "path": "res://assets/characters/skeleton.glb",
+      "height": 2.7,
+      "rig": "canonical"
+    },
+    "ghoul": {
+      "path": "res://assets/characters/ghoul.glb",
+      "height": 2.8,
+      "rig": "canonical"
+    },
+    "wraith": {
+      "path": "res://assets/characters/wraith.glb",
+      "height": 3.1,
+      "rig": "canonical"
+    },
+    "lich": {
+      "path": "res://assets/characters/lich.glb",
+      "height": 5.5,
+      "rig": "canonical"
+    },
+    "spider": {
+      "path": "res://assets/creatures/spider.glb",
+      "height": 1.7,
+      "clips": {
+        "idle": "idle",
+        "walk": "walk",
+        "attack": "attack",
+        "cast": "cast",
+        "death": "death"
+      }
+    },
+    "scorpion": {
+      "path": "res://assets/creatures/scorpion.glb",
+      "height": 1.9,
+      "clips": {
+        "idle": "idle",
+        "walk": "walk",
+        "attack": "attack",
+        "cast": "cast",
+        "death": "death"
+      }
+    }
+  },
+  "props": {
+    "house_a": {
+      "path": "res://assets/props/house_a.glb",
+      "triangles": 18000
+    },
+    "house_b": {
+      "path": "res://assets/props/house_b.glb",
+      "triangles": 18000
+    },
+    "tower": {
+      "path": "res://assets/props/tower.glb",
+      "triangles": 14000
+    },
+    "temple": {
+      "path": "res://assets/props/temple.glb",
+      "triangles": 18000
+    },
+    "fountain": {
+      "path": "res://assets/props/fountain.glb",
+      "triangles": 12000
+    },
+    "oak": {
+      "path": "res://assets/props/oak.glb",
+      "triangles": 3500
+    },
+    "pine": {
+      "path": "res://assets/props/pine.glb",
+      "triangles": 2800
+    },
+    "rock_a": {
+      "path": "res://assets/props/rock_a.glb",
+      "triangles": 2400
+    },
+    "bush": {
+      "path": "res://assets/props/bush.glb",
+      "triangles": 1500
+    },
+    "crypt": {
+      "path": "res://assets/props/crypt.glb",
+      "triangles": 14000
+    },
+    "portal": {
+      "path": "res://assets/props/portal.glb",
+      "triangles": 6000
+    },
+    "rock_b": {
+      "path": "res://assets/props/rock_b.glb",
+      "triangles": 2400
+    },
+    "dead_tree": {
+      "path": "res://assets/props/dead_tree.glb",
+      "triangles": 2200
+    }
+  }
+}

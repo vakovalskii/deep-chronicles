@@ -12,6 +12,9 @@ func _process(_dt):
 		var viewport = get_viewport_rect().size
 		global_position = (get_global_mouse_position() - drag_offset).clamp(Vector2(4, 4), (viewport - size - Vector2(4, 4)).max(Vector2(4, 4)))
 func _draw():
-	draw_line(Vector2(2, 2), Vector2(size.x - 2, 2), Color("a89c78"))
-	draw_line(Vector2(2, 2), Vector2(2, size.y - 2), Color("766f5c"))
-	draw_line(Vector2(2, size.y - 2), size - Vector2(2, 2), Color("090b0e"))
+	var bronze = Color("a69772")
+	var center = size.x * 0.5
+	for sign_x in [-1, 1]:
+		var points = PackedVector2Array([Vector2(center + sign_x * 35, 2), Vector2(center + sign_x * 15, 2), Vector2(center + sign_x * 7, 6), Vector2(center, 2)])
+		draw_polyline(points, bronze, 1, true)
+	draw_line(Vector2(9, 32), Vector2(size.x - 9, 32), Color(0.62, 0.55, 0.4, 0.4))

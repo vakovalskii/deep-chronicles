@@ -179,7 +179,16 @@ func _run():
 	_click("buy", "sword_long")
 	check(await wait_for(func(): return _bag("sword_long") >= 0), "shop purchase is server-authoritative")
 	game.hud.show_window("inventory")
-	_select_bag("sword_long"); _click("item_action", "sword_long")
+	await process_frame; await process_frame
+	var equipment_slots = game.hud.window.find_children("*", "Button", true, false).filter(func(b): return b.has_meta("equipment_slot"))
+	check(equipment_slots.size() == 12 and equipment_slots.all(func(b): return game.hud.window.get_global_rect().encloses(b.get_global_rect())), "all twelve equipment slots fit inside the compact inventory")
+	var source_item
+	var weapon_slot
+	for button in game.hud.window.find_children("*", "Button", true, false):
+		if button.get_meta("equipment_slot", "") == "weapon": weapon_slot = button
+		if button.get("payload") is Dictionary and button.payload.get("id") == "sword_long" and button.payload.has("idx"): source_item = button
+	check(is_instance_valid(source_item) and is_instance_valid(weapon_slot), "bag and equipped weapon expose real drag destinations")
+	if is_instance_valid(source_item) and is_instance_valid(weapon_slot): await _drag(source_item, weapon_slot)
 	check(await wait_for(func(): return game.profile.equip.weapon == "sword_long"), "inventory equip updates character")
 	await _dev({"item": "scroll_ench_w"})
 	_select_bag("scroll_ench_w"); _click("item_action", "scroll_ench_w")
@@ -488,7 +497,19 @@ func _test_mob_telegraph():
 	var warning = {}
 	var from_message = received.size()
 	# Mobs wander: use their live position, never assume they stayed at a spawn.
-	await _dev({"x": live_orc.position.x, "z": live_orc.position.z + 2.0, "hp": 500})
+	# Choose a clear exit corridor, otherwise a tree can block a legitimate dodge.
+	var escape = Vector3.ZERO
+	for i in 32:
+		var direction = Vector3(sin(i * TAU / 32), 0, cos(i * TAU / 32))
+		var clear_path = true
+		for step in range(4, 25):
+			var point = data.position_at(live_orc.position.x + direction.x * step * 0.5, live_orc.position.z + direction.z * step * 0.5)
+			if data.move(point, Vector3.ZERO, 0.01).distance_to(point) > 0.05: clear_path = false; break
+		if clear_path: escape = direction; break
+	check(escape != Vector3.ZERO, "telegraph fixture has a collision-free escape corridor")
+	if escape == Vector3.ZERO: return
+	# No fixed delay here: react to the event without consuming half its wind-up.
+	net.send({"t": "dev", "x": live_orc.position.x + escape.x * 2, "z": live_orc.position.z + escape.z * 2, "hp": 500})
 	check(await wait_for(func():
 		for packet in received.slice(from_message):
 			if packet.t == "ev":
@@ -504,7 +525,7 @@ func _test_mob_telegraph():
 	check(game.game_audio.music.duck_db < 0 and game.game_audio.music.cue == "music_battle", "battle theme crossfades and ducks below attack sounds")
 	await _screenshot("mob-windup.png")
 	# Real client movement, not a developer warp: leave the fixed sector.
-	game.destination = game.hero.position + (game.hero.position - mob.position).normalized() * 14
+	game.destination = game.hero.position + escape * 14
 	game.has_destination = true
 	var strike = {}
 	check(await wait_for(func():

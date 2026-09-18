@@ -15,30 +15,34 @@ var tabs: Array = []
 var history: Array = []
 var unread = {"all": 0, "trade": 0, "near": 0, "pm": 0}
 var active = "all"
-var preferences = {"sys": true, "trade": true, "near": true, "bubbles": true, "size": 12, "combat": true, "rewards": true, "info": true, "height": 320}
+var preferences = {"sys": true, "trade": true, "near": true, "bubbles": true, "size": 11, "combat": true, "rewards": true, "info": true, "height": 320}
 const CHANNELS = ["all", "trade", "near", "pm"]
 const TITLES = ["Все", "+Торг", "Рядом", "ЛС"]
 
 func _ready():
 	for key in preferences: preferences[key] = Settings.read_value("chat", key, preferences[key])
+	add_theme_constant_override("separation", 2)
 	mouse_filter = Control.MOUSE_FILTER_STOP; mouse_force_pass_scroll_events = false
-	split = VSplitContainer.new(); split.custom_minimum_size = Vector2(280, int(preferences.height) - 60); split.size_flags_vertical = Control.SIZE_EXPAND_FILL; add_child(split)
+	split = VSplitContainer.new(); split.custom_minimum_size = Vector2(252, int(preferences.height) - 52); split.size_flags_vertical = Control.SIZE_EXPAND_FILL; add_child(split)
 	system_frame = PanelContainer.new(); split.add_child(system_frame)
+	system_frame.add_theme_stylebox_override("panel", _chat_style())
 	system_box = VBoxContainer.new(); system_frame.add_child(system_box)
-	var system_title = Label.new(); system_title.text = "Система / бой"; system_title.add_theme_font_size_override("font_size", 11); system_box.add_child(system_title)
-	system_view = RichTextLabel.new(); system_view.custom_minimum_size.y = 60; system_view.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	system_box.add_theme_constant_override("separation", 1)
+	var system_title = Label.new(); system_title.text = "⌃  Система"; system_title.add_theme_font_size_override("font_size", 10); system_title.modulate = Color("a99c7e"); system_box.add_child(system_title)
+	system_view = RichTextLabel.new(); system_view.custom_minimum_size.y = 42; system_view.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	system_view.scroll_following = true; system_view.selection_enabled = true; system_view.mouse_force_pass_scroll_events = false; system_box.add_child(system_view)
-	split.split_offset = int(Settings.read_value("chat", "split", -50))
+	split.split_offset = int(Settings.read_value("chat", "split", -72))
 	split.dragged.connect(func(offset): Settings.write_value("chat", "split", offset))
 	var row = HBoxContainer.new(); add_child(row); row.add_theme_constant_override("separation", 3)
 	for i in CHANNELS.size():
 		var key = CHANNELS[i]
-		var button = Button.new(); button.text = TITLES[i]; button.toggle_mode = true; button.add_theme_font_size_override("font_size", 12)
+		var button = Button.new(); button.text = TITLES[i]; button.toggle_mode = true; button.add_theme_font_size_override("font_size", 11)
 		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL; row.add_child(button); tabs.append(button)
 		button.pressed.connect(func(): select_channel(key))
 	var settings = Button.new(); settings.text = "⚙"; settings.tooltip_text = "Настройки чата"; row.add_child(settings); var tabs_row = row; settings.pressed.connect(func(): settings_requested.emit())
-	log_view = RichTextLabel.new(); log_view.custom_minimum_size = Vector2(280, 90); log_view.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	log_view = RichTextLabel.new(); log_view.custom_minimum_size = Vector2(252, 90); log_view.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	log_view.bbcode_enabled = false; log_view.scroll_following = true; log_view.selection_enabled = true; var player_frame = PanelContainer.new(); split.add_child(player_frame)
+	player_frame.add_theme_stylebox_override("panel", _chat_style())
 	player_frame.add_child(log_view); log_view.mouse_force_pass_scroll_events = false
 	move_child(tabs_row, 1)
 	log_view.meta_clicked.connect(func(peer): recipient.text = str(peer); select_channel("pm"); input.grab_focus())
@@ -54,6 +58,12 @@ func _ready():
 	input.gui_input.connect(func(event):
 		if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE: input.release_focus(); input.accept_event())
 	select_channel("all")
+
+func _chat_style() -> StyleBoxFlat:
+	var s = StyleBoxFlat.new(); s.bg_color = Color(0.035, 0.045, 0.04, 0.42); s.border_color = Color(0.54, 0.48, 0.35, 0.55)
+	s.border_width_top = 1; s.border_width_bottom = 1
+	s.content_margin_left = 3; s.content_margin_right = 3; s.content_margin_top = 2; s.content_margin_bottom = 2
+	return s
 
 func submit():
 	if input.text.strip_edges().is_empty(): return
@@ -84,7 +94,7 @@ func add_message(entry: Dictionary):
 func set_preference(key: String, value):
 	preferences[key] = value
 	Settings.write_value("chat", key, value)
-	split.custom_minimum_size.y = int(preferences.height) - 60
+	split.custom_minimum_size.y = int(preferences.height) - 52
 	_redraw()
 
 func _redraw():
@@ -97,7 +107,7 @@ func _redraw():
 	system_view.clear(); system_view.add_theme_font_size_override("normal_font_size", int(preferences.size))
 	for entry in system_history:
 		if entry.ch != "sys" or not preferences.get(entry.get("category", "info"), true): continue
-		system_view.push_color({"combat": Color("e1aba0"), "rewards": Color("dcca83")}.get(entry.get("category", "info"), Color("a6b9c5")))
+		system_view.push_color({"combat": Color("a0c998"), "rewards": Color("e0d96d")}.get(entry.get("category", "info"), Color("b9ad91")))
 		system_view.add_text(str(entry.text) + "\n"); system_view.pop()
 	log_view.clear(); log_view.add_theme_font_size_override("normal_font_size", int(preferences.size))
 	for i in tabs.size():
@@ -106,10 +116,9 @@ func _redraw():
 		tabs[i].button_pressed = active == CHANNELS[i]
 	for entry in history:
 		if not accepts(entry): continue
-		var color = {"all": Color("e7e0cd"), "trade": Color("f2c680"), "near": Color("99d9ba"), "pm": Color("d8adf4"), "sys": Color("a0b4bf")}.get(entry.ch, Color.WHITE)
+		var color = {"all": Color("d9d2bf"), "trade": Color("c69bc7"), "near": Color("67bfbd"), "pm": Color("b8daa0"), "sys": Color("b9ad91")}.get(entry.ch, Color.WHITE)
 		log_view.push_color(color)
 		if entry.ch != "sys":
-			log_view.add_text("[%s] " % {"all": "Мир", "trade": "Торг", "near": "Рядом", "pm": "ЛС"}[entry.ch])
 			log_view.push_meta(entry.get("peer", entry.get("from", ""))); log_view.add_text(entry.get("from", "")); log_view.pop()
 			if entry.has("to"): log_view.add_text(" → " + entry.to)
 			log_view.add_text(": ")

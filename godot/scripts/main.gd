@@ -45,6 +45,7 @@ var resume_on_start = false
 var quick_start = false
 var quick_tried = false
 var capture_path = ""
+var startup_panel = ""
 var screenshot_done = false
 var auth_ready_at = 0
 var pvp_enabled = false
@@ -71,6 +72,7 @@ func _ready():
 		if a == "--quick-start": quick_start = true
 		if a == "--resume": resume_on_start = true
 		if a.begins_with("--capture="): capture_path = a.trim_prefix("--capture=")
+		if a.trim_prefix("--panel=") in ["inventory", "character", "settings"] and a.begins_with("--panel="): startup_panel = a.trim_prefix("--panel=")
 	world = WorldScene.instantiate(); add_child(world); world.build()
 	camera = Camera3D.new(); camera.name = "Camera"; camera.fov = 55; camera.far = 1600; camera.near = 0.2; add_child(camera); camera.current = true
 	camera.position = Vector3(-410, 30, 425); camera.look_at(Vector3(-430, 7, 390))
@@ -132,6 +134,7 @@ func _message(m: Dictionary):
 			hud.login_pass.clear()
 			if not same_character: hud.chat.clear_history()
 			hud.enter(profile)
+			if not startup_panel.is_empty(): hud.show_window(startup_panel); startup_panel = ""
 			hud.log_line("Добро пожаловать, %s! Хранитель врат перенесёт вас в зону охоты." % profile.name)
 			print("NATIVE_AUTH_OK")
 		"autherr":
@@ -687,7 +690,7 @@ func _capture():
 	image.save_png(capture_path)
 	var report = FileAccess.open(capture_path + ".json", FileAccess.WRITE)
 	if report:
-		var state = {"endpoint": Network.endpoint, "connected": Network.online, "authenticated": Network.authed, "online": Network.online_count, "fps": Engine.get_frames_per_second()}
+		var state = {"endpoint": Network.endpoint, "connected": Network.online, "authenticated": Network.authed, "online": Network.online_count, "fps": Engine.get_frames_per_second(), "window": hud.window_kind, "music": game_audio.music.cue, "music_playing": game_audio.music.players.any(func(player): return player.playing)}
 		if is_instance_valid(hero): state.merge({"health": hud.hp_text.text, "animation": hero.last_clip, "model": hero.active_art, "mobs": mobs.size(), "ready": not hud.hp_text.text.is_empty() and not hero.last_clip.is_empty()})
 		else: state["ready"] = hud.login_panel.visible and Network.online
 		report.store_string(JSON.stringify(state))

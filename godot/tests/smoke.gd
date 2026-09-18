@@ -427,7 +427,9 @@ func _test_audio_bank():
 	check(limiter_found, "the actual master bus limits overlapping combat peaks to -1 dB")
 	audio.play_at("swing", game.hero.position)
 	var first = audio.last_variant.get("swing", -1)
-	await create_timer(0.08).timeout
+	# Cooldowns use monotonic wall time; headless frame timers may run ahead.
+	var next_swing_at = Time.get_ticks_msec() + 80
+	await wait_for(func(): return Time.get_ticks_msec() >= next_swing_at)
 	audio.play_at("swing", game.hero.position)
 	check(first >= 0 and audio.last_variant.get("swing", -1) != first, "successive sword swings select different recorded samples")
 	var before = audio.play_counts.get("impact", 0)

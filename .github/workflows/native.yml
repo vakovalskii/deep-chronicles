@@ -40,4 +40,6 @@ jobs:
           path: |
             .native-run/verification/
             .native-run/test.log
+            .native-run/test-server.log
+            .native-run/server-integration.log
             godot/builds/${{ matrix.target }}/*.zip

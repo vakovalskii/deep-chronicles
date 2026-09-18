@@ -1,4 +1,4 @@
-import { TOWN_DECOR, TOWN_SHOPS, TOWN_ROADS, shopObstacles } from './town-layout.js';
+import { TOWN_DECOR, TOWN_SHOPS, TOWN_ROADS, TOWN_HOUSES, TOWN_GATES, gateObstacles, shopObstacles, townLayout, harborHeight } from './town-layout.js';
 // Ядро мира без three.js: рельеф, зоны, расстановка построек, препятствия, спавны.
 // Формы передаются наружу через «эмиттер» B — клиент строит из них меши, сервер берёт пустышку.
 // Всё, что нужно и клиенту, и серверу (heightAt/zoneAt/obstacles/spawns), живёт здесь.
@@ -19,7 +19,7 @@ export const MAP = 1600; // сторона карты, м
 export const DUNGEON = { x0: 2200, z0: -200, cell: 18, n: 11 }; // катакомбы — отдельная площадка за краем карты
 
 export const TOWNS = [
-  { id: 'harbor', name: 'Светлая Гавань', x: -430, z: 400, r: 95, color: 0xd8cfb8 },
+  { id: 'harbor', name: 'Светлая Гавань', x: -430, z: 400, r: 170, color: 0xd8cfb8 },
   { id: 'ford', name: 'Каменный Брод', x: 430, z: -400, r: 95, color: 0xb8a890 },
 ];
 
@@ -50,6 +50,7 @@ export function heightAt(x, z) {
   const w = ZONES[2]; h = lerp(h, h * 0.35 + 2, smooth(w.r, w.r * 0.5, Math.hypot(x - w.x, z - w.z)));
   // города — ровные площадки
   for (const t of TOWNS) { const d = Math.hypot(x - t.x, z - t.z); h = lerp(4, h, smooth(t.r, t.r + 60, d)); }
+  h = harborHeight(x-TOWNS[0].x,z-TOWNS[0].z,h);
   // площадка у склепа
   h = lerp(heightAtBase(CRYPT.x, CRYPT.z), h, smooth(14, 30, Math.hypot(x - CRYPT.x, z - CRYPT.z)));
   return h;
@@ -63,16 +64,49 @@ const addObs = (x, z, r) => obstacles.push({ x, z, r });
 // эмиттер-пустышка: сервер строит расстановку, но не геометрию
 export const nullEmitter = { add() {}, use() {} };
 
+function buildHarborWalls(t,layout,B) {
+  const points=layout.outline;
+  B.use('brick');
+  for(let i=0;i<points.length;i++) {
+    if(i===4)continue; // Набережная открыта к гавани.
+    const [ax,az]=points[i], [bx,bz]=points[(i+1)%points.length],len=Math.hypot(bx-ax,bz-az),steps=Math.ceil(len/3);
+    for(let j=0;j<steps;j++) {
+      const u=(j+.5)/steps,x=ax+(bx-ax)*u,z=az+(bz-az)*u;
+      if(layout.gates.some(g=>Math.hypot(g.x-x,g.z-z)<13))continue;
+      const wx=t.x+x,wz=t.z+z,y=heightAt(wx,wz),r=Math.atan2(bx-ax,bz-az);
+      B.add('box',0xb0a997,wx,y+4,wz,r,2.1,8,len/steps+.15);
+      if(j%2===0)B.add('box',0xc2baa7,wx,y+8.7,wz,r,2.3,1.4,1.5);
+      addObs(wx,wz,1.85);
+    }
+  }
+  for(let x=39;x<=110;x+=2.5)if(x<57||x>75)addObs(t.x+x,t.z-44,1.4);
+  for(const x of [51,81])for(const z of [-59,-72,-87])addObs(t.x+x,t.z+z,.65);
+  // Ограждение края воды с проёмами к трём причалам.
+  for(let z=-24;z<=105;z+=2)if(![25,50,75].some(p=>Math.abs(z-p)<4))addObs(t.x+114,t.z+z,.9);
+}
+
+// Стены прямоугольных домов: углы не должны оставаться проходимыми.
+function buildingObstacles(x,z,w,d,rotation=0) {
+  const c=Math.cos(rotation),s=Math.sin(rotation);
+  const add=(a,b)=>addObs(x+c*a+s*b,z-s*a+c*b,.8);
+  const nx=Math.ceil(w/1.4),nz=Math.ceil(d/1.4);
+  for(let i=0;i<=nx;i++)for(const side of [-1,1])add(-w/2+w*i/nx,side*d/2);
+  for(let i=1;i<nz;i++)for(const side of [-1,1])add(side*w/2,-d/2+d*i/nz);
+}
+
 function buildTown(t, B, npcs) {
-  const y = heightAt(t.x, t.z);
+  const y = heightAt(t.x, t.z), layout=townLayout(t.id);
+  if (layout.outline) buildHarborWalls(t,layout,B);
   // стена кольцом из сегментов, 4 ворот
   const segs = 36;
   B.use('brick');
-  for (let i = 0; i < segs; i++) {
+  for (let i = 0; !layout.outline && i < segs; i++) {
     const a = (i / segs) * Math.PI * 2;
     if (i % 9 === 0 || i % 9 === 8) continue; // проёмы ворот (стороны света)
     const x = t.x + Math.cos(a) * t.r, z = t.z + Math.sin(a) * t.r;
     B.add('box', 0x9a9088, x, y + 4, z, -a, 2.2, 8, (2 * Math.PI * t.r) / segs + 0.6);
+    for (const k of [-1,0,1]) { const dx=-Math.sin(a)*k*4.5, dz=Math.cos(a)*k*4.5; B.add('box',0xb3aa95,x+dx,y+8.7,z+dz,-a,2.6,1.4,1.6); }
+    B.add('box',0x978d79,x,y+1,z,-a,3.4,2,17);
     if (i % 3 === 0) { B.add('cyl', 0x8a8078, x, y + 6, z, 0, 5, 12, 5); B.use('roof_red'); B.add('cone', 0x6a3a2a, x, y + 14, z, 0, 6.5, 5, 6.5); B.use('brick'); addObs(x, z, 3); }
     else addObs(x, z, 2.4);
   }
@@ -84,34 +118,32 @@ function buildTown(t, B, npcs) {
   B.add('cyl', 0xd8d0c0, t.x, y + 3, t.z, 0, 1.2, 5, 1.2);
   B.use('plain'); B.add('cyl', 0x4a8ac8, t.x, y + 1.6, t.z, 0, 7, 0.4, 7);
   addObs(t.x, t.z, 4.5);
-  // дома по кругу
-  const r = (k) => hash(t.x + k, t.z - k);
-  for (let i = 0; i < 16; i++) {
-    const a = (i / 16) * Math.PI * 2 + 0.2, d = 45 + r(i) * 30;
-    if (Math.abs(Math.sin(a * 2)) < 0.25) continue; // улицы к воротам
-    const x = t.x + Math.cos(a) * d, z = t.z + Math.sin(a) * d, w = 8 + r(i + 3) * 6, h = 6 + r(i + 5) * 6;
-    if (TOWN_SHOPS.some(shop => Math.hypot(x-t.x-shop.x,z-t.z-shop.z) < w*.7+9)) continue;
-    B.use('house'); B.add('box', t.color, x, y + h / 2, z, -a, w, h, w * 0.8);
-    B.use(i % 2 ? 'roof_red' : 'roof_blue'); B.add('cone4', i % 2 ? 0x8a3a2a : 0x3a4a6a, x, y + h + w * 0.35, z, -a, w * 0.95, w * 0.7, w * 0.85);
-    addObs(x, z, w * 0.62);
+  // Жилые кварталы с проходами между рядами домов.
+  for (const house of layout.houses) {
+    const {w,d,h,rotation}=house, x=t.x+house.x,z=t.z+house.z,y=heightAt(x,z);
+    B.use('house'); B.add('box', t.color, x, y+h/2, z, rotation, w,h,d);
+    B.use(house.roof==='red'?'roof_red':'roof_blue');
+    B.add('cone4',0x8a3a2a,x,y+h+w*.25,z,rotation,w*.95,w*.5,d*.95);
+    buildingObstacles(x,z,w,d,rotation);
   }
-  // храм — точка возрождения
-  B.use('brick'); B.add('box', 0xeeeae0, t.x, y + 7, t.z - 26, 0, 16, 14, 12);
-  B.use('roof'); B.add('cone4', 0xc8a040, t.x, y + 19, t.z - 26, 0, 16, 10, 12);
-  addObs(t.x, t.z - 26, 9);
-  for (const item of TOWN_DECOR) addObs(t.x + item.x, t.z + item.z, item.r);
-  for (const shop of TOWN_SHOPS) for (const o of shopObstacles(shop)) addObs(t.x+o.x,t.z+o.z,o.r);
+  for (const g of layout.gates) for (const o of gateObstacles(g)) addObs(t.x+o.x,t.z+o.z,o.r);
+  // Храм на собственной террасе, а не на общей оси всех домов.
+  const tx=t.x+layout.temple.x,tz=t.z+layout.temple.z,ty=heightAt(tx,tz);
+  B.use('brick'); B.add('box',0xeeeae0,tx,ty+7,tz,0,16,14,12);
+  B.use('roof'); B.add('cone4',0xc8a040,tx,ty+19,tz,0,16,10,12);addObs(tx,tz,9);
+  for(const hall of layout.civic) buildingObstacles(t.x+hall.x,t.z+hall.z,hall.w,hall.d);
+  for (const item of layout.decor) addObs(t.x + item.x, t.z + item.z, item.r);
+  for (const shop of layout.shops) for (const o of shopObstacles(shop)) addObs(t.x+o.x,t.z+o.z,o.r);
   // NPC
   npcs.push({ id: t.id + ':gk', town: t.id, role: 'gatekeeper', name: 'Хранитель врат', x: t.x + 12, z: t.z + 10, color: 0x9040d0 });
   npcs.push({ id: t.id + ':shop', town: t.id, role: 'merchant', name: 'Рыночный торговец', x: t.x - 20.5, z: t.z + 7, color: 0xd09030 });
-  npcs.push({ id: t.id + ':priest', town: t.id, role: 'priest', name: 'Жрец', x: t.x, z: t.z - 16, color: 0xf0e8d0 });
-  for (const shop of TOWN_SHOPS) npcs.push({id:t.id+':'+shop.id,town:t.id,role:'merchant',shop:shop.id,name:shop.name,x:t.x+shop.x,z:t.z+shop.z+2,color:0xc4a479});
-  // стражи снаружи у четырёх ворот — нападают на PK
-  for (let g = 0; g < 4; g++) {
-    const a = (g / 4) * Math.PI * 2 - Math.PI / 36, d = t.r + 6; // проёмы ворот — сегменты 8 и 0 (±5°)
-    const cx = t.x + Math.cos(a) * d, cz = t.z + Math.sin(a) * d, px = -Math.sin(a) * 5, pz = Math.cos(a) * 5;
-    for (const k of [-1, 1]) npcs.push({ id: `${t.id}:guard${g}${k}`, town: t.id, role: 'guard', name: 'Страж', x: cx + px * k, z: cz + pz * k, color: 0x8090a0 });
-  }
+  npcs.push({ id: t.id + ':priest', town: t.id, role: 'priest', name: 'Жрец', x: tx, z: tz + 13, color: 0xf0e8d0 });
+  for (const shop of layout.shops) npcs.push({id:t.id+':'+shop.id,town:t.id,role:'merchant',shop:shop.id,name:shop.name,x:t.x+shop.x,z:t.z+shop.z+2,color:0xc4a479});
+  // Стражи стоят у настоящих входов.
+  layout.gates.forEach((g,i)=>{const c=Math.cos(g.rotation),s=Math.sin(g.rotation);
+    for(const k of [-1,1])npcs.push({id:`${t.id}:guard${i}${k}`,town:t.id,role:'guard',name:'Страж',x:t.x+g.x+s*8+c*k*5,z:t.z+g.z+c*8-s*k*5,color:0x8090a0});
+  });
+  if(t.id==='harbor')npcs.push({id:'harbor:smith',town:t.id,role:'merchant',shop:'weapons',name:'Кузнец',x:t.x-74,z:t.z+84,color:0x9e7954});
   // врата телепорта — светящееся кольцо
   B.use('stone'); B.add('cyl', 0x6a5aa0, t.x + 18, y + 0.3, t.z + 16, 0, 6, 0.6, 6);
 }
@@ -223,7 +255,8 @@ export function buildProps(B = nullEmitter) {
   dungeonCells.forEach((c, k) => { if (c.i + c.j > 1 && k % 2 === 0) spawns.push({ mob: undead[k % undead.length], x: c.x + 3, z: c.z - 2 }); });
   const last = dungeonCells[dungeonCells.length - 1];
   spawns.push({ mob: 'lich', x: last.x, z: last.z });
-  props = { npcs, spawns, townShops: TOWNS.flatMap(t => TOWN_SHOPS.map(s => ({...s,x:t.x+s.x,z:t.z+s.z}))), townRoads: TOWNS.flatMap(t => TOWN_ROADS.map(s => ({...s,x:t.x+s.x,z:t.z+s.z}))), townDecor: TOWNS.flatMap(t => TOWN_DECOR.map(item => ({ ...item, x: t.x + item.x, z: t.z + item.z }))) };
+  const placed=(key)=>TOWNS.flatMap(t=>(townLayout(t.id)[key]||[]).map(v=>({...v,town:t.id,x:t.x+(v.x||0),z:t.z+(v.z||0),...(v.points?{points:v.points.map(([x,z])=>[t.x+x,t.z+z])}:{})})));
+  props = {npcs,spawns,townGates:placed('gates'),townHouses:placed('houses'),townShops:placed('shops'),townRoads:placed('roads'),townDecor:placed('decor'),townCivic:placed('civic'),townOutlines:TOWNS.filter(t=>townLayout(t.id).outline).map(t=>({town:t.id,points:townLayout(t.id).outline.map(([x,z])=>[t.x+x,t.z+z])})),townTemples:TOWNS.map(t=>({x:t.x+townLayout(t.id).temple.x,z:t.z+townLayout(t.id).temple.z}))};
   return props;
 }
 

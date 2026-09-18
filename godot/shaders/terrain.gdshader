@@ -36,7 +36,7 @@ void fragment() {
 	col *= 0.96 + 0.08 * noise2(p);
 	// Gardens and paths replace the previous unbroken disc of bare dirt.
 	col = mix(col, texture(grass, uv).rgb, town * 0.9);
-	float roads = max(town_roads(p, vec2(-430.0,400.0)), town_roads(p, vec2(430.0,-400.0)));
+	float roads = town_roads(p, vec2(430.0,-400.0));
 	col = mix(col, texture(dirt, uv).rgb, roads);
 	float rocky = max(smoothstep(0.35, 0.6, 1.0 - world_normal.y), smoothstep(38.0, 55.0, world_pos.y));
 	col = mix(col, texture(rock, uv).rgb, rocky);

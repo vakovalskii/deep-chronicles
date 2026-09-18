@@ -37,7 +37,7 @@ func set_region(pos: Vector3):
 	if id == region_id: return
 	region_id = id; underground = id == "crypt"
 	atmosphere = {
-		"town": {"fog": Color("b9b3a3"), "density": 0.0018, "sun": Color("ffe0b0"), "energy": 1.2, "ambient": 0.38},
+		"town": {"fog": Color("acbbc2"), "density": 0.0007, "sun": Color("ffe0b0"), "energy": 1.15, "ambient": 0.28},
 		"meadow": {"fog": Color("a8bec5"), "density": 0.0018, "sun": Color("fff0cf"), "energy": 1.1, "ambient": 0.35},
 		"forest": {"fog": Color("788e91"), "density": 0.0032, "sun": Color("dce6da"), "energy": 0.85, "ambient": 0.32},
 		"waste": {"fog": Color("baa58b"), "density": 0.0025, "sun": Color("ffdbb6"), "energy": 1.15, "ambient": 0.32},
@@ -52,18 +52,18 @@ func _town_details():
 	var iron = StandardMaterial3D.new(); iron.albedo_color = Color("34333b"); iron.metallic = 0.75; iron.roughness = 0.5
 	var glow = StandardMaterial3D.new(); glow.albedo_color = Color("ffd398")
 	glow.emission_enabled = true; glow.emission = Color("ffb45f"); glow.emission_energy_multiplier = 1.8
-	for town in GameData.world.towns:
+	for town in GameData.world.townTemples:
 		for side in [-1, 1]:
 			var banner = MeshInstance3D.new(); var fabric = QuadMesh.new(); fabric.size = Vector2(2.1, 5.5)
 			banner.mesh = fabric; banner.material_override = cloth
-			banner.position = GameData.position_at(town.x + side * 5.3, town.z - 18.8) + Vector3.UP * 9
+			banner.position = GameData.position_at(town.x + side * 5.3, town.z + 7.2) + Vector3.UP * 9
 			banner.visibility_range_end = 160; add_child(banner)
 			var rail = MeshInstance3D.new(); var bar = BoxMesh.new(); bar.size = Vector3(2.5, 0.12, 0.18)
 			rail.mesh = bar; rail.material_override = iron; rail.position = banner.position + Vector3.UP * 2.8; add_child(rail)
 			var lamp = MeshInstance3D.new(); var lantern = CylinderMesh.new()
 			lantern.top_radius = 0.2; lantern.bottom_radius = 0.3; lantern.height = 0.65; lantern.radial_segments = 6
 			lamp.mesh = lantern; lamp.material_override = glow
-			lamp.position = GameData.position_at(town.x + side * 7.0, town.z - 18.8) + Vector3.UP * 5.5; add_child(lamp)
+			lamp.position = GameData.position_at(town.x + side * 7.0, town.z + 7.2) + Vector3.UP * 5.5; add_child(lamp)
 			var light = OmniLight3D.new(); light.position = lamp.position
 			light.light_color = Color("ffc07b"); light.light_energy = 1.8; light.omni_range = 9; light.distance_fade_enabled = true
 			light.distance_fade_begin = 60; light.distance_fade_length = 20; add_child(light)
@@ -81,7 +81,12 @@ func _terrain():
 			for z in 26:
 				for x in 26:
 					var px = cx + x * 4.0; var pz = cz + z * 4.0
-					vertices.append(GameData.position_at(px, pz))
+					var ground = GameData.position_at(px, pz)
+					# Ходьба по причалам использует отметку настила; дно под ними остаётся под водой.
+					if px > -317 and px < -268:
+						for pier_z in [425,450,475]:
+							if absf(pz-pier_z)<8: ground.y = -13
+					vertices.append(ground)
 					normals.append(Vector3(GameData.height_at(px - 1, pz) - GameData.height_at(px + 1, pz), 2, GameData.height_at(px, pz - 1) - GameData.height_at(px, pz + 1)).normalized())
 					if x < 25 and z < 25:
 						var a = z * 26 + x

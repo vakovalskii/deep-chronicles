@@ -64,7 +64,7 @@ func _draw():
 		var closest = GameData.world.towns[0]
 		for town in GameData.world.towns:
 			if Vector2(town.x-player_position.x,town.z-player_position.z).length() < Vector2(closest.x-player_position.x,closest.z-player_position.z).length(): closest = town
-		extent = size / minf(size.x,size.y) * 230
+		extent = size / minf(size.x,size.y) * (closest.r * 2 + 40)
 		origin = Vector2(closest.x,closest.z) - extent * .5
 	if not compact and player_position.x > 2100:
 		var d = GameData.world.dungeon
@@ -75,18 +75,38 @@ func _draw():
 		draw_texture_rect_region(terrain_map,Rect2(Vector2.ZERO,size),source)
 	var font = ThemeDB.fallback_font
 	for road in GameData.world.get("townRoads", []):
+		if road.has("points"):
+			var line = PackedVector2Array()
+			for v in road.points: line.append(point(v[0],v[1]))
+			draw_polyline(line,Color("b5aa87"),maxf(1,road.width*size.x/extent.x),true)
+			continue
 		var p = point(road.x,road.z); var width = Vector2(road.w,road.d)/extent*size
 		draw_rect(Rect2(p-width*.5,width),Color("b5aa87"))
 	for shop in GameData.world.get("townShops", []):
 		var p = point(shop.x,shop.z-3); var width = Vector2(10,18)/extent*size
 		draw_rect(Rect2(p-width*.5,width),Color("715549"))
+	for house in GameData.world.get("townHouses", []):
+		var corners = PackedVector2Array()
+		for offset in [Vector2(-1,-1),Vector2(1,-1),Vector2(1,1),Vector2(-1,1)]:
+			var v = (offset*Vector2(house.w,house.d)*.5).rotated(-house.rotation)
+			corners.append(point(house.x+v.x,house.z+v.y))
+		draw_colored_polygon(corners,Color("ad785d"))
+	for hall in GameData.world.get("townCivic", []):
+		var p = point(hall.x,hall.z); var width = Vector2(hall.w,hall.d)/extent*size
+		draw_rect(Rect2(p-width*.5,width),Color("88644c"))
+		if not compact and city_focus and Rect2(Vector2.ZERO,size).has_point(p): draw_string(font,p+Vector2(5,-8),hall.name,HORIZONTAL_ALIGNMENT_LEFT,-1,12,Color("fff0bb"))
 	for r in GameData.world.get("modelPlacements", []):
 		if r[0] in ["oak","pine","bush","rock_a","rock_b","dead_tree"]: continue
 		var p=point(r[1],r[3]);var sz=Vector2(r[5],r[7])/extent*size
 		draw_rect(Rect2(p-sz*.5,sz),Color("463e32"));draw_rect(Rect2(p-sz*.4,sz*.8),Color("c5b085"))
 	for t in GameData.world.towns:
 		var p=point(t.x,t.z);var scale_map=size.x/extent.x
-		draw_arc(p,t.r*scale_map,0,TAU,48,Color("d8cba6"),2,true)
+		if t.id == "harbor":
+			for outline in GameData.world.get("townOutlines", []):
+				var line = PackedVector2Array()
+				for v in outline.points: line.append(point(v[0],v[1]))
+				line.append(line[0]); draw_polyline(line,Color("d8cba6"),2,true)
+		else: draw_arc(p,t.r*scale_map,0,TAU,48,Color("d8cba6"),2,true)
 		if not compact:
 			if city_focus:
 				if Rect2(Vector2.ZERO,size).has_point(p): draw_string(font,Vector2(160,27),t.name,HORIZONTAL_ALIGNMENT_LEFT,-1,18,Color("fff0bb"))

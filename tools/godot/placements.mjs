@@ -23,7 +23,7 @@ export function artPlacements(shapes, towns, crypt) {
     if (omitted.has(i)) continue;
     const r = shapes[i], next = shapes[i+1], kind = r[9];
     if (kind === 'house') {
-      add(next[9] === 'roof_red' ? 'house_a' : 'house_b', r, r[3]-r[7]/2, r[6], r[7]+next[7], r[8]);
+      // Жилые дома строятся собственным модульным набором в town_architecture.gd.
       omitted.add(i); omitted.add(i+1);
     } else if (kind === 'bark' && next?.[9] === 'leaves') {
       const pine = next[0] === 'cone';
@@ -32,7 +32,7 @@ export function artPlacements(shapes, towns, crypt) {
     } else if (kind === 'brick' && r[0] === 'cyl' && next?.[0] === 'cone') {
       add('tower', r, r[3]-r[7]/2, 6.5, 16.5); omitted.add(i); omitted.add(i+1);
     } else if (kind === 'brick' && r[0] === 'box' && r[6] === 16 && r[7] === 14) {
-      add('temple', r, r[3]-7, 16, 24, 14); omitted.add(i); omitted.add(i+1);
+      add('temple', r, r[3]-7, 18, 32, 15); omitted.add(i); omitted.add(i+1);
     } else if (kind === 'brick' && r[2] === crypt.x && r[4] === crypt.z && r[7] === 10) {
       add('crypt', r, r[3]-5, 14, 18, 14); omitted.add(i); omitted.add(i+1); omitted.add(i+2);
     } else if (kind === 'stone' && r[0] === 'cyl' && r[6] === 8) {

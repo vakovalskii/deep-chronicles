@@ -330,18 +330,30 @@ test('дроп: мёртвый, далёкий, неверный ID и истё�
 
 test('городские магазины и NPC доступны от площади пешком', () => {
   for(const town of TOWNS) {
-    const local=obstacles.filter(o=>Math.hypot(o.x-town.x,o.z-town.z)<120);
+    const local=obstacles.filter(o=>Math.hypot(o.x-town.x,o.z-town.z)<town.r+30);
     const seen=new Set(['0,8']), queue=[[0,8]];
     for(let i=0;i<queue.length;i++) {
       const [x,z]=queue[i];
       for(const [dx,dz] of [[1,0],[-1,0],[0,1],[0,-1]]) {
         const nx=x+dx,nz=z+dz,key=`${nx},${nz}`;
-        if(Math.abs(nx)>90||Math.abs(nz)>90||seen.has(key))continue;
+        if(Math.abs(nx)>town.r+8||Math.abs(nz)>town.r+8||seen.has(key))continue;
         if(local.some(o=>Math.hypot(town.x+nx-o.x,town.z+nz-o.z)<o.r+.8))continue;
         seen.add(key);queue.push([nx,nz]);
       }
     }
     for(const npc of world.npcs.filter(n=>n.town===town.id&&n.role!=='guard'))
       assert.ok(queue.some(([x,z])=>Math.hypot(town.x+x-npc.x,town.z+z-npc.z)<2.5),npc.id+' недоступен от площади');
+    if(town.id==='harbor')for(const [tx,tz] of [[150,25],[150,50],[150,75],[-156,-3],[-7,-153],[-3,151]])
+      assert.ok(queue.some(([x,z])=>Math.hypot(x-tx,z-tz)<2),'Выход/причал '+tx+','+tz+' недоступен');
   }
+});
+
+import {presentationHeightAt} from '../tools/godot/placements.mjs';
+test('порт и храм: поверхность движения совпадает с высотой настила и террасы',()=>{
+  for(const z of [25,50,75])for(let x=110;x<=150;x+=2){
+    assert.ok(Math.abs(heightAt(-430+x,400+z)+3)<.01);
+    assert.ok(Math.abs(presentationHeightAt(-430+x,400+z)+3)<.01,'клиентская сетка причала');
+  }
+  assert.equal(heightAt(-364,324),12);
+  assert.ok(heightAt(-290,410)<-6.5,'вода должна закрывать дно');
 });

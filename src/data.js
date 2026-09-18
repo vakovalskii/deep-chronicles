@@ -172,3 +172,10 @@ for (const id of [...SETS.bone.parts, ...SETS.abyss.parts, 'shield_bone', 'ear_l
   RECIPES[id] = { coins: main ? 6000 : 2500, materials: { lich_seal: main ? 4 : 2, crystal: main ? 60 : 25, ectoplasm: main ? 30 : 12 } };
 }
 RECIPES.robe_abyss = { coins: 8500, materials: { lich_seal: 6, crystal: 85, ectoplasm: 42 } };
+
+// Ассортимент стационарных городских лавок. Рыночный торговец сохраняет общий каталог.
+export const SHOP_STOCK = {
+  weapons: SHOP.filter(id => ['weapon','shield'].includes(ITEMS[id].slot)),
+  clothes: SHOP.filter(id => ['head','armor','legs','gloves','feet'].includes(ITEMS[id].slot)),
+  alchemy: SHOP.filter(id => !ITEMS[id].slot || ['ear','neck','ring'].includes(ITEMS[id].slot)),
+};

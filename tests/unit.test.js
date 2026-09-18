@@ -327,3 +327,21 @@ test('дроп: мёртвый, далёкий, неверный ID и истё�
   assert.ok(loot.claim(d.id, d, 'owner', now + LOOT.lifetimeMs).error);
   assert.deepEqual(loot.snapshotFor(d, 100, 'owner', now + LOOT.lifetimeMs), []);
 });
+
+test('городские магазины и NPC доступны от площади пешком', () => {
+  for(const town of TOWNS) {
+    const local=obstacles.filter(o=>Math.hypot(o.x-town.x,o.z-town.z)<120);
+    const seen=new Set(['0,8']), queue=[[0,8]];
+    for(let i=0;i<queue.length;i++) {
+      const [x,z]=queue[i];
+      for(const [dx,dz] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+        const nx=x+dx,nz=z+dz,key=`${nx},${nz}`;
+        if(Math.abs(nx)>90||Math.abs(nz)>90||seen.has(key))continue;
+        if(local.some(o=>Math.hypot(town.x+nx-o.x,town.z+nz-o.z)<o.r+.8))continue;
+        seen.add(key);queue.push([nx,nz]);
+      }
+    }
+    for(const npc of world.npcs.filter(n=>n.town===town.id&&n.role!=='guard'))
+      assert.ok(queue.some(([x,z])=>Math.hypot(town.x+x-npc.x,town.z+z-npc.z)<2.5),npc.id+' недоступен от площади');
+  }
+});

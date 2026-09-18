@@ -170,7 +170,7 @@ test('покупка: без монет и вне досягаемости то�
   let p = await untilP(a, (x) => x.coins === 50);
   assert.ok(!p.inv.some((e) => e.id === 'sword_crystal'), 'купил вдали от торговца');
   // рядом с торговцем, но денег не хватает
-  await at(a, -442, 410);
+  await at(a, -450.5, 407);
   a.send({ t: 'buy', id: 'sword_crystal', n: 1 });
   await untilEv(a, /Недостаточно монет/);
   // и настоящая покупка
@@ -408,7 +408,7 @@ test('изготовление по WS: списание материалов, �
   const a=client();await a.open();
   try {
     a.send({t:'register',name:'Кузнец',pass:'craft-test',cls:'mage'});await a.wait('authok');
-    a.send({t:'dev',lvl:8,coins:1000,item:'pelt',n:40,x:-442,z:410});await untilP(a,p=>p.inv.some(e=>e.id==='pelt'));
+    a.send({t:'dev',lvl:8,coins:1000,item:'pelt',n:40,x:-450.5,z:407});await untilP(a,p=>p.inv.some(e=>e.id==='pelt'));
     a.send({t:'dev',item:'bone',n:40});await untilP(a,p=>p.inv.some(e=>e.id==='bone'));
     const order={t:'craft',id:'staff_oak',request:'native-order-0001'};a.send(order);a.send(order);
     const p=await untilP(a,p=>p.inv.some(e=>e.id==='staff_oak'));

@@ -58,7 +58,7 @@ func _run():
 				if not is_equal_approx(float(s[key]), float(fixture.stats[key])):
 					stats_match = false; print("Mismatch ", key, ": ", s[key], " != ", fixture.stats[key])
 	check(stats_match, "%s native stat profiles match the JS game rules" % fixtures.size())
-	check(data.world.spawns.size() == 155 and data.world.obstacles.size() == 3251 and data.world.modelPlacements.size() >= 2000, "world content exported without missing spawns")
+	check(data.world.spawns.size() == 155 and data.world.obstacles.size() >= 3251 + data.world.townDecor.size() and data.world.modelPlacements.size() >= 1900, "world content exported without missing spawns")
 	check(absf(data.height_at(-430, 400) - 4) < 0.001, "town ground matches server")
 	var position = data.move(Vector3(-437, 4, 400), Vector3.RIGHT, 5)
 	check(position.distance_to(Vector3(-430, 4, 400)) >= 5.0, "movement cannot cross the fountain")
@@ -107,6 +107,17 @@ func _run():
 		check(is_instance_valid(game.hud.window) and game.get_viewport().get_visible_rect().encloses(game.hud.window.get_global_rect()), kind + " window fits the viewport")
 		if DisplayServer.get_name() != "headless": await _screenshot(kind + ".png")
 	game.hud.close_window()
+	game.hud.show_window("map")
+	check(game.hud.map_control.city_focus, "map opens the detailed town plan while in town")
+	game.hud.close_window()
+	for shop_id in ["weapons", "clothes", "alchemy"]:
+		var vendor = game.npcs.filter(func(n): return n.definition.get("shop", "") == shop_id)[0]
+		game._open_npc(vendor)
+		var products = []
+		for button in game.hud.window.find_children("*", "Button", true, false):
+			if button.has_meta("buy"): products.append(button.get_meta("buy"))
+		check(products == data.catalog.SHOP_STOCK[shop_id], "native shop shows its own inventory: " + shop_id)
+	game.hud.shop_id = ""; game.hud.shop_name = "Рыночный торговец"; game.hud.close_window()
 	game.hud.show_window("settings")
 	for slider in game.hud.window.find_children("*", "HSlider", true, false):
 		if slider.get_meta("audio_bus", "") == "Effects":
@@ -157,7 +168,7 @@ func _run():
 	await create_timer(0.2).timeout
 	check(game.hero.position.distance_to(before_slide) > 2, "native player slides around the fountain")
 	check(received.filter(func(m): return m.t == "fix").size() == fixes_before_slide, "server accepts curved native movement around obstacles")
-	await _dev({"x": -442, "z": 410, "coins": 10000, "lvl": 8})
+	await _dev({"x": -450.5, "z": 407, "coins": 10000, "lvl": 8})
 	game.hud.show_window("shop")
 	_click("buy", "sword_long")
 	check(await wait_for(func(): return _bag("sword_long") >= 0), "shop purchase is server-authoritative")
@@ -333,7 +344,7 @@ func _run():
 	game._action("equip", _bag("sword_long"))
 	check(await wait_for(func(): return game.hero.weapon_node.get_meta("weapon_kind") == "warrior"), "mage equipping a sword changes the actual weapon model")
 	check(game.hero.weapon_node.to_global(game.hero.weapon_node.get_meta("handle_center")).distance_to(game.hero.weapon_node.get_parent().global_position) < 0.001, "weapon handle stays exactly on the palm grip")
-	await _dev({"x": -442, "z": 410, "coins": 1000, "item": "pelt", "n": 20})
+	await _dev({"x": -450.5, "z": 407, "coins": 1000, "item": "pelt", "n": 20})
 	await _dev({"item": "bone", "n": 20})
 	game.hud.show_window("craft"); _click("craft", "staff_oak")
 	check(await wait_for(func(): return _bag("staff_oak") >= 0 and game.profile.coins == 700 and _bag("pelt") < 0 and _bag("bone") < 0), "native crafting spends exact resources on the actual server")

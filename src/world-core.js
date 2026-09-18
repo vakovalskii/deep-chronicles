@@ -1,3 +1,4 @@
+import { TOWN_DECOR, TOWN_SHOPS, TOWN_ROADS, shopObstacles } from './town-layout.js';
 // Ядро мира без three.js: рельеф, зоны, расстановка построек, препятствия, спавны.
 // Формы передаются наружу через «эмиттер» B — клиент строит из них меши, сервер берёт пустышку.
 // Всё, что нужно и клиенту, и серверу (heightAt/zoneAt/obstacles/spawns), живёт здесь.
@@ -89,6 +90,7 @@ function buildTown(t, B, npcs) {
     const a = (i / 16) * Math.PI * 2 + 0.2, d = 45 + r(i) * 30;
     if (Math.abs(Math.sin(a * 2)) < 0.25) continue; // улицы к воротам
     const x = t.x + Math.cos(a) * d, z = t.z + Math.sin(a) * d, w = 8 + r(i + 3) * 6, h = 6 + r(i + 5) * 6;
+    if (TOWN_SHOPS.some(shop => Math.hypot(x-t.x-shop.x,z-t.z-shop.z) < w*.7+9)) continue;
     B.use('house'); B.add('box', t.color, x, y + h / 2, z, -a, w, h, w * 0.8);
     B.use(i % 2 ? 'roof_red' : 'roof_blue'); B.add('cone4', i % 2 ? 0x8a3a2a : 0x3a4a6a, x, y + h + w * 0.35, z, -a, w * 0.95, w * 0.7, w * 0.85);
     addObs(x, z, w * 0.62);
@@ -97,10 +99,13 @@ function buildTown(t, B, npcs) {
   B.use('brick'); B.add('box', 0xeeeae0, t.x, y + 7, t.z - 26, 0, 16, 14, 12);
   B.use('roof'); B.add('cone4', 0xc8a040, t.x, y + 19, t.z - 26, 0, 16, 10, 12);
   addObs(t.x, t.z - 26, 9);
+  for (const item of TOWN_DECOR) addObs(t.x + item.x, t.z + item.z, item.r);
+  for (const shop of TOWN_SHOPS) for (const o of shopObstacles(shop)) addObs(t.x+o.x,t.z+o.z,o.r);
   // NPC
   npcs.push({ id: t.id + ':gk', town: t.id, role: 'gatekeeper', name: 'Хранитель врат', x: t.x + 12, z: t.z + 10, color: 0x9040d0 });
-  npcs.push({ id: t.id + ':shop', town: t.id, role: 'merchant', name: 'Торговец', x: t.x - 12, z: t.z + 10, color: 0xd09030 });
+  npcs.push({ id: t.id + ':shop', town: t.id, role: 'merchant', name: 'Рыночный торговец', x: t.x - 20.5, z: t.z + 7, color: 0xd09030 });
   npcs.push({ id: t.id + ':priest', town: t.id, role: 'priest', name: 'Жрец', x: t.x, z: t.z - 16, color: 0xf0e8d0 });
+  for (const shop of TOWN_SHOPS) npcs.push({id:t.id+':'+shop.id,town:t.id,role:'merchant',shop:shop.id,name:shop.name,x:t.x+shop.x,z:t.z+shop.z+2,color:0xc4a479});
   // стражи снаружи у четырёх ворот — нападают на PK
   for (let g = 0; g < 4; g++) {
     const a = (g / 4) * Math.PI * 2 - Math.PI / 36, d = t.r + 6; // проёмы ворот — сегменты 8 и 0 (±5°)
@@ -218,7 +223,7 @@ export function buildProps(B = nullEmitter) {
   dungeonCells.forEach((c, k) => { if (c.i + c.j > 1 && k % 2 === 0) spawns.push({ mob: undead[k % undead.length], x: c.x + 3, z: c.z - 2 }); });
   const last = dungeonCells[dungeonCells.length - 1];
   spawns.push({ mob: 'lich', x: last.x, z: last.z });
-  props = { npcs, spawns };
+  props = { npcs, spawns, townShops: TOWNS.flatMap(t => TOWN_SHOPS.map(s => ({...s,x:t.x+s.x,z:t.z+s.z}))), townRoads: TOWNS.flatMap(t => TOWN_ROADS.map(s => ({...s,x:t.x+s.x,z:t.z+s.z}))), townDecor: TOWNS.flatMap(t => TOWN_DECOR.map(item => ({ ...item, x: t.x + item.x, z: t.z + item.z }))) };
   return props;
 }
 

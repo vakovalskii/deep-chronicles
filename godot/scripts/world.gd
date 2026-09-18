@@ -15,6 +15,8 @@ func build():
 	_props()
 	_models()
 	_town_details()
+	var town_decor = preload("res://scripts/town_decor.gd").new()
+	add_child(town_decor); town_decor.build()
 	_portal(GameData.position_at(150, 258.5), Color("9c75ff"))
 	_portal(Vector3(2205, 0, -195), Color("c6a4ff"))
 	for t in GameData.world.towns: _portal(GameData.position_at(t.x + 18, t.z + 16), Color("70d5f0"))

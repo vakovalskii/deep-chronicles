@@ -446,6 +446,8 @@ func _talk(npc):
 	else: destination = npc.position; has_destination = true; talking_to = npc
 
 func _open_npc(npc):
+	if npc.definition.role == "merchant":
+		hud.shop_id = npc.definition.get("shop", ""); hud.shop_name = npc.definition.name
 	var kind = {"merchant": "shop", "gatekeeper": "teleport", "priest": "priest"}.get(npc.definition.role, "")
 	if kind != "": hud.show_window(kind)
 	else: hud.log_line("Страж охраняет город от убийц.")

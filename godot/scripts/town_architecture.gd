@@ -8,7 +8,7 @@ func _init(builder: Node3D):
 	b._material("plaster_ochre",Color("a58c66"))
 	b._material("plaster_rose",Color("9b806d"))
 	b._material("timber",Color("342b24"))
-	b._material("masonry",Color("807c6e"),"res://generated/tex/brick.png")
+	b._material("masonry",Color("807c6e"),"res://assets/materials/masonry_albedo.jpg")
 	b._material("slate",Color("424c50"),"res://generated/tex/roof.png")
 	b._material("tile",Color("774939"),"res://generated/tex/roof.png")
 	b._material("glass",Color("202925"))

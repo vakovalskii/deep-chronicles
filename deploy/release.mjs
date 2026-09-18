@@ -23,6 +23,6 @@ await run('ssh', ['-o', 'BatchMode=yes', host, `mkdir -p '${remote}'`]);
 for (const dir of ['server', 'src', 'dist']) await run('rsync', ['-az', '--exclude', 'data', `${dir}/`, `${host}:${remote}/${dir}/`]);
 await run('rsync', ['-az', 'package.json', 'package-lock.json', 'deploy/promote.sh', `${host}:${remote}/`]);
 await run('ssh', ['-o', 'BatchMode=yes', host, `bash '${remote}/promote.sh' '${remote}'`]);
-await run(process.execPath, ['tools/godot/probe.mjs', '--require-native']);
+await run(process.execPath, ['tools/godot/probe.mjs', '--require-native', '--require-party']);
 fs.writeFileSync(path.join(root, '.native-run/deployment.json'), JSON.stringify({ id, commit: report.commit, verified: report.finished, promoted: new Date().toISOString(), groundLoot: 1, progression: 1, nativeOnly: 1 }, null, 2) + '\n');
 console.log(`Deployment verified: ${id}`);

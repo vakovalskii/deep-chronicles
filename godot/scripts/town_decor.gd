@@ -9,7 +9,7 @@ var architecture: RefCounted
 
 func build():
 	_material("wood", Color("76523b"))
-	_material("stone", Color.WHITE, "res://assets/terrain/cobble.png")
+	_material("stone", Color.WHITE, "res://assets/materials/paving_albedo.jpg")
 	_material("iron", Color("383a40"))
 	_material("soil", Color("39372a"))
 	_material("cream", Color("d7c8a0"))
@@ -18,8 +18,8 @@ func build():
 	var glow = _material("glow", Color("ffcc80")); glow.emission_enabled = true; glow.emission = Color("ffb365"); glow.emission_energy_multiplier = 1.2
 	var fabric = ShaderMaterial.new(); fabric.shader = load("res://shaders/banner.gdshader"); materials["pennant"] = fabric
 	_material("water",Color("528e9c"))
-	_material("paving",Color("b3ad9f"),"res://assets/terrain/cobble.png")
-	_material("trim",Color("645e50"),"res://assets/terrain/cobble.png")
+	_material("paving",Color("b3ad9f"),"res://assets/materials/paving_albedo.jpg")
+	_material("trim",Color("645e50"),"res://assets/materials/paving_albedo.jpg")
 	_material("lawn",Color("78805b"),"res://assets/terrain/grass.png")
 	architecture = preload("res://scripts/town_architecture.gd").new(self)
 	for town in GameData.world.towns:

@@ -130,6 +130,11 @@ func _draw():
 			var p=point(z.x,z.z)
 			draw_string(font,p+Vector2(-50,0),z.name,HORIZONTAL_ALIGNMENT_LEFT,-1,15,Color("f6ebcd"))
 			draw_string(font,p+Vector2(-50,20),"Уровни "+z.lv,HORIZONTAL_ALIGNMENT_LEFT,-1,13,Color("d8d5ba"))
+	if not compact and player_position.x < 2100:
+		for camp in GameData.world.get("huntingCamps", []):
+			var p = point(camp.x, camp.z)
+			draw_circle(p, 3, Color("ca9970"))
+			draw_string(font, p + Vector2(6, -3), camp.name, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color("e4ccb0"))
 	var crypt=point(150,250);draw_circle(crypt,4,Color("c899f4"))
 	if not compact:draw_string(font,crypt+Vector2(10,4),"Катакомбы",HORIZONTAL_ALIGNMENT_LEFT,-1,14)
 	for pos in mob_markers:

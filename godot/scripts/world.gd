@@ -19,6 +19,7 @@ func build():
 	add_child(dressing)
 	var town_decor = preload("res://scripts/town_decor.gd").new()
 	add_child(town_decor); town_decor.build()
+	_watchfires()
 	_portal(GameData.position_at(150, 258.5), Color("9c75ff"))
 	_portal(Vector3(2205, 0, -195), Color("c6a4ff"))
 	for t in GameData.world.towns: _portal(GameData.position_at(t.x + 18*t.scale, t.z + 16*t.scale), Color("70d5f0"))
@@ -65,7 +66,7 @@ func _town_details():
 			var lamp = MeshInstance3D.new(); var lantern = CylinderMesh.new()
 			lantern.top_radius = 0.2; lantern.bottom_radius = 0.3; lantern.height = 0.65; lantern.radial_segments = 6
 			lamp.mesh = lantern; lamp.material_override = glow
-			lamp.position = GameData.position_at(town.x + side * 7.0, town.z + 7.2) + Vector3.UP * 5.5; add_child(lamp)
+			lamp.position = GameData.position_at(town.x + side * 7.0*town.scale, town.z + 7.2*town.scale) + Vector3.UP * 5.5; add_child(lamp)
 			var light = OmniLight3D.new(); light.position = lamp.position
 			light.light_color = Color("ffc07b"); light.light_energy = 1.8; light.omni_range = 9; light.distance_fade_enabled = true
 			light.distance_fade_begin = 60; light.distance_fade_length = 20; add_child(light)
@@ -148,6 +149,13 @@ func _material(value: int, kind: String) -> Material:
 		m.uv1_triplanar = true; m.uv1_world_triplanar = true
 		m.uv1_scale = Vector3.ONE * 0.25
 		if kind in ["cobble", "dbrick", "dfloor", "roof_blue", "roof_red", "sandstone", "water"]: m.albedo_color = Color.WHITE
+	var pbr = "paving" if kind in ["cobble", "dfloor", "stone"] else ("masonry" if kind in ["brick", "dbrick"] else "")
+	if not pbr.is_empty():
+		m.albedo_texture = load("res://assets/materials/%s_albedo.jpg" % pbr)
+		m.normal_enabled = true; m.normal_texture = load("res://assets/materials/%s_normal.jpg" % pbr); m.normal_scale = 0.65
+		m.roughness_texture = load("res://assets/materials/%s_roughness.jpg" % pbr)
+		m.albedo_color = Color("929da7") if pbr == "masonry" else Color("acb0b2")
+		m.uv1_triplanar = true; m.uv1_world_triplanar = true; m.uv1_scale = Vector3.ONE * (0.33 if pbr == "masonry" else 0.11)
 	materials[key] = m; return m
 
 func _portal(pos: Vector3, col: Color):
@@ -224,3 +232,19 @@ func _models():
 			node.visibility_range_end = 360 if id in ["oak", "pine", "elm_field", "elm_slender", "alder_round", "pine_natural", "rock_a", "rock_b", "bush"] else 800
 			node.visibility_range_end_margin = 30
 			add_child(node)
+
+func _watchfires():
+	# A few warm pools guide the route out of the cold town; range limits mobile cost.
+	for town in GameData.world.towns:
+		for offset in [Vector2(87, -13), Vector2(87, -3), Vector2(-18, 10), Vector2(18, -16)]:
+			var pos = GameData.position_at(town.x + offset.x*town.scale, town.z + offset.y*town.scale)
+			var lamp = OmniLight3D.new(); lamp.position = pos + Vector3.UP * 2.0
+			lamp.light_color = Color("ffa254"); lamp.light_energy = 2.8; lamp.omni_range = 10; lamp.shadow_enabled = false; add_child(lamp)
+			var brazier = MeshInstance3D.new(); var bowl = CylinderMesh.new(); bowl.top_radius = 0.38; bowl.bottom_radius = 0.16; bowl.height = 0.45
+			brazier.mesh = bowl; brazier.position = pos + Vector3.UP * 1.55
+			var iron = StandardMaterial3D.new(); iron.albedo_color = Color("292e32"); iron.metallic = 0.75; iron.roughness = 0.65; brazier.material_override = iron; add_child(brazier)
+			var post = MeshInstance3D.new(); var shaft = CylinderMesh.new(); shaft.top_radius = 0.09; shaft.bottom_radius = 0.2; shaft.height = 1.4
+			post.mesh = shaft; post.material_override = iron; post.position = pos + Vector3.UP * 0.7; add_child(post)
+			var ember = MeshInstance3D.new(); var flame = SphereMesh.new(); flame.radius = 0.23; flame.height = 0.32
+			ember.mesh = flame; ember.position = pos + Vector3.UP * 1.82
+			var glow = StandardMaterial3D.new(); glow.albedo_color = Color("ff973d"); glow.emission_enabled = true; glow.emission = Color("ff6c23"); glow.emission_energy_multiplier = 2.5; ember.material_override = glow; add_child(ember)

@@ -451,3 +451,20 @@ test('темп автоатаки: урон приходится на 35% пол
  assert.ok(heroAttackTiming(.8).duration>1);
  assert.equal(heroAttackTiming(.8).duration/2,heroAttackTiming(1.6).duration);
 });
+
+test('starter hunting camps have dense, collision-free, non-aggressive groups outside town and slower movement', async () => {
+  const { HUNTING_CAMPS, buildProps, blockedAt } = await import('../src/world-core.js');
+  const { MOB_SPEED } = await import('../src/sim.js');
+  const spawns = buildProps().spawns;
+  for (const camp of HUNTING_CAMPS) {
+    const group = spawns.filter(s => s.camp === camp.id);
+    assert.equal(group.length, camp.count, camp.id);
+    for (const spawn of group) {
+      assert.ok(!zoneAt(spawn.x,spawn.z).town && !blockedAt(spawn.x,spawn.z,2));
+      assert.ok(!MOBS[spawn.mob].aggro && MOBS[spawn.mob].lvl <= 5);
+      assert.ok(group.some(other => other !== spawn && Math.hypot(other.x-spawn.x,other.z-spawn.z) < 15));
+    }
+  }
+  for (const cls of Object.values(CLASSES)) assert.ok(cls.base.speed * .275 >= 6 && cls.base.speed * .275 <= 8);
+  for (const mob of Object.values(MOBS)) assert.ok(MOB_SPEED(mob) < CLASSES.mage.base.speed * .275);
+});

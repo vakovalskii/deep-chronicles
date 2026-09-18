@@ -131,10 +131,10 @@ export const SETS = {
 
 // мобы: shape — вид (для процедурной модели)
 export const MOBS = {
-  rabbit: { name: 'Полевой кролик', lvl: 1, hp: 40, patk: 5, pdef: 20, xp: 18, coins: [2, 6], shape: 'critter', color: 0xd0c0a0, size: 0.8, drops: { pelt: 0.3 } },
-  wolf: { name: 'Серый волк', lvl: 3, hp: 85, patk: 10, pdef: 28, xp: 45, coins: [5, 12], shape: 'beast', color: 0x707070, size: 1.1, drops: { pelt: 0.5 } },
+  rabbit: { name: 'Полевой кролик', lvl: 1, hp: 40, patk: 5, pdef: 20, xp: 18, coins: [2, 6], shape: 'critter', color: 0xd0c0a0, size: 0.5, speed: 3.2, drops: { pelt: 0.3 } },
+  wolf: { name: 'Серый волк', lvl: 3, hp: 85, patk: 10, pdef: 28, xp: 45, coins: [5, 12], shape: 'beast', color: 0x707070, size: 0.9, drops: { pelt: 0.5 } },
   goblin: { name: 'Гоблин-разведчик', lvl: 5, hp: 130, patk: 15, pdef: 34, xp: 80, coins: [10, 22], shape: 'humanoid', color: 0x4a8a3a, size: 0.9, drops: { potion_hp: 0.15, bone: 0.3, ring_bronze: 0.02 } },
-  boar: { name: 'Дикий кабан', lvl: 8, hp: 210, patk: 22, pdef: 45, xp: 140, coins: [15, 30], shape: 'beast', color: 0x6a4a30, size: 1.4, drops: { pelt: 0.6, boots_leather: 0.03, gloves_apprentice: 0.03 } },
+  boar: { name: 'Дикий кабан', lvl: 8, hp: 210, patk: 22, pdef: 45, xp: 140, coins: [15, 30], shape: 'beast', color: 0x6a4a30, size: 1.15, drops: { pelt: 0.6, boots_leather: 0.03, gloves_apprentice: 0.03 } },
   treant: { name: 'Древень', lvl: 11, hp: 380, patk: 30, pdef: 70, xp: 240, coins: [25, 50], shape: 'tree', color: 0x3a5a2a, size: 1.8, drops: { crystal: 0.1, hat_apprentice: 0.04, ear_bronze: 0.03 } },
   orc: { name: 'Орк-воитель', lvl: 14, hp: 520, patk: 42, pdef: 80, xp: 360, coins: [40, 80], shape: 'humanoid', color: 0x3a6a4a, size: 1.4, aggro: true, drops: { potion_hp: 0.2, bone: 0.4, helm_leather: 0.04, scroll_ench_a: 0.03 } },
   spider: { name: 'Пещерный паук', lvl: 16, hp: 600, patk: 50, pdef: 85, xp: 430, coins: [45, 90], shape: 'spider', color: 0x3a2a3a, size: 1.3, aggro: true, drops: { crystal: 0.15, neck_bronze: 0.03 } },

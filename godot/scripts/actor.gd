@@ -45,7 +45,10 @@ var travel_speed: float:
 var motion_distance = 0.0
 var previous_position = Vector3.ZERO
 var have_motion_sample = false
-var stride_length = 7.2
+var stride_length = 3.8
+var visual_height = 2.5
+var attack_sequence = 0
+var attack_recovery = .65
 var step_length = 1.5
 var windup_remaining = 0.0
 var winding_up = false
@@ -70,7 +73,7 @@ func setup(model_id: String, title: String, def: Dictionary = {}):
 	add_child(model)
 	model_rest_y = model.position.y
 	model_rest_position = model.position; model_rest_rotation = model.rotation
-	stride_length = {"rabbit": 2.4, "wolf": 5.0, "boar": 4.5, "spider": 3.8, "scorpion": 3.8, "treant": 6.0, "golem": 5.8}.get(model_id, 7.2)
+	stride_length = {"rabbit": 1.2, "wolf": 2.8, "boar": 2.6, "spider": 2.8, "scorpion": 2.8, "treant": 5.6, "golem": 5.4}.get(model_id, 3.8)
 	animator = model.find_child("AnimationPlayer", true, false)
 	if animator:
 		for clip in animator.get_animation_list():
@@ -85,8 +88,9 @@ func setup(model_id: String, title: String, def: Dictionary = {}):
 	if helm_node: helm_node.visible = false
 	if kind == "n" and weapon_node: weapon_node.visible = false
 	label = Label3D.new(); label.text = title
-	label.position.y = maxf(2.9, 2.7 * float(def.get("size", 1)))
-	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED; label.font_size = 38; label.pixel_size = 0.012
+	visual_height = float(Art.manifest().actors.get(art_id, {}).get("height", 2.5))
+	label.position.y = visual_height + 0.45
+	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED; label.font_size = 32; label.pixel_size = 0.009
 	label.modulate = Color("e7d8ab") if kind == "n" else Color.WHITE
 	label.outline_modulate = Color("18201b"); label.outline_size = 10
 	add_child(label)
@@ -205,12 +209,12 @@ func _process(dt):
 	model.position = model_rest_position + Vector3(0, 0, -sin(hit_recoil / 0.22 * PI) * 0.12)
 	model.rotation = model_rest_rotation
 	if moving and not dead and action_until <= 0:
-		model.rotation.x += clampf(motion_speed / 18.0, 0, 1) * 0.065
+		model.rotation.x += clampf(motion_speed / 8.0, 0, 1) * 0.065
 	death_elapsed = death_elapsed + dt if dead else 0.0
 	if kind == "m": _update_corpse()
 	if not animator or not animator.has_animation("death"):
 		model.rotation.z = lerp_angle(model.rotation.z, PI / 2 if dead else 0, minf(1, dt * 10))
-	if moving and not winding_up and not casting and cast_remaining <= 0 and action_clip in ["attack","release","hit"]:
+	if moving and not winding_up and not casting and cast_remaining <= 0 and (action_clip.begins_with("attack") or action_clip in ["release","hit"]):
 		action_until = 0; attack_time = 0
 	var run_threshold = 2.7 if model.has_meta("gait_run_speed") else 5.0
 	var locomotion = "run" if motion_speed > run_threshold and animator and animator.has_animation("run") else "walk"
@@ -283,7 +287,27 @@ func play_action(clip: String, duration = 0.0):
 	action_clip = clip
 	animator.speed_scale = 1.0
 	animator.play(clip, 0.08, action_speed); animator.seek(0, true); last_clip = clip
-	if clip == "attack": attack_time = action_until
+	if clip.begins_with("attack"): attack_time = action_until
+
+func begin_attack(duration: float, windup = -1.0):
+	attack_sequence += 1
+	var clip = "attack_alt" if attack_sequence % 2 == 0 and animator and animator.has_animation("attack_alt") else "attack"
+	if not animator or not animator.has_animation(clip): return
+	if windup < 0: windup = duration*.35
+	attack_recovery = maxf(.1,duration-windup)
+	play_action(clip, duration)
+	windup_clip_time = animator.get_animation(clip).length * 0.35
+	windup_remaining = windup; winding_up = true
+
+func release_attack():
+	windup_remaining = 0; winding_up = false
+	if not animator or not action_clip.begins_with("attack"): return
+	var clip = action_clip
+	# Preserve current clip and hand pose through the impact, then recover.
+	var remaining = animator.get_animation(clip).length - windup_clip_time
+	action_until = attack_recovery; attack_time = action_until
+	action_speed = remaining / action_until
+	animator.speed_scale = 1.0; animator.play(clip, 0, action_speed); animator.seek(windup_clip_time, true)
 
 func begin_windup(duration: float, facing: float):
 	if dead: return
@@ -303,7 +327,7 @@ func finish_windup():
 func receive_hit():
 	if dead: return
 	hit_recoil = 0.22
-	if action_until <= 0 and not casting and not winding_up: play_action("hit", 0.22)
+	if action_until <= 0 and not moving and not casting and not winding_up: play_action("hit", 0.22)
 
 func begin_cast(id: String, duration: float):
 	cast_skill = id; cast_remaining = duration

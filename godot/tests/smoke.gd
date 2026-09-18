@@ -62,7 +62,7 @@ func _run():
 				if not is_equal_approx(float(s[key]), float(fixture.stats[key])):
 					stats_match = false; print("Mismatch ", key, ": ", s[key], " != ", fixture.stats[key])
 	check(stats_match, "%s native stat profiles match the JS game rules" % fixtures.size())
-	check(data.world.spawns.size() == 155 and data.world.obstacles.size() >= 3251 + data.world.townDecor.size() and data.world.modelPlacements.size() >= 1900, "world content exported without missing spawns")
+	check(data.world.spawns.size() >= 210 and data.world.obstacles.size() >= 3251 + data.world.townDecor.size() and data.world.modelPlacements.size() >= 1900, "world content exported without missing spawns")
 	check(absf(data.height_at(-430, 400) - 4) < 0.001, "town ground matches server")
 	var position = data.move(Vector3(-437, 4, 400), Vector3.RIGHT, 5)
 	check(position.distance_to(Vector3(-430, 4, 400)) >= 4.5*float(data.world.towns[0].scale)+0.6-0.01, "movement cannot cross the fountain")
@@ -364,6 +364,8 @@ func _run():
 	game.hud.chat.set_preference("combat", false)
 	check(not game.hud.chat.system_view.get_parsed_text().contains("battle message"), "system log combat filter is independent")
 	await _test_chat_scroll()
+	await _test_chat_resize()
+	await _test_party()
 	check(await wait_for(func(): return game.hud.minimap.player_markers.size() > 0 and net.online_count == 2), "server online count and remote players appear in the HUD and minimap")
 	var saved_level = game.profile.lvl
 	var reconnects = net.reconnect_count
@@ -411,6 +413,7 @@ func _run():
 	check(await wait_for(func(): return game.stats.sets.any(func(entry): return entry.id == "abyss" and entry.have == entry.parts.size())), "complete B mage set activates the shared server-stat bonus")
 	game.hud.show_window("character"); await _screenshot("mage-b-gear.png"); game.hud.close_window()
 	await _test_combat_presentation()
+	await _test_starter_hunt()
 	await _test_mob_telegraph()
 	# Real screenshot from the rendering backend, when running with a display.
 	if DisplayServer.get_name() != "headless":
@@ -508,7 +511,7 @@ func _test_locomotion():
 	game.destination = start + direction * 16; game.has_destination = true
 	check(await wait_for(func(): return game.hero.moving and game.hero.last_clip == "run"), "actual click movement selects the full-body running clip")
 	await create_timer(0.2).timeout
-	check(game.hero.motion_speed > 5 and game.hero.motion_speed <= float(game.stats.speed) * 1.05 and game.stats.speed < 20, "running speed is reduced and animation follows measured displacement")
+	check(game.hero.motion_speed > 5 and game.hero.motion_speed <= float(game.stats.speed) * 1.05 and game.stats.speed <= 8.1, "running speed is reduced and animation follows measured displacement")
 	var skeleton = game.hero.model.find_child("Skeleton3D", true, false)
 	var bone = skeleton.find_bone("DEF-foot.L")
 	var pose = skeleton.get_bone_global_pose(bone)
@@ -566,7 +569,6 @@ func _test_mob_telegraph():
 	game.has_destination = true
 	await create_timer(0.05).timeout
 	check(game.game_audio.music.duck_db < 0 and game.game_audio.music.cue == "music_battle", "battle theme crossfades and ducks below attack sounds")
-	await _screenshot("mob-windup.png")
 	var strike = {}
 	check(await wait_for(func():
 		for packet in received.slice(from_message):
@@ -575,6 +577,7 @@ func _test_mob_telegraph():
 					if event.k == "mob_strike" and int(event.m) == int(warning.m): strike.merge(event, true); return true
 		return false, 3), "server resolves the telegraphed attack")
 	check(not strike.get("landed", true), "running out of the telegraph avoids the actual server hit")
+	await _screenshot("mob-dodge.png")
 	await _dev({"x": -448, "z": 418, "hp": 500})
 	check(game.combat_fx.telegraphs.is_empty(), "teleport clears all monster warning geometry")
 
@@ -727,3 +730,63 @@ func _test_gait():
 	actor.interpolate(1250,.05); actor.interpolate(1300,.05); actor._process(.01)
 	check(actor.position.is_equal_approx(Vector3(.6,0,0)) and actor.last_clip == "idle", "remote movement neither overshoots its final snapshot nor runs after stopping")
 	actor.free()
+
+func _grip_drag(grip: Control, delta: Vector2):
+	var start = grip.get_global_rect().get_center()
+	var motion = InputEventMouseMotion.new(); motion.position = start; motion.global_position = start; root.push_input(motion, true)
+	var button = InputEventMouseButton.new(); button.position = start; button.global_position = start; button.button_index = MOUSE_BUTTON_LEFT; button.pressed = true; root.push_input(button, true)
+	await process_frame
+	motion = InputEventMouseMotion.new(); motion.position = start + delta; motion.global_position = motion.position; motion.relative = delta; motion.button_mask = MOUSE_BUTTON_MASK_LEFT; root.push_input(motion, true)
+	await process_frame; await process_frame
+	button = button.duplicate(); button.position = start + delta; button.global_position = button.position; button.pressed = false; root.push_input(button, true)
+	await create_timer(0.3).timeout
+
+func _test_chat_resize():
+	game.hud.close_window()
+	var chat = game.hud.chat
+	chat.set_preference("system_height", 80); chat.set_preference("player_height", 140)
+	await create_timer(0.3).timeout
+	var social_height = chat.player_frame.size.y; var sys_height = chat.system_frame.size.y
+	var camera_yaw = game.camera_yaw; var camera_distance = game.camera_distance
+	await _grip_drag(chat.system_grip, Vector2(0, -44))
+	check(chat.system_frame.size.y >= sys_height + 40 and absf(chat.player_frame.size.y - social_height) < 2, "dragging system grip expands only the system pane")
+	sys_height = chat.system_frame.size.y
+	await _grip_drag(chat.player_grip, Vector2(0, 38))
+	check(chat.player_frame.size.y <= social_height - 34 and absf(chat.system_frame.size.y - sys_height) < 2, "dragging social grip shrinks only the ordinary chat (%s -> %s; sys %s -> %s)" % [social_height, chat.player_frame.size.y, sys_height, chat.system_frame.size.y])
+	check(is_equal_approx(camera_yaw, game.camera_yaw) and is_equal_approx(camera_distance, game.camera_distance) and not game.has_destination, "chat resize drag cannot rotate, zoom or move the hero")
+	var restored = load("res://scripts/chat_panel.gd").new(); root.add_child(restored); restored.hide()
+	check(restored.preferences.system_height == chat.preferences.system_height and restored.preferences.player_height == chat.preferences.player_height, "both independent chat dimensions survive panel recreation")
+	restored.queue_free()
+	chat.set_preference("system_height", 420); chat.set_preference("player_height", 420); chat.select_channel("pm")
+	await create_timer(0.3).timeout
+	check(game.hud.chat_frame.get_global_rect().position.y >= 140, "large chat sizes and private-recipient field fit below the status HUD")
+	chat.set_preference("sys", false); await process_frame
+	check(not chat.system_frame.visible and chat.preferences.system_height == 420, "hiding system pane preserves its chosen height")
+	chat.set_preference("sys", true); chat.set_preference("system_height", 120); chat.set_preference("player_height", 140); chat.select_channel("all")
+	await create_timer(0.3).timeout; await _screenshot("chat-resized.png")
+
+func _test_party():
+	peer.send_text(JSON.stringify({"t": "party", "action": "invite", "name": game.profile.name}))
+	check(await wait_for(func(): return game.hud.window_kind == "party" and not game.hud.party_invite.is_empty()), "real second client opens a party invitation in the native UI")
+	var buttons = game.hud.window.find_children("*", "Button", true, false)
+	for button in buttons:
+		if button.text == "Принять": button.pressed.emit(); break
+	check(await wait_for(func(): return game.hud.party_state.get("members", []).size() == 2), "accepting invitation creates the server party and shows both members")
+	peer.send_text(JSON.stringify({"t": "party", "action": "mode", "mode": "pickup"}))
+	check(await wait_for(func(): return game.hud.party_state.get("mode") == "pickup"), "leader loot policy reaches the live client")
+	game.hud.close_window(); game.hud.chat.select_channel("party"); game.hud.chat.input.text = "native party channel"; game.hud.chat.submit()
+	check(await wait_for(func(): return peer_inbox.any(func(m): return m.t == "chat" and m.get("ch") == "party" and m.text == "native party channel")), "party tab sends a private group message to the real member")
+	await _screenshot("party-chat.png")
+	net.send({"t": "party", "action": "leave"})
+	check(await wait_for(func(): return game.hud.party_state.get("members", []).is_empty()), "leaving the party clears the authoritative membership")
+	game.hud.chat.select_channel("all")
+
+func _test_starter_hunt():
+	await _dev({"x": -620, "z": 400})
+	game.camera_distance = 16; game.camera_pitch = 0.62
+	check(await wait_for(func():
+		var near = 0
+		for mob in game.mobs.values():
+			if mob.visible and not mob.dead and mob.position.distance_to(game.hero.position) < 30: near += 1
+		return near >= 8), "starter hunting clearing has at least eight live server mobs within thirty units")
+	await create_timer(0.3).timeout; await _screenshot("starter-hunt.png")

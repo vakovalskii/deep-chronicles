@@ -26,9 +26,9 @@ static func actor(id: String) -> Node3D:
 		var player = AnimationPlayer.new(); player.name = "AnimationPlayer"; result.add_child(player)
 		var library = AnimationLibrary.new()
 		var clips = {"idle": "Idle", "walk": "Walk", "run": "Jog_Fwd", "attack": "Sword_Attack", "attack_alt": "Sword_Attack", "cast": "Spell_Simple_Idle", "cast_enter": "Spell_Simple_Enter", "release": "Spell_Simple_Shoot", "hit": "Hit_Chest", "death": "Death01"}
-		if id in ["warrior", "warrior_chain"]: clips.idle = "Sword_Idle"
+		if id in ["warrior", "warrior_chain"]: clips.idle = "Sword_Idle"; clips.attack_alt = "Punch_Cross"
 		if id in ["mage", "gatekeeper", "priest", "wraith", "lich"]: clips.idle = "Spell_Simple_Idle"
-		if id == "mage": clips.attack = "Spell_Simple_Shoot"
+		if id == "mage": clips.attack = "Spell_Simple_Shoot"; clips.attack_alt = "Spell_Simple_Shoot"
 		if id == "merchant": clips.idle = "Idle_Talking"
 		if id in ["goblin", "orc", "ghoul", "treant", "golem"]:
 			clips.attack = "Punch_Cross"; clips.attack_alt = "Punch_Jab"; clips.idle = "Idle"

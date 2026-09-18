@@ -50,6 +50,7 @@ func _run():
   print("GAIT ",candidates[row]," duration=",clip.length," max_foot_width=",gap," planted_speed=",step)
   actor.queue_free()
  var camera=Camera3D.new();scene.add_child(camera);camera.position=Vector3(0,4.6,9);camera.look_at(Vector3(0,1,-1.5));camera.fov=48;camera.current=true
+ if DisplayServer.get_name()=="headless": quit(); return
  await create_timer(1).timeout
  await RenderingServer.frame_post_draw
  root.get_texture().get_image().save_png("/tmp/gait-review.png")

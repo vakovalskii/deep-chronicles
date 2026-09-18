@@ -10,4 +10,5 @@ links:
 
 # Планы
 
-- [Переезд клиента на Godot](docs/gitmark/plans/godot-migration.md) — сделано, в работе, четыре незакрытых хвоста
+- [Переезд клиента на UE5](docs/gitmark/plans/unreal-migration.md) — актуальный план, сначала выбрать машину
+- [Переезд клиента на Godot](docs/gitmark/plans/godot-migration.md) — история действующего клиента

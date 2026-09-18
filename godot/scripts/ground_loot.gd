@@ -13,25 +13,25 @@ func setup(entry: Dictionary):
 	if entry.item == "coins":
 		for i in 9:
 			var coin = MeshInstance3D.new(); var mesh = CylinderMesh.new()
-			mesh.top_radius = 0.13; mesh.bottom_radius = 0.13; mesh.height = 0.035; mesh.radial_segments = 16
+			mesh.top_radius = 0.07; mesh.bottom_radius = 0.07; mesh.height = 0.022; mesh.radial_segments = 16
 			coin.mesh = mesh; coin.material_override = mat
-			coin.position = Vector3(sin(i * 2.4) * 0.21, 0.05 + (i % 3) * 0.045, cos(i * 2.4) * 0.21)
+			coin.position = Vector3(sin(i * 2.4) * 0.13, 0.05 + (i % 3) * 0.026, cos(i * 2.4) * 0.13)
 			coin.rotation.z = sin(i) * 0.22; body.add_child(coin)
 	else:
 		# A textured inventory token above a leather satchel makes small drops readable.
-		var pouch = MeshInstance3D.new(); var mesh = SphereMesh.new(); mesh.radius = 0.26; mesh.height = 0.38
-		pouch.mesh = mesh; pouch.position.y = 0.19
+		var pouch = MeshInstance3D.new(); var mesh = SphereMesh.new(); mesh.radius = 0.19; mesh.height = 0.28
+		pouch.mesh = mesh; pouch.position.y = 0.14
 		var leather = StandardMaterial3D.new(); leather.albedo_color = Color("86623e"); leather.roughness = 0.95
 		leather.albedo_texture = load("res://generated/tex/leather.png"); pouch.material_override = leather; body.add_child(pouch)
-		var icon = Sprite3D.new(); icon.texture = GameData.icon(entry.item); icon.pixel_size = 0.012
-		icon.billboard = BaseMaterial3D.BILLBOARD_ENABLED; icon.position.y = 0.65; body.add_child(icon)
-	var ring = MeshInstance3D.new(); var ring_mesh = TorusMesh.new(); ring_mesh.inner_radius = 0.36; ring_mesh.outer_radius = 0.39; ring_mesh.rings = 24; ring_mesh.ring_segments = 6
+		var icon = Sprite3D.new(); icon.texture = GameData.icon(entry.item); icon.pixel_size = 0.32 / maxf(1, icon.texture.get_width())
+		icon.billboard = BaseMaterial3D.BILLBOARD_ENABLED; icon.position.y = 0.4; body.add_child(icon)
+	var ring = MeshInstance3D.new(); var ring_mesh = TorusMesh.new(); ring_mesh.inner_radius = 0.25; ring_mesh.outer_radius = 0.28; ring_mesh.rings = 24; ring_mesh.ring_segments = 6
 	ring.mesh = ring_mesh; ring.position.y = 0.04
 	var glow = StandardMaterial3D.new(); glow.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED; glow.albedo_color = Color("c9b16c")
 	glow.emission_enabled = true; glow.emission = Color("90733d"); ring.material_override = glow; add_child(ring)
 	label = Label3D.new(); label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-	label.font_size = 32; label.pixel_size = 0.018; label.outline_size = 7; label.no_depth_test = false
-	label.position.y = 1.0 if entry.item == "coins" else 1.45; add_child(label)
+	label.font_size = 32; label.pixel_size = 0.009; label.outline_size = 7; label.no_depth_test = false
+	label.position.y = 0.42 if entry.item == "coins" else 0.72; add_child(label)
 	refresh(entry)
 
 func refresh(entry: Dictionary):
@@ -43,4 +43,4 @@ func refresh(entry: Dictionary):
 
 func _process(dt):
 	age += dt
-	if is_instance_valid(body): body.position.y = maxf(0, sin(minf(age / 0.55, 1) * PI) * 0.9)
+	if is_instance_valid(body): body.position.y = maxf(0, sin(minf(age / 0.55, 1) * PI) * 0.28)

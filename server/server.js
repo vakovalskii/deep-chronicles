@@ -10,6 +10,7 @@ import { PVP, karmaForPk, karmaWashCost } from '../src/pvp.js';
 import { effectiveSkill, spForKill } from '../src/progression.js';
 import { CLASSES, SKILLS, ITEMS } from '../src/data.js';
 import { heroAttackTiming, calcDmg, missChance, evaChance, flatDist, clamp } from '../src/sim.js';
+import { createParties } from './sim/party.js';
 import { createGroundLoot } from './sim/loot.js';
 import { createMovement } from './sim/movement.js';
 import { createMobs } from './sim/mobs.js';
@@ -26,7 +27,7 @@ const TICK = 100;  // мс — шаг симуляции
 const LAG_M = 4;
 // отладочные команды для автотестов: включаются только переменной окружения, в проде их нет
 const DEV_CMD = process.env.DEV_CMD === '1';
-const CHAT = { all: { cd: 3000 }, trade: { cd: 10000 }, near: { cd: 800 } };
+const CHAT = { party: { cd: 800 }, all: { cd: 3000 }, trade: { cd: 10000 }, near: { cd: 800 } };
 const wss = new WebSocketServer({ port: PORT, maxPayload: 8000 });
 const players = new Map();
 let seq = 0;
@@ -53,6 +54,7 @@ function lookOf(P) {
       helmKind: g('head')?.set ?? null, shieldKind: g('shield') ? (g('shield').grade === 'd' ? 'wood' : 'plate') : null, legKind: matKind(g('legs')) },
   };
 }
+const parties = createParties(players, send);
 const online = () => [...players.values()].filter((p) => p.key).length;
 const broadcast = (m) => { const s = JSON.stringify(m); for (const p of players.values()) if (p.key || m.t === 'online') send(p, s); };
 
@@ -73,7 +75,7 @@ wss.on('connection', (ws, req) => {
   const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
   const p = { id: ++seq, ws, name: null, key: null, a: null, known: new Set(), knownMobs: new Set(), lastChat: {}, stN: 0, stT: 0 };
   players.set(p.id, p);
-  send(p, { t: 'hi', online: online(), features: { groundLoot: 1, progression: 1, autoloot: 1, crafting: 1, nativeOnly: 1, heartbeat: 1, combatTelegraphs: 1 } });
+  send(p, { t: 'hi', online: online(), features: { groundLoot: 1, progression: 1, autoloot: 1, crafting: 1, nativeOnly: 1, heartbeat: 1, combatTelegraphs: 1, party: 1 } });
   ws.on('message', (raw) => {
     let m; try { m = JSON.parse(raw); } catch { return; }
     if (!m || typeof m !== 'object') return;
@@ -85,6 +87,7 @@ wss.on('connection', (ws, req) => {
     if (!p.key) return;
     const a = p.a, now = Date.now();
     switch (m.t) {
+      case 'party': return parties.command(p, m, now);
       case 'logout': if (m.token) acc.logout(m.token); return;
       // Клиент предсказывает движение; сервер проверяет длину пути и препятствия.
       case 'st': {
@@ -155,6 +158,7 @@ wss.on('connection', (ws, req) => {
   });
   ws.on('close', () => {
     store(p);
+    parties.remove(p);
     players.delete(p.id);
     if (p.name) { broadcast({ t: 'leave', id: p.id }); broadcast({ t: 'online', n: online() }); }
     p.key = null;
@@ -173,7 +177,7 @@ function onAuth(p, m, ip) {
     // Вход прочитал БД до сохранения активной сессии. Передаем ее текущий
     // профиль, чтобы новое устройство не получило устаревший снимок.
     r.save = structuredClone(PL.profileOf(q.a));
-    store(q); send(q, { t: 'kicked' }); q.key = null; q.ws.close(4001, 'session replaced');
+    store(q); parties.remove(q); send(q, { t: 'kicked' }); q.key = null; q.ws.close(4001, 'session replaced');
   }
   p.key = r.key; p.name = r.name;
   const P = PL.loadChar(r.name, r.save);
@@ -209,19 +213,21 @@ function damageMob(a, mb, dmg, crit, now) {
   pushNear(a, { k: 'hit', m: mb.id, dmg, crit });
   if (!died) return;
   const topId = world.kill(mb, now);
-  const recipient = players.get(topId) || players.get(a.id);
-  const winner = recipient.a;
-  const rw = world.rewardFor(mb, winner.P.lvl);
-  PL.gainXp(winner, rw.xp);
-  winner.P.kills++;
-  const sp = spForKill(rw.xp); winner.P.sp += sp;
+  const winner = players.get(topId)?.key ? players.get(topId) : players.get(a.id);
+  const plan = parties.rewardPlan(winner, players.get(a.id), mb);
+  const rw = world.rewardFor(mb, winner.a.P.lvl);
+  for (const share of plan.shares) {
+    const actor = share.player.a;
+    PL.gainXp(actor, share.xp); actor.P.sp += share.sp; actor.P.kills++; actor.dirty = true;
+    if (actor.karma > 0) { actor.karma = Math.max(0, actor.karma - Math.ceil(share.xp / PVP.karmaPerXp)); sendMe(actor); }
+  }
+  const recipient = plan.recipient;
   const drops = [{ item: 'coins', n: rw.coins }, ...rw.drops.map(item => ({ item, n: 1 }))];
-  const auto = winner.P.autoloot && PL.creditLoot(winner, drops, () => acc.store(recipient.key, PL.profileOf(winner)));
-  if (!auto) groundLoot.spawn(mb, rw, recipient.key, recipient.name, now);
-  winner.out.push({ k: 'kill', mob: mb.kind, name: mb.def.name, xp: rw.xp, coins: rw.coins, sp, ground: !auto, boss: !!mb.def.boss });
-  winner.dirty = true;
-  // убийство моба смывает карму PK
-  if (winner.karma > 0) { winner.karma = Math.max(0, winner.karma - Math.max(1, Math.ceil(rw.xp / PVP.karmaPerXp))); sendMe(winner); }
+  // Pickup mode deliberately leaves the reward on the ground; autoloot cannot win the race.
+  const auto = plan.mode !== 'pickup' && recipient.a.P.autoloot && PL.creditLoot(recipient.a, drops, () => acc.store(recipient.key, PL.profileOf(recipient.a)));
+  if (!auto) groundLoot.spawn(mb, rw, recipient.key, plan.mode === 'pickup' ? 'участникам группы' : recipient.name, now, plan.allowed);
+  for (const share of plan.shares) share.player.a.out.push({ k: 'kill', mob: mb.kind, name: mb.def.name, xp: share.xp, coins: share.player === recipient ? rw.coins : 0, sp: share.sp, ground: share.player === recipient && !auto, boss: !!mb.def.boss });
+  if (plan.shares.length > 1) for (const share of plan.shares) PL.say(share.player.a, plan.mode === 'pickup' ? 'Добыча на земле: подбирает первый участник группы.' : `Добыча: ${recipient.name}${auto ? ' (автолут)' : ' — на земле'}.`);
   pushNear(a, { k: 'mdie', m: mb.id });
   for (const q of players.values()) if (q.a && q.a.target?.m === mb.id) { q.a.attacking = false; }
 }
@@ -328,7 +334,7 @@ function autoAttack(a, dt, now) {
     a.atkTimer = timing.cooldown;
     const windup = timing.windup;
     a.swing = { target: targetKey, remaining: windup };
-    pushNear(a, { k: 'attack_start', t: timing.duration, to: { ...a.target } });
+    pushNear(a, { k: 'attack_start', t: timing.duration, windup, to: { ...a.target } });
     return;
   }
   a.swing.remaining -= dt;
@@ -438,9 +444,11 @@ function onChat(p, m) {
   const wait = (p.lastChat[ch] || 0) + CHAT[ch].cd - Date.now();
   if (wait > 0) return send(p, { t: 'chatwait', ch, wait });
   p.lastChat[ch] = Date.now();
+  if (ch === 'party' && !parties.groupOf(p.id)) return send(p, { t: 'party_err', reason: 'Вы не в группе.' });
   const s = JSON.stringify({ t: 'chat', ch, from: p.name, id: p.id, text });
   for (const q of players.values()) {
     if (!q.key) continue;
+    if (ch === 'party' && parties.groupOf(q.id) !== parties.groupOf(p.id)) continue;
     if (ch === 'near' && q !== p && (!q.a || !p.a || d2(p, q) > NEAR)) continue;
     send(q, s);
   }
@@ -453,10 +461,11 @@ function pushNear(a, e, remoteOnly = false) {
 }
 
 // ===== главный цикл =====
-let last = Date.now();
+let last = Date.now(), partyTick = 0;
 setInterval(() => {
   const now = Date.now(), dt = Math.min(0.5, (now - last) / 1000); last = now;
   groundLoot.expire(now);
+  if (now >= partyTick) { for (const p of players.values()) if (p.a && p.key) p.a.partyMaxHp = PL.statsOf(p.a, now).maxHp; parties.tick(now); partyTick = now + 1000; }
   const list = actors();
   // мобы
   const view = list.map((a) => ({ id: a.id, x: a.x, z: a.z, dead: a.dead, inTown: PL.inTown(a) }));

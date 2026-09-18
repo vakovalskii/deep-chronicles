@@ -148,7 +148,7 @@ export function mobStep(m, ctx, dt) {
     }
     if (ctx.now >= m.recoverAfter && flatDist(m, m.home) <= 8) m.hp = Math.min(m.def.hp, m.hp + m.def.hp * .02 * dt);
     m.wanderT -= dt;
-    if (m.wanderT <= 0) { m.wanderT = rand(4, 10); m.dest = { x: m.home.x + rand(-12, 12), z: m.home.z + rand(-12, 12) }; m.state = 'wander'; }
+    if (m.wanderT <= 0) { m.wanderT = rand(5, 12); m.dest = { x: m.home.x + rand(-6, 6), z: m.home.z + rand(-6, 6) }; m.state = 'wander'; }
     if (m.state === 'wander' && m.dest) {
       const dx = m.dest.x - m.x, dz = m.dest.z - m.z, L = Math.hypot(dx, dz);
       if (L < 0.5) { m.state = 'idle'; m.dest = null; }

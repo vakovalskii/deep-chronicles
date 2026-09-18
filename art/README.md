@@ -34,6 +34,10 @@
 
 `godot/assets/ui/bronze-*.svg` — собственные девятисегментные рамки/кнопки, `action-*.svg` — собственные пиктограммы действий. Силуэты пустых мест экипировки рисует `item_slot.gd`. Всё хранится исходным текстом и импортируется штатным Godot; графический редактор, внешняя генерация и OCR GPU не нужны. Четыре изображения пользователя служат ориентиром композиции и не включаются в игровые пакеты. Подробности: `docs/UI_STYLE.md`.
 
+### Материалы окружения: ambientCG
+
+18.09.2026 добавлены исходные карты 1K albedo / NormalGL / roughness: [PavingStones131](https://ambientcg.com/view?id=PavingStones131), [Ground037](https://ambientcg.com/view?id=Ground037), [Bricks097](https://ambientcg.com/view?id=Bricks097). [CC0-1.0](https://docs.ambientcg.com/license/), автор ambientCG/Lennart Demes. Без заимствования ресурсов Lineage. Архивы и каждый файл закреплены SHA-256 в `godot/assets/materials/manifest.json`, восстановление `npm run native:materials -- --fetch`, проверка `--check`. Цветовые изменения выполнены шейдером; исходные фотографии не менялись. Подробнее `docs/FARMING_AND_PARTY.md`.
+
 ## Ландшафт и смешанная растительность — 18.09.2026
 
 - `terrain/pbr/meadow-albedo.png`, `badlands-albedo.png`, `elm-leaf.png`, `spruce-spray.png`: новые изображения, созданные встроенным imagegen для этого проекта, 1254×1254. Лист и хвойная ветка имеют настоящий alpha-канал. Промпты — `art/sources/botanical-prompts.json`. Это не сканированные PBR-наборы: у нарисованной луговой земли только приближённый микрорельеф в шейдере.

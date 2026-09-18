@@ -46,13 +46,15 @@ try {
   if (!process.version.startsWith('v22.')) throw new Error('Pipeline requires Node.js 22; see .nvmrc.');
   if (target && !['macos', 'windows', 'android', 'ios'].includes(target)) throw new Error('Build target must be macos, windows, android, or ios.');
   await step('pipeline', process.execPath, ['--test', 'tests/pipeline.test.js']);
+  await step('material-assets', process.execPath, ['tools/godot/materials.mjs', '--check']);
   await step('audio-assets', process.execPath, ['tools/godot/audio.mjs', '--check']);
-  await step('rules', process.execPath, ['--test', 'tests/unit.test.js', 'tests/progression.test.js']);
+  await step('rules', process.execPath, ['--test', 'tests/unit.test.js', 'tests/progression.test.js', 'tests/party.test.js']);
   await step('server', process.execPath, ['--no-warnings', '--test', 'tests/server.test.js']);
   await step('client-server', process.execPath, ['tools/godot/test.mjs', ...(args.includes('--headless') ? ['--headless'] : []), ...(args.includes('--touch') ? ['--touch'] : [])]);
   if (release) await step('touch-client-server', process.execPath, ['tools/godot/test.mjs', '--touch', ...(args.includes('--headless') ? ['--headless'] : [])]);
   for (const file of ['godot/generated/catalog.json', 'godot/generated/world.json', 'godot/generated/heights.bin']) report.outputs[file] = digest(file);
   await step('weapons', godotBinary(), [...(args.includes('--headless') ? ['--headless'] : []), '--path', 'godot', '--script', 'res://tests/weapons.gd', '--', '--test-mode', `--output=${directory}/weapons.png`]);
+  await step('scales', godotBinary(), [...(args.includes('--headless') ? ['--headless'] : []), '--path', 'godot', '--script', 'res://tests/scale_audit.gd', '--', '--test-mode', `--output=${directory}/scales.png`]);
   if (!args.includes('--offline')) await step('main-server', process.execPath, ['tools/godot/probe.mjs']);
   await step('economy', process.execPath, ['tools/godot/economy.mjs']);
   if (release) {

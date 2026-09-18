@@ -18,8 +18,9 @@ links:
 ## С чего начать
 
 1. [Архитектура: кто что считает](docs/gitmark/reference/architecture.md) — общая картина.
-2. [Решение: основной клиент — Godot](docs/gitmark/decisions/2026-09-18-native-godot-client.md) — почему всё так.
-3. [Переезд на Godot: состояние и хвосты](docs/gitmark/plans/godot-migration.md) — что делается прямо сейчас.
+2. [Решение: следующий клиент — UE5](docs/gitmark/decisions/2026-09-18-unreal-client.md) — последнее указание пользователя; Godot пока остаётся действующим.
+3. [Переезд на UE5](docs/gitmark/plans/unreal-migration.md) — новая машина, перенос всех функций и приёмка.
+4. [Текущие задачи и проверки](docs/CURRENT_TASKS.md) — состояние checkpoint и незакрытые отказы.
 
 ## Разделы
 

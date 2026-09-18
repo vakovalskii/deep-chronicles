@@ -49,9 +49,9 @@ func zone_at(pos: Vector3) -> Dictionary:
 		if d < distance: best = z; distance = d
 	return best
 
-func move(pos: Vector3, direction: Vector3, distance: float) -> Vector3:
+func move(pos: Vector3, direction: Vector3, distance: float, trace: Array = []) -> Vector3:
 	# Substeps prevent tunnelling when a rendered frame takes longer than usual.
-	var steps = maxi(1, ceili(distance / 0.5))
+	var steps = maxi(1, ceili(distance / 0.25))
 	for i in steps:
 		pos += direction * distance / steps
 		for o in grid.get(Vector2i(floori(pos.x / 24), floori(pos.z / 24)), []):
@@ -62,6 +62,7 @@ func move(pos: Vector3, direction: Vector3, distance: float) -> Vector3:
 				pos.x = o.x + d.x; pos.z = o.z + d.y
 		if pos.x < 2100:
 			pos.x = clampf(pos.x, -780, 780); pos.z = clampf(pos.z, -780, 780)
+		trace.append({"x": pos.x, "z": pos.z})
 	pos.y = height_at(pos.x, pos.z)
 	return pos
 

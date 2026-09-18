@@ -1,5 +1,6 @@
 // Персонаж на сервере: профиль, сумка, экипировка, магазин, заточка, опыт и смерть.
 // Клиент ничего из этого не считает — он только присылает команды и рисует события.
+import { resetMovement } from './movement.js';
 import { migrateProgression, effectiveSkill, learnError, skillRanks } from '../../src/progression.js';
 import { CLASSES, ITEMS, SKILLS, SHOP, RECIPES, MAX_LEVEL, xpToNext } from '../../src/data.js';
 import { calcStats, equipFromBag, unequipSlot, migrate, MAX_ENCH } from '../../src/stats.js';
@@ -51,7 +52,7 @@ export function loadChar(name, save) {
 // игрок на сервере: профиль + всё, что живёт только в сессии
 export function newActor(id, name, P) {
   return {
-    id, name, P,
+    id, name, P, movement: { at: Date.now(), credit: 0, fresh: true },
     x: P.x, y: heightAt(P.x, P.z), z: P.z, r: 0,
     target: null,        // { m: mobId } | { p: playerId }
     attacking: false, atkTimer: 0, cds: {}, buffs: [], cast: null,
@@ -111,7 +112,7 @@ export function place(a, x, z) {
   a.x = x; a.z = z; a.y = heightAt(x, z);
   // Сервер уже перенес героя: новые позиции проверяются относительно места
   // назначения. На запоздавшие старые координаты клиент получает обычный fix.
-  a.stAt = Date.now();
+  resetMovement(a);
   ev(a, { k: 'move', x, z });
 }
 

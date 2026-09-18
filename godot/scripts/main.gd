@@ -25,6 +25,7 @@ var joystick = Vector2.ZERO
 var camera_yaw = 0.45
 var camera_pitch = 0.56
 var camera_distance = 28.0
+var movement_path: Array = []
 var state_timer = 0.0
 var ui_timer = 0.0
 var cast_time = 0.0
@@ -117,6 +118,7 @@ func _login(data: Dictionary):
 func _message(m: Dictionary):
 	match m.get("t", ""):
 		"authok":
+			movement_path.clear()
 			var same_character = profile.get("name", "") == m.name
 			auth_ready_at = Time.get_ticks_msec()
 			own_id = int(m.id)
@@ -288,10 +290,15 @@ func _event(e: Dictionary):
 		"move": _place(float(e.x), float(e.z)); hud.close_window()
 
 func _place(x: float, z: float):
+	movement_path.clear()
 	if not is_instance_valid(hero): return
 	combat_fx.clear(); hero.cancel_presentation(); cast_time = 0
 	hero.position = GameData.position_at(x, z); has_destination = false; attacking = false; pending_skill = ""; talking_to = null; pending_pickup = ""
 	set_target(null); marker.hide(); initial_camera = true
+
+func _send_position():
+	Network.send({"t": "st", "x": hero.position.x, "y": hero.position.y, "z": hero.position.z, "r": hero.rotation.y, "a": (1 if hero.moving else 0) | (2 if hero.attack_time > 0 else 0) | (4 if hero.casting else 0) | (8 if hero.dead else 0), "path": movement_path})
+	movement_path.clear()
 
 func _process(dt):
 	if profile.is_empty() or not is_instance_valid(hero):
@@ -321,10 +328,10 @@ func _process(dt):
 	_update_camera(dt); world.set_region(hero.position)
 	game_audio.follow(hero, camera, dt)
 	state_timer += dt; ui_timer += dt
-	if state_timer >= 0.1:
+	if state_timer >= 0.1 or movement_path.size() >= 48:
 		state_timer = 0
 		if Network.authed:
-			Network.send({"t": "st", "x": hero.position.x, "y": hero.position.y, "z": hero.position.z, "r": hero.rotation.y, "a": (1 if hero.moving else 0) | (2 if hero.attack_time > 0 else 0) | (4 if hero.casting else 0) | (8 if hero.dead else 0)})
+			_send_position()
 	if ui_timer >= 0.2:
 		ui_timer = 0; stats = GameData.stats(profile, buffs)
 		hud.active_buffs = buffs
@@ -351,7 +358,7 @@ func _move_hero(dt):
 		if offset.length() > float(GameData.catalog.UI_RULES.loot.pickupRange) - 0.65:
 			direction = offset.normalized(); distance = minf(distance, offset.length())
 		elif pickup_sent_at == 0:
-			Network.send({"t": "st", "x": hero.position.x, "y": hero.position.y, "z": hero.position.z, "r": hero.rotation.y, "a": 0})
+			_send_position()
 			Network.send({"t": "pickup", "id": pending_pickup}); pickup_sent_at = Time.get_ticks_msec()
 		elif Time.get_ticks_msec() - pickup_sent_at > 2500:
 			pending_pickup = ""; pickup_sent_at = 0; hud.log_line("Сервер не подтвердил подбор. Попробуйте ещё раз.")
@@ -363,6 +370,7 @@ func _move_hero(dt):
 		else:
 			hero.rotation.y = atan2(offset.x, offset.z)
 			if pending_skill != "":
+				if not movement_path.is_empty(): _send_position()
 				Network.send({"t": "skill", "id": pending_skill}); pending_skill = ""
 	elif has_destination:
 		var offset = destination - hero.position; offset.y = 0
@@ -372,7 +380,7 @@ func _move_hero(dt):
 		else: direction = offset.normalized(); distance = minf(distance, offset.length())
 	if direction.length_squared() > 0.1:
 		var before = hero.position
-		hero.position = GameData.move(hero.position, direction, distance)
+		hero.position = GameData.move(hero.position, direction, distance, movement_path)
 		hero.rotation.y = lerp_angle(hero.rotation.y, atan2(direction.x, direction.z), minf(1, dt * 15))
 		hero.moving = before.distance_squared_to(hero.position) > 0.00001
 
@@ -414,6 +422,7 @@ func use_skill(id: String):
 		if distance > sk.get("range", stats.range) + target.radius:
 			pending_skill = id; attacking = true; has_destination = false; return
 		hero.rotation.y = atan2(target.position.x - hero.position.x, target.position.z - hero.position.z)
+	if not movement_path.is_empty(): _send_position()
 	Network.send({"t": "skill", "id": id})
 
 func next_target():

@@ -139,6 +139,15 @@ func _run():
 	check(game.hero.position.distance_to(start) > 1, "native movement updates position")
 	var fixes = received.filter(func(m): return m.t == "fix").size()
 	check(fixes == 0, "server accepts native movement speed")
+	await _dev({"x": -435.1, "z": 400})
+	var before_slide = game.hero.position
+	var fixes_before_slide = received.filter(func(m): return m.t == "fix").size()
+	game.destination = data.position_at(-430, 406); game.has_destination = true
+	await create_timer(0.8).timeout
+	game.has_destination = false
+	await create_timer(0.2).timeout
+	check(game.hero.position.distance_to(before_slide) > 2, "native player slides around the fountain")
+	check(received.filter(func(m): return m.t == "fix").size() == fixes_before_slide, "server accepts curved native movement around obstacles")
 	await _dev({"x": -442, "z": 410, "coins": 10000, "lvl": 8})
 	game.hud.show_window("shop")
 	_click("buy", "sword_long")

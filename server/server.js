@@ -5,12 +5,13 @@ import { WebSocketServer } from 'ws';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openDb } from './accounts.js';
-import { zoneAt, TOWNS, DUNGEON, CRYPT, heightAt } from '../src/world-core.js';
+import { zoneAt, TOWNS, DUNGEON, CRYPT, heightAt, obstacles } from '../src/world-core.js';
 import { PVP, karmaForPk, karmaWashCost } from '../src/pvp.js';
 import { effectiveSkill, spForKill } from '../src/progression.js';
 import { CLASSES, SKILLS, ITEMS } from '../src/data.js';
 import { calcDmg, missChance, evaChance, flatDist, clamp } from '../src/sim.js';
 import { createGroundLoot } from './sim/loot.js';
+import { createMovement } from './sim/movement.js';
 import { createMobs } from './sim/mobs.js';
 import * as PL from './sim/player.js';
 
@@ -31,6 +32,7 @@ const players = new Map();
 let seq = 0;
 
 const world = createMobs();
+const movement = createMovement([...obstacles, ...world.npcs.filter(n => n.role !== 'guard').map(n => ({ x: n.x, z: n.z, r: 0.9 }))]);
 const groundLoot = createGroundLoot();
 const cryptDoor = { x: CRYPT.x, z: CRYPT.z + 8.5 };
 const dungeonExit = { x: DUNGEON.x0 + DUNGEON.cell / 2, z: DUNGEON.z0 + DUNGEON.cell / 2 };
@@ -84,21 +86,16 @@ wss.on('connection', (ws, req) => {
     const a = p.a, now = Date.now();
     switch (m.t) {
       case 'logout': if (m.token) acc.logout(m.token); return;
-      // положение по-прежнему ведёт клиент — но сервер проверяет скорость
+      // Клиент предсказывает движение; сервер проверяет длину пути и препятствия.
       case 'st': {
         if (now - p.stT > 1000) { p.stT = now; p.stN = 0; }
         if (++p.stN > 25) return;
-        const x = num(m.x), z = num(m.z);
-        const s = PL.statsOf(a, now), dt = Math.min(1, (now - (a.stAt || now)) / 1000) + 0.15;
-        if (a.dead) {
-          if (flatDist(a, { x, z }) > 0.1) send(p, { t: 'fix', x: a.x, z: a.z });
+        const s = PL.statsOf(a, now);
+        if (!movement.accept(a, { x: m.x, z: m.z, path: m.path }, s.speed, now)) {
+          send(p, { t: 'fix', x: a.x, z: a.z });
           return;
         }
-        if (flatDist(a, { x, z }) > s.speed * 1.8 * dt + 2) {
-          send(p, { t: 'fix', x: a.x, z: a.z }); // рывок быстрее бега — возвращаем назад
-          return;
-        }
-        a.stAt = now; a.x = x; a.z = z; a.y = num(m.y, 1e4); a.r = num(m.r, 10); a.anim = num(m.a, 255) | 0;
+        a.r = num(m.r, 10); a.anim = num(m.a, 255) | 0;
         checkDoors(p, a);
         return;
       }

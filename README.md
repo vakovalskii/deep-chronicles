@@ -35,6 +35,8 @@ Presets Android/iOS находятся в `godot/export_presets.cfg`. Для And
 
 Полный порядок работы для следующих агентов: [AGENTS.md](AGENTS.md). Подробности серверного протокола и старого клиента: [CLAUDE.md](CLAUDE.md).
 
+Полная разработка теперь в приватном `deep-chronicles`, ветка `server-authoritative`; порядок Git и отдельного OSS-экспорта сервера: [docs/GIT_WORKFLOW.md](docs/GIT_WORKFLOW.md). Схема будущего автообновления: [docs/AUTO_UPDATE.md](docs/AUTO_UPDATE.md), лаунчер пока не реализован.
+
 Страница скачивания, статус сервера и выпуск обновлений: [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md). Направление интерфейса: [docs/UI_STYLE.md](docs/UI_STYLE.md).
 
 ## Управление

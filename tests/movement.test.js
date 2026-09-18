@@ -73,3 +73,18 @@ test('замедление ограничивает накопленный за�
   assert.equal(m.accept(a,{x:6,z:0},10,500),false);
   assert.equal(m.accept(a,{x:5,z:0},10,500),true);
 });
+
+import {calcStats} from '../src/stats.js';
+import {newChar} from '../server/sim/player.js';
+import {MOB_SPEED} from '../src/sim.js';
+test('масштаб скорости согласован для классов, мобов, баффов и перегруза',()=>{
+  for(const cls of ['warrior','mage']){
+    const p=newChar('Тест',cls), speed=calcStats(p).speed;
+    assert.ok(speed>5&&speed<7,cls+' не должен летать по карте');
+    assert.equal(calcStats(p,[{stat:'speed',mul:1.25,until:100}],0).speed,speed*1.25);
+    p.inv=[{id:'potion_hp',n:10000}];
+    assert.ok(Math.abs(calcStats(p).speed-speed*.6)<1e-8);
+  }
+  assert.equal(MOB_SPEED({}),3);
+  assert.ok(Math.abs(MOB_SPEED({boss:true})-2.4)<1e-8);
+});

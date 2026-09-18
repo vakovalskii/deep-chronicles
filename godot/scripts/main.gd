@@ -306,13 +306,16 @@ func _process(dt):
 		if not capture_path.is_empty() and not screenshot_done and Network.online and Time.get_ticks_msec() > 8000:
 			screenshot_done = true; _capture()
 		return
+	var frame_dt = dt
 	dt = minf(dt, 0.1)
 	cast_time = maxf(0, cast_time - dt); hero.casting = cast_time > 0; hero.moving = false
+	var before_motion = hero.position
 	if Network.authed and not hero.dead and cast_time <= 0: _move_hero(dt)
+	hero.measure_motion(before_motion,frame_dt)
 	var time = Time.get_unix_time_from_system() * 1000 - clock_offset - 150
 	for actor in mobs.values() + players.values():
 		if Time.get_ticks_msec() - actor.seen > 1500: actor.hide()
-		elif actor.visible: actor.interpolate(time)
+		elif actor.visible: actor.interpolate(time,frame_dt)
 		actor.label.visible = actor.visible and hero.position.distance_to(actor.position) < 50
 	for drop in ground_loot.values(): drop.label.visible = hero.position.distance_to(drop.position) < 40
 	for npc in npcs: npc.label.visible = hero.position.distance_to(npc.position) < 60
@@ -326,7 +329,7 @@ func _process(dt):
 	else: selection.hide(); target_arrow.hide()
 	hero.status = 2 if profile.get("karma", 0) > 0 else (1 if flag_until > Time.get_ticks_msec() else 0)
 	_update_camera(dt); world.set_region(hero.position)
-	game_audio.follow(hero, camera, dt)
+	game_audio.follow(hero, camera, frame_dt)
 	state_timer += dt; ui_timer += dt
 	if state_timer >= 0.1 or movement_path.size() >= 48:
 		state_timer = 0
@@ -380,8 +383,14 @@ func _move_hero(dt):
 		else: direction = offset.normalized(); distance = minf(distance, offset.length())
 	if direction.length_squared() > 0.1:
 		var before = hero.position
+		var heading = atan2(direction.x,direction.z)
+		hero.rotation.y = rotate_toward(hero.rotation.y,heading,dt*12.0)
+		# Start turning before running; a reversal should not translate backwards.
+		distance *= maxf(0,cos(angle_difference(hero.rotation.y,heading)))
 		hero.position = GameData.move(hero.position, direction, distance, movement_path)
-		hero.rotation.y = lerp_angle(hero.rotation.y, atan2(direction.x, direction.z), minf(1, dt * 15))
+		var actual = hero.position-before; actual.y = 0
+		if actual.length_squared()>.00001:
+			hero.rotation.y = rotate_toward(hero.rotation.y,atan2(actual.x,actual.z),dt*12.0)
 		hero.moving = before.distance_squared_to(hero.position) > 0.00001
 
 func _update_camera(dt):

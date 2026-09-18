@@ -15,6 +15,8 @@ var dead = false
 var death_elapsed = 0.0
 var model_rest_y = 0.0
 var moving = false
+var travel_speed = 0.0
+var step_distance = 1.5
 var casting = false
 var attack_time = 0.0
 var radius = 0.6
@@ -53,7 +55,7 @@ func setup(model_id: String, title: String, def: Dictionary = {}):
 	animator = model.find_child("AnimationPlayer", true, false)
 	if animator:
 		for clip in animator.get_animation_list():
-			if clip in ["idle", "walk", "cast"]: animator.get_animation(clip).loop_mode = Animation.LOOP_LINEAR
+			if clip in ["idle", "walk", "slow_walk", "cast"]: animator.get_animation(clip).loop_mode = Animation.LOOP_LINEAR
 			if clip == "death": animator.get_animation(clip).loop_mode = Animation.LOOP_NONE
 	if art_model and art_id in ["warrior", "warrior_chain", "mage"]: _attach_weapon("warrior" if art_id == "warrior_chain" else art_id)
 	else:
@@ -139,12 +141,22 @@ func snapshot(row: Array, timestamp: float):
 	status = int(row[7]) if row.size() > 7 else 0
 	seen = Time.get_ticks_msec(); visible = true
 
-func interpolate(time: float):
+func measure_motion(before: Vector3, dt: float):
+	var delta = Vector2(position.x-before.x,position.z-before.z)
+	# Corrections and teleports must not spin the gait or generate footsteps.
+	travel_speed = delta.length()/maxf(dt,.001) if delta.length()<3.0 else 0.0
+	moving = travel_speed > .05 and not dead
+	if not moving: travel_speed = 0.0
+
+func interpolate(time: float, dt = .016):
 	while snapshots.size() > 2 and snapshots[1].t <= time: snapshots.pop_front()
-	if snapshots.size() < 2: return
+	if snapshots.size() < 2:
+		travel_speed = 0; moving = false; return
 	var a = snapshots[0]; var b = snapshots[1]
-	var factor = clampf((time - a.t) / maxf(1, b.t - a.t), 0, 1.5)
-	position = a.p.lerp(b.p, factor); rotation.y = lerp_angle(a.r, b.r, minf(1, factor))
+	var factor = clampf((time - a.t) / maxf(1, b.t - a.t), 0, 1)
+	var before = position
+	position = a.p.lerp(b.p, factor); rotation.y = lerp_angle(a.r, b.r, factor)
+	measure_motion(before,dt)
 
 func _process(dt):
 	attack_time = maxf(0, attack_time - dt)
@@ -156,10 +168,17 @@ func _process(dt):
 	if kind == "m": model.position.y = model_rest_y - maxf(0, death_elapsed - 3.0) * 0.65
 	if not animator or not animator.has_animation("death"):
 		model.rotation.z = lerp_angle(model.rotation.z, PI / 2 if dead else 0, minf(1, dt * 10))
+	if moving and not casting and cast_remaining <= 0 and action_clip in ["attack","release","hit"]:
+		action_until = 0; attack_time = 0
 	var clip = "cast" if casting or cast_remaining > 0 else ("walk" if moving else "idle")
+	if clip == "walk" and animator and animator.has_animation("slow_walk") and travel_speed < 2.7: clip = "slow_walk"
 	if action_until > 0: clip = action_clip
 	elif attack_time > 0 and not casting: clip = "attack"
 	if dead: clip = "death" if animator and animator.has_animation("death") else "idle"
+	if animator:
+		var reference = float(model.get_meta("gait_walk_speed" if clip == "slow_walk" else "gait_run_speed",3.0))
+		animator.speed_scale = clampf(travel_speed/reference,.05,3.0) if clip in ["walk","slow_walk"] else 1.0
+		if clip in ["walk","slow_walk"] and animator.has_animation(clip): step_distance = reference*animator.get_animation(clip).length*.5
 	if animator and clip != last_clip and animator.has_animation(clip):
 		animator.play(clip, 0.1, action_speed if action_until > 0 and not dead else 1.0); last_clip = clip
 	if label:
@@ -172,6 +191,7 @@ func play_action(clip: String, duration = 0.0):
 	action_until = duration if duration > 0 else length
 	action_speed = length / maxf(0.05, action_until)
 	action_clip = clip
+	animator.speed_scale = 1.0
 	animator.play(clip, 0.06, action_speed); animator.seek(0, true); last_clip = clip
 	if clip == "attack": attack_time = action_until
 
@@ -185,6 +205,7 @@ func release_cast():
 
 func cancel_presentation():
 	cast_remaining = 0; cast_skill = ""; casting = false; action_until = 0; attack_time = 0
+	travel_speed = 0; moving = false
 
 func cast_origin() -> Vector3:
 	if is_instance_valid(weapon_node) and weapon_node.visible:

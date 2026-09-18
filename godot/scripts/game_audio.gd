@@ -9,7 +9,7 @@ var last_played: Dictionary = {}
 var play_counts: Dictionary = {}
 var listener: AudioListener3D
 var ambience: AudioStreamPlayer
-var step_timer = 0.0
+var step_travel = 0.0
 var ambience_layers: Dictionary = {}
 var ambience_gains: Dictionary = {}
 var ambience_id = "wind"
@@ -57,9 +57,12 @@ func follow(hero, camera, dt: float):
 		layer.volume_db = linear_to_db(maxf(0.001, gain)) - 10
 		if gain > 0 and not layer.playing: layer.play()
 		elif gain <= 0: layer.stop()
-	step_timer -= dt
-	if hero.moving and not hero.dead and step_timer <= 0:
-		play_at("step_stone" if zone.get("town", false) or zone.id == "crypt" else "step_earth", hero.global_position, -11); step_timer = 0.3
+	if hero.moving and not hero.dead:
+		step_travel += hero.travel_speed*dt
+		if step_travel >= hero.step_distance:
+			step_travel = fmod(step_travel,hero.step_distance)
+			play_at("step_stone" if zone.get("town", false) or zone.id == "crypt" else "step_earth", hero.global_position, -11)
+	else: step_travel = 0.0
 
 func play_at(id: String, pos: Vector3, gain_db = 0.0):
 	if not streams.has(id) or not listener.is_current() or listener.global_position.distance_to(pos) > 55: return

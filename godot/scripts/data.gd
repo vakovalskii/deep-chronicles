@@ -109,6 +109,7 @@ func stats(p: Dictionary, buffs: Array = []) -> Dictionary:
 	for buff in buffs:
 		if buff.until > Time.get_ticks_msec(): s[buff.stat] *= buff.mul
 	s.maxHp = floor(s.maxHp + 0.5); s.maxMp = floor(s.maxMp + 0.5)
+	s.speed *= float(catalog.UI_RULES.movementScale)
 	return s
 
 func sell_price(id: String) -> int:

@@ -1,6 +1,7 @@
 // Правила симуляции: урон, промахи, опыт, дроб, ИИ мобов, цены, заточка.
 // Без DOM и three.js — один и тот же код считает бой на сервере и проверяется юнит-тестами.
 // Случайность приходит аргументом rng, чтобы тесты были повторяемы.
+import { MOVE_SCALE } from './movement.js';
 import { MOBS, ITEMS, MAX_LEVEL, xpToNext } from './data.js';
 import { MAX_ENCH, SAFE_ENCH, ENCH_CHANCE } from './stats.js';
 import { heightAt, obstacles, MAP, DUNGEON } from './world-core.js';
@@ -20,7 +21,7 @@ export const missChance = (mobLvl, acc) => clamp(0.06 + (mobLvl + 33 - acc) * 0.
 export const evaChance = (mobLvl, eva) => clamp(0.05 + (eva - (mobLvl + 33)) * 0.01, 0.02, 0.3);
 
 export const MOB_ATK_CD = (def) => (def.boss ? 1.4 : 1.8);
-export const MOB_SPEED = (def) => 12 * (def.boss ? 0.8 : 1);
+export const MOB_SPEED = (def) => 12 * MOVE_SCALE * (def.boss ? 0.8 : 1);
 export const mobRadius = (def) => (def.size || 1) * 0.9;
 
 // опыт с понижением за мобов сильно ниже игрока

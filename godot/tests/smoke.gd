@@ -150,6 +150,7 @@ func _run():
 	check(game.hud.hotbar_bindings[8] == "potion_hp" and game.hud.Settings.read_value("hotbar", "warrior", [])[8] == "potion_hp", "custom action bindings are saved")
 	game.hud.hotbar_bindings = game.hud.default_bindings(); game.hud._save_hotbar(); game.hud.set_hotbar_locked(true)
 	await _test_hotbar_drag()
+	_test_gait()
 	check(game.hud.pickup_button.visible and game.hud.pickup_button.text.contains("Поднять"), "pickup has an explicit permanent action button")
 	await _screenshot("chat-actions.png")
 	var start = game.hero.position
@@ -157,6 +158,10 @@ func _run():
 	await create_timer(0.35).timeout
 	game.joystick = Vector2.ZERO
 	check(game.hero.position.distance_to(start) > 1, "native movement updates position")
+	check(game.stats.speed > 5 and game.stats.speed < 7, "native speed uses the restored world scale")
+	var stopped_at = game.hero.position
+	await create_timer(.15).timeout
+	check(game.hero.position.distance_to(stopped_at)<.01 and not game.hero.moving and game.hero.last_clip == "idle", "releasing movement stops position and gait without drifting")
 	var fixes = received.filter(func(m): return m.t == "fix").size()
 	check(fixes == 0, "server accepts native movement speed")
 	await _dev({"x": -435.1, "z": 400})
@@ -529,3 +534,23 @@ func _test_chat_scroll():
 	chat.input.text = "draft during disconnect"; chat.submit()
 	check(chat.input.text == "draft during disconnect", "disconnected chat preserves unsent draft")
 	net.authed = was_authed; chat.input.clear()
+
+func _test_gait():
+	var actor = load("res://scripts/actor.gd").new(); actor.kind = "p"; add_child(actor); actor.setup("warrior","Проверка движения"); actor.set_process(false)
+	actor.position = Vector3(.1,0,0); actor.measure_motion(Vector3.ZERO,.1); actor._process(.01)
+	check(actor.last_clip == "slow_walk" and actor.animator.speed_scale < 1, "slow actual travel selects a calibrated walking clip")
+	actor.position = Vector3(.6,0,0); actor.measure_motion(Vector3.ZERO,.1); actor._process(.01)
+	check(actor.last_clip == "walk" and absf(actor.animator.speed_scale - 6.0/float(actor.model.get_meta("gait_run_speed")))<.01, "jog playback follows measured displacement")
+	actor.play_action("attack",.6); actor._process(.01)
+	check(actor.last_clip == "walk" and actor.action_until == 0, "moving cancels full-body attack presentation without skating")
+	actor.measure_motion(actor.position,.1); actor._process(.01)
+	check(actor.last_clip == "idle" and actor.travel_speed == 0, "blocked travel does not animate running in place")
+	actor.position = Vector3(100,0,0); actor.measure_motion(Vector3.ZERO,.016); actor._process(.01)
+	check(actor.last_clip == "idle", "teleports do not accelerate the gait")
+	actor.position = Vector3.ZERO
+	actor.snapshots = [{"t":1000.0,"p":Vector3.ZERO,"r":0.0},{"t":1100.0,"p":Vector3(.6,0,0),"r":0.0}]
+	actor.interpolate(1050,.05); actor._process(.01)
+	check(actor.moving and absf(actor.travel_speed-6)<.01, "remote gait follows rendered travel rather than the newest packet flag")
+	actor.interpolate(1250,.05); actor.interpolate(1300,.05); actor._process(.01)
+	check(actor.position.is_equal_approx(Vector3(.6,0,0)) and actor.last_clip == "idle", "remote movement neither overshoots its final snapshot nor runs after stopping")
+	actor.free()

@@ -512,7 +512,12 @@ test('сервер отвергает срезание фонтана, но пр
     c.send({t:'st',x:-430,z:405.1,r:0,a:1});
     const correction=await c.wait('fix'); assert.equal(correction.x,-435.1);
     const path=Array.from({length:32},(_,i)=>{const t=Math.PI-(i+1)*Math.PI/64;return{x:-430+5.1*Math.cos(t),z:400+5.1*Math.sin(t)};});
-    c.send({t:'st',...path.at(-1),path,r:0,a:1});
+    // Send the arc at the restored running speed, not as an 8 m burst.
+    for(let i=0;i<path.length;i+=8){
+      await pause(350);
+      const section=path.slice(i,i+8);
+      c.send({t:'st',...section.at(-1),path:section,r:0,a:1});
+    }
     await pause(150);
     other.send({t:'login',name:'ПутьФонтан',pass:'secret1'});
     const auth=await other.wait('authok');

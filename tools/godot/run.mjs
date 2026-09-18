@@ -5,7 +5,11 @@ import WebSocket from 'ws';
 import { godotBinary, root, run } from './runtime.mjs';
 
 const args = process.argv.slice(2);
-const binary = godotBinary();
+const useBuilt = args.includes('--built');
+const built = path.join(root, process.platform === 'win32' ? 'godot/builds/windows/Хроники Глубин.exe' : 'godot/builds/macos/Хроники Глубин.app/Contents/MacOS/Хроники Глубин');
+if (useBuilt && args.includes('--editor')) throw Error('--built and --editor are mutually exclusive');
+if (useBuilt && !fs.existsSync(built)) throw Error('Built application missing; run native:build for this platform first');
+const binary = useBuilt ? built : godotBinary();
 const runtime = path.join(root, '.native-run');
 fs.mkdirSync(runtime, { recursive: true });
 const url = args.find(a => a.startsWith('--server='))?.slice(9) || (args.includes('--local') ? 'ws://127.0.0.1:8790' : 'wss://realms.neuraldeep.ru/ws');
@@ -19,7 +23,7 @@ const ready = () => new Promise(resolve => {
     clearTimeout(timer); socket.close(); resolve(true);
   });
 });
-if (!args.includes('--skip-assets')) {
+if (!useBuilt && !args.includes('--skip-assets')) {
   await run(process.execPath, ['tools/godot/export.mjs']);
   await run(binary, ['--headless', '--path', 'godot', '--editor', '--import', '--quit']);
 }
@@ -38,8 +42,6 @@ if (local && !(await ready())) {
   if (!connected) throw new Error('Сервер не запустился: .native-run/server.log');
 }
 const extra = args.filter(a => !['--skip-assets', '--editor', '--built', '--foreground', '--local'].includes(a) && !a.startsWith('--server='));
-const built = path.join(root, 'godot/builds/macos/Хроники Глубин.app/Contents/MacOS/Хроники Глубин');
-const useBuilt = args.includes('--built') && fs.existsSync(built);
 const options = useBuilt ? [] : ['--path', path.join(root, 'godot')];
 if (args.includes('--editor')) options.push('--editor');
 options.push('--', `--server=${url}`);

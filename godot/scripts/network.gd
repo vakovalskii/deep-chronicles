@@ -20,6 +20,7 @@ var closing_at = 0
 var opened_at = 0
 var reconnect_count = 0
 var last_disconnect: Dictionary = {}
+var heartbeat_supported = false
 
 func _ready():
 	process_mode = Node.PROCESS_MODE_ALWAYS
@@ -46,7 +47,7 @@ func start(url = ""):
 	socket = WebSocketPeer.new()
 	socket.inbound_buffer_size = 4194304
 	socket.outbound_buffer_size = 1048576
-	closing_at = 0; opened_at = 0; last_ping_at = 0
+	closing_at = 0; opened_at = 0; last_ping_at = 0; heartbeat_supported = false
 	var error = socket.connect_to_url(endpoint)
 	status_changed.emit("Подключение…")
 	_record("connecting", {"platform": OS.get_name()})
@@ -73,6 +74,7 @@ func _process(_dt):
 			var data = JSON.parse_string(current.get_packet().get_string_from_utf8())
 			if not data is Dictionary: continue
 			last_packet_at = Time.get_ticks_msec()
+			if data.get("t") == "hi": heartbeat_supported = int(data.get("features", {}).get("heartbeat", 0)) >= 1
 			if data.get("t") == "authok":
 				authed = true
 				_record("authenticated")
@@ -87,10 +89,10 @@ func _process(_dt):
 			if socket != current or stopped: return
 		if now - opened_at >= 10000: retry_delay = 1000
 		# JSON heartbeat also works at the login screen, through NAT and proxies.
-		if now - last_ping_at >= 10000:
+		if heartbeat_supported and now - last_ping_at >= 10000:
 			last_ping_at = now; send({"t": "ping"})
 		if socket != current: return
-		if now - last_packet_at > 45000:
+		if (authed or heartbeat_supported) and now - last_packet_at > 45000:
 			current.close(1001, "server timeout"); _disconnected("server_timeout")
 	elif state == WebSocketPeer.STATE_CLOSED:
 		_disconnected("closed", current.get_close_code())

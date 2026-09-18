@@ -52,7 +52,7 @@ function lookOf(P) {
   };
 }
 const online = () => [...players.values()].filter((p) => p.key).length;
-const broadcast = (m) => { const s = JSON.stringify(m); for (const p of players.values()) if (p.key) send(p, s); };
+const broadcast = (m) => { const s = JSON.stringify(m); for (const p of players.values()) if (p.key || m.t === 'online') send(p, s); };
 
 // попытки входа: не больше 12 в минуту с адреса (в автотестах лимит поднимают)
 const TRY_MAX = Number(process.env.AUTH_TRIES) || 12;
@@ -257,7 +257,13 @@ function onSkill(p, a, id, now) {
   }
   a.P.mp -= sk.mp; a.cds[id] = now + sk.cd * 1000; a.dirty = true;
   a.out.push({ k: 'cd', id, cd: sk.cd });
-  if (sk.cast) { a.cast = { id, t: sk.cast / s.cast, target: a.target }; a.out.push({ k: 'cast', id, t: sk.cast / s.cast }); return; }
+  if (sk.cast) {
+    a.cast = { id, t: sk.cast / s.cast, target: a.target };
+    a.out.push({ k: 'cast', id, t: sk.cast / s.cast });
+    // Old clients treat `cast` as their own cast bar. New nearby-only cue is
+    // safely ignored by those builds instead of blocking their movement.
+    pushNear(a, { k: 'cast_start', id, t: sk.cast / s.cast }, true); return;
+  }
   applySkill(a, id, a.target, now);
 }
 
@@ -275,9 +281,11 @@ function applySkill(a, id, ref, now) {
     const amt = Math.round(s.maxHp * sk.amount);
     a.P.hp = Math.min(s.maxHp, a.P.hp + amt); a.dirty = true;
     a.out.push({ k: 'heal', kind: 'hp', amount: amt, skill: id });
+    pushNear(a, { k: 'cast_fx', id });
   } else if (sk.kind === 'buff') {
     a.buffs.push({ stat: sk.stat, mul: sk.mul, until: now + sk.dur * 1000, name: sk.name });
     a.out.push({ k: 'buff', id, dur: sk.dur, stat: sk.stat, mul: sk.mul });
+    pushNear(a, { k: 'cast_fx', id });
   } else if (sk.kind === 'aoe') {
     const atk = sk.school === 'm' ? s.matk : s.patk;
     let n = 0;
@@ -420,8 +428,8 @@ function onChat(p, m) {
 }
 
 // событие видят все рядом: у себя — всегда, у соседей — если близко
-function pushNear(a, e) {
-  a.out.push(e);
+function pushNear(a, e, remoteOnly = false) {
+  if (!remoteOnly) a.out.push(e);
   for (const p of players.values()) if (p.a && p.a !== a && flatDist(p.a, a) < VIEW) p.a.out.push({ ...e, by: a.id });
 }
 

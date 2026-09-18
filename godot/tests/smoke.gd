@@ -78,6 +78,7 @@ func _run():
 	game = load("res://scenes/main.tscn").instantiate(); root.add_child(game); current_scene = game
 	net.message.connect(func(m): received.append(m))
 	check(await wait_for(func(): return net.online), "Godot WebSocket connects to Node server")
+	check(await wait_for(func(): return game.hud.login_online.text == "Игроков онлайн: 0"), "login displays authenticated players, excluding its own unauthenticated connection")
 	await _screenshot("login.png")
 	game.hud.login_switch.pressed.emit()
 	check(is_instance_valid(game.hud.creation_preview) and game.hud.class_select.visible, "character creation previews the real Godot model")
@@ -87,6 +88,7 @@ func _run():
 	if not await wait_for(func(): return not game.profile.is_empty()):
 		check(false, "registration returned profile"); _finish(); return
 	check(game.profile.cls == "warrior" and game.profile.lvl == 1, "server creates the player")
+	check(await wait_for(func(): return game.hud.status_label.text.contains("Игроков онлайн: 1")), "HUD shows the live server player count")
 	check(game.hero.animator != null and game.hero.animator.has_animation("walk"), "native animated hero imported")
 	check(await wait_for(func(): return not game.mobs.is_empty()), "nearby mobs arrive as snapshots")
 	await create_timer(0.2).timeout
@@ -95,6 +97,13 @@ func _run():
 		await process_frame
 		check(is_instance_valid(game.hud.window) and game.get_viewport().get_visible_rect().encloses(game.hud.window.get_global_rect()), kind + " window fits the viewport")
 		if DisplayServer.get_name() != "headless": await _screenshot(kind + ".png")
+	game.hud.close_window()
+	game.hud.show_window("settings")
+	for slider in game.hud.window.find_children("*", "HSlider", true, false):
+		if slider.get_meta("audio_bus", "") == "Effects":
+			slider.value = 0
+			check(AudioServer.is_bus_mute(AudioServer.get_bus_index("Effects")) and game.hud.Settings.read_value("audio", "Effects", -1) == 0, "sound slider mutes the real effects bus and persists independently")
+			slider.value = 65
 	game.hud.close_window()
 	check(game.hud.skill_buttons[0].get_global_rect().intersects(game.get_viewport().get_visible_rect()), "hotbar is inside viewport")
 	game.hud.log_line("system-only-marker", "rewards")
@@ -221,6 +230,14 @@ func _run():
 		if m.t == "authok": peer_id = int(m.id)
 	await _dev({"x": -448, "z": 418})
 	check(await wait_for(func(): return game.players.has(peer_id) and game.players[peer_id].visible), "native multiplayer renders a remote player")
+	peer.send_text(JSON.stringify({"t": "dev", "lvl": 10, "sp": 1000, "hp": 30}))
+	await create_timer(0.2).timeout
+	peer.send_text(JSON.stringify({"t": "learn", "id": "heal", "rank": 1}))
+	check(await wait_for(func(): return peer_inbox.any(func(m): return m.t == "you" and m.p.get("skills", {}).get("heal", 0) == 1)), "remote mage learns healing on the same server")
+	peer.send_text(JSON.stringify({"t": "skill", "id": "heal"}))
+	check(await wait_for(func(): return game.players[peer_id].cast_remaining > 0 and game.combat_fx.casts.has(game.players[peer_id].get_instance_id())), "remote cast shows the correct actor animation and charge effect")
+	check(game.cast_time == 0, "another player's spell never starts the local cast bar")
+	check(await wait_for(func(): return game.combat_fx.counts.get("heal", 0) > 0), "nearby healing release renders from server events")
 	await _dev({"drop": "pelt"})
 	check(await wait_for(func(): return game.ground_loot.values().any(func(d): return d.data.item == "pelt")), "server item drop has a native model and name")
 	var pelt_drop
@@ -287,7 +304,9 @@ func _run():
 	game.hud.close_window()
 	game.use_skill("heal")
 	check(await wait_for(func(): return game.cast_time > 0), "server-driven casting starts")
+	check(game.hero.cast_remaining > 0 and game.combat_fx.casts.has(game.hero.get_instance_id()), "local cast combines wind-up animation with a hand focus and ground sigil")
 	check(await wait_for(func(): return game.profile.hp > 60), "healing updates server health")
+	check(await wait_for(func(): return game.game_audio.play_counts.get("heal", 0) > 0 and game.hero.action_clip == "release"), "server heal triggers a release clip and spatial audio")
 	game.hud.show_window("inventory")
 	await process_frame
 	check(game.hud.enchant_scroll.is_empty() and game.hud.chat.recipient.text.is_empty(), "changing account clears old inventory and chat selection")
@@ -308,6 +327,7 @@ func _run():
 		await _dev({"item": item}); game._action("equip", _bag(item)); await create_timer(0.15).timeout
 	check(await wait_for(func(): return game.stats.sets.any(func(entry): return entry.id == "abyss" and entry.have == entry.parts.size())), "complete B mage set activates the shared server-stat bonus")
 	game.hud.show_window("character"); await _screenshot("mage-b-gear.png"); game.hud.close_window()
+	await _test_combat_presentation()
 	# Real screenshot from the rendering backend, when running with a display.
 	if DisplayServer.get_name() != "headless":
 		await RenderingServer.frame_post_draw
@@ -320,7 +340,39 @@ func _run():
 	check(await wait_for(func(): return game.profile.is_empty() and net.stopped), "login on another device stops automatic reconnect")
 	await create_timer(1.2).timeout
 	check(game.hud.login_message.text.contains("другого устройства") and not net.authed, "duplicate-login reason remains visible without a reconnect loop")
+	check(game.hud.login_online.text.contains("нет связи") and game.combat_fx.active.is_empty() and not game.game_audio.ambience.playing, "logout clears effects, ambience and the stale online count")
 	_finish()
+
+func _test_combat_presentation():
+	game.hud.show_window("skills"); _click("learn", "ice_nova")
+	check(await wait_for(func(): return game.profile.skills.get("ice_nova", 0) == 1), "mage learns the frost spell for visual integration test")
+	game.hud.close_window()
+	await _dev({"x": -260, "z": 220, "hp": 500, "mp": 500})
+	game.camera_distance = 12; game.camera_pitch = 0.4
+	await create_timer(0.35).timeout
+	game.use_skill("ice_nova")
+	check(await wait_for(func(): return game.cast_time > 0), "frost wind-up starts from server confirmation")
+	await _screenshot("combat-casting.png")
+	check(await wait_for(func(): return game.combat_fx.counts.get("frost", 0) > 0), "frost has its own expanding shards and ring")
+	await create_timer(0.15).timeout
+	await _screenshot("combat-frost.png")
+	check(game.game_audio.play_counts.get("frost", 0) > 0, "frost plays a distinct sound")
+	var victim
+	for mob in game.mobs.values():
+		if mob.visible and not mob.dead and not data.world.towns.any(func(t): return Vector2(mob.position.x - t.x, mob.position.z - t.z).length() < t.r + 30): victim = mob; break
+	if victim:
+		var pos = data.position_at(victim.position.x + 8, victim.position.z + 3)
+		await _dev({"x": pos.x, "z": pos.z, "mp": 500})
+		game.set_target(victim); game.use_skill("fire_bolt")
+		check(await wait_for(func(): return game.combat_fx.counts.get("projectile", 0) > 0), "fire release creates a projectile from the equipped hand toward the server target")
+		await _screenshot("combat-fire.png")
+		check(game.game_audio.play_counts.get("charge", 0) > 0 and game.game_audio.play_counts.get("fire", 0) > 0, "charge and fire release use separate sounds")
+		game._cancel_attack()
+	else: check(false, "live mob exists for fire presentation test")
+	for i in 48: game.combat_fx.burst(game.hero.position, Color.WHITE)
+	check(game.combat_fx.active.size() <= 40 and game.game_audio.voices.size() == 24, "dense combat caps effect instances and audio voices")
+	game.combat_fx.clear()
+	await create_timer(0.5).timeout
 
 func _bag(id: String) -> int:
 	for i in game.profile.inv.size():

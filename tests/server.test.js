@@ -57,6 +57,41 @@ test('heartbeat работает до входа и не создаёт акка
   } finally { a.ws.close(); await a.closed(); }
 });
 
+test('экран входа получает живой онлайн без игровых событий; каст виден только соседям', async () => {
+  const lobby = client(), mage = client(), nearby = client(), far = client();
+  await Promise.all([lobby.open(), mage.open(), nearby.open(), far.open()]);
+  try {
+    const initial = (await lobby.wait('hi')).online;
+    const lobbyPackets = [], nearEvents = [], farEvents = [];
+    lobby.ws.on('message', raw => lobbyPackets.push(JSON.parse(raw)));
+    nearby.ws.on('message', raw => { const m = JSON.parse(raw); if (m.t === 'ev') nearEvents.push(...m.e); });
+    far.ws.on('message', raw => { const m = JSON.parse(raw); if (m.t === 'ev') farEvents.push(...m.e); });
+    mage.send({ t: 'register', name: 'МагЭффекты', pass: 'secret1', cls: 'mage' });
+    const auth = await mage.wait('authok');
+    assert.equal((await lobby.wait('online')).n, initial + 1);
+    nearby.send({ t: 'register', name: 'РядомЭффекты', pass: 'secret1', cls: 'warrior' });
+    far.send({ t: 'register', name: 'ДалекоЭффекты', pass: 'secret1', cls: 'warrior' });
+    await Promise.all([nearby.wait('authok'), far.wait('authok')]);
+    await at(far, 1100, 1000);
+    mage.send({ t: 'dev', lvl: 10, sp: 1000, hp: 30 }); await pause(150);
+    mage.send({ t: 'learn', id: 'heal', rank: 1 }); await untilP(mage, p => p.skills.heal === 1);
+    mage.send({ t: 'skill', id: 'heal' });
+    const cast = (await untilEv(mage, /"k":"cast"/)).find(e => e.k === 'cast');
+    assert.equal(cast.id, 'heal'); assert.ok(cast.t > 0);
+    await untilEv(mage, /"k":"heal"/); await pause(200);
+    assert.ok(nearEvents.some(e => e.k === 'cast_start' && e.by === auth.id && e.id === 'heal'));
+    assert.ok(!nearEvents.some(e => e.k === 'cast'), 'older clients must not mistake a remote cast for their own');
+    assert.ok(nearEvents.some(e => e.k === 'cast_fx' && e.by === auth.id && e.id === 'heal'));
+    assert.ok(!farEvents.some(e => ['cast', 'cast_start', 'cast_fx'].includes(e.k)));
+    assert.ok(!lobbyPackets.some(m => ['ev', 'snap', 'you', 'look'].includes(m.t)));
+    mage.ws.close(); await mage.closed(); await pause(150);
+    assert.equal(lobbyPackets.filter(m => m.t === 'online').at(-1).n, initial + 2);
+  } finally {
+    for (const c of [lobby, mage, nearby, far]) c.ws.close();
+    await Promise.all([lobby.closed(), mage.closed(), nearby.closed(), far.closed()]);
+  }
+});
+
 test('Рядом ограничен расстоянием, Торг глобальный; каналы не принимают prototype-ключи', async () => {
   const a = client(), b = client(); await Promise.all([a.open(), b.open()]);
   try {

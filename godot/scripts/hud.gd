@@ -8,6 +8,7 @@ var login_pass: LineEdit
 var server_field: LineEdit
 var class_select: OptionButton
 var login_message: Label
+var login_online: Label
 var continue_button: Button
 var game_ui: Control
 var info: Label
@@ -160,6 +161,7 @@ func _login():
 		continue_button.visible = not saved.is_empty(); continue_button.text = "Продолжить: " + saved.get("name", ""))
 	server_field.tooltip_text = "Общий мир: wss://realms.neuraldeep.ru/ws\nЛокально: ws://127.0.0.1:8790"
 	login_message = _label(v, "Подключение…", 11); login_message.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	login_online = _label(v, "Игроков онлайн: —", 12); login_online.modulate = Color("d5c49a")
 	var footer = _label(login_decoration, "ХРОНИКИ ГЛУБИН  /  NATIVE CLIENT\nWindows · macOS · Android · iOS", 11)
 	footer.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM); footer.offset_left = -250; footer.offset_right = 250; footer.offset_top = -62; footer.offset_bottom = -20; footer.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 
@@ -174,6 +176,7 @@ func _refresh_creation_preview():
 
 func _process(_dt):
 	login_decoration.visible = login_panel.visible
+	login_online.text = "Игроков онлайн: %s" % Network.online_count if Network.online and server_field.text.strip_edges() == Network.endpoint else "Игроков онлайн: — · нет связи с сервером"
 
 func _auth(kind: String):
 	login_requested.emit({"t": kind, "name": login_name.text.strip_edges(), "pass": login_pass.text, "cls": "warrior" if class_select.selected == 0 else "mage"})
@@ -303,7 +306,7 @@ func update_values(p: Dictionary, s: Dictionary, pos: Vector3, target, cooldowns
 	xp_bar.max_value = GameData.xp_next(int(p.lvl)); xp_bar.value = p.xp
 	var z = GameData.zone_at(pos)
 	zone.text = z.name + " · " + str(z.lv)
-	status_label.text = ("В сети: %s" % Network.online_count if Network.authed else "Переподключение…") + "  ·  %s SP" % int(p.get("sp", 0))
+	status_label.text = ("Игроков онлайн: %s" % Network.online_count if Network.authed else "Переподключение…") + "  ·  %s SP" % int(p.get("sp", 0))
 	if p.get("karma", 0) > 0: status_label.text += " · Карма %s" % int(p.karma)
 	target_panel.visible = is_instance_valid(target) and target.visible
 	target_info.text = target.display_name if is_instance_valid(target) else ""
@@ -641,6 +644,16 @@ func _skills(list):
 		list.add_child(HSeparator.new())
 
 func _settings(list):
+	_label(list, "Звук", 20)
+	for entry in [["Master", "Общая громкость", 0.75], ["Effects", "Бой и заклинания", 0.65], ["Ambience", "Окружение", 0.3]]:
+		var audio_row = _row(list); _label(audio_row, entry[1], 12).custom_minimum_size.x = 155
+		var slider = HSlider.new(); slider.min_value = 0; slider.max_value = 100; slider.step = 1
+		slider.value = float(Settings.read_value("audio", entry[0], entry[2])) * 100
+		slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL; slider.custom_minimum_size.x = 120
+		slider.set_meta("audio_bus", entry[0]); audio_row.add_child(slider)
+		var percent = _label(audio_row, "%s%%" % int(slider.value), 12); percent.custom_minimum_size.x = 40
+		slider.value_changed.connect(func(value):
+			get_parent().game_audio.set_volume(entry[0], value / 100.0); percent.text = "%s%%" % int(value))
 	_label(list, "Чат", 20)
 	for entry in [["sys", "Системный журнал над чатом"], ["combat", "Журнал: урон и бой"], ["rewards", "Журнал: опыт, SP и добыча"], ["info", "Журнал: уведомления"], ["trade", "Торговый чат во вкладке «Все»"], ["near", "Ближний чат во вкладке «Все»"], ["bubbles", "Сообщения над персонажами"]]:
 		var b = CheckButton.new(); b.text = entry[1]; b.button_pressed = chat.preferences[entry[0]]; list.add_child(b)

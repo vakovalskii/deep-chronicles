@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "native:assets": "node tools/godot/export.mjs",
+    "native:audio": "node tools/godot/audio.mjs",
     "native": "node tools/godot/run.mjs",
     "native:local": "node tools/godot/run.mjs --local",
     "native:editor": "node tools/godot/run.mjs --editor",

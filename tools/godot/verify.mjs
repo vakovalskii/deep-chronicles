@@ -45,6 +45,7 @@ try {
   if (!process.version.startsWith('v22.')) throw new Error('Pipeline requires Node.js 22; see .nvmrc.');
   if (target && !['macos', 'windows', 'android', 'ios'].includes(target)) throw new Error('Build target must be macos, windows, android, or ios.');
   await step('pipeline', process.execPath, ['--test', 'tests/pipeline.test.js']);
+  await step('audio-assets', process.execPath, ['tools/godot/audio.mjs', '--check']);
   await step('rules', process.execPath, ['--test', 'tests/unit.test.js', 'tests/progression.test.js']);
   await step('server', process.execPath, ['--no-warnings', '--test', 'tests/server.test.js']);
   await step('client-server', process.execPath, ['tools/godot/test.mjs', ...(args.includes('--headless') ? ['--headless'] : []), ...(args.includes('--touch') ? ['--touch'] : [])]);

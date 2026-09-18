@@ -49,6 +49,8 @@ var screenshot_done = false
 var auth_ready_at = 0
 var pvp_enabled = false
 var initial_camera = true
+var combat_fx: Node3D
+var game_audio: Node3D
 
 func _ready():
 	var args = OS.get_cmdline_user_args()
@@ -71,6 +73,8 @@ func _ready():
 	world = WorldScene.instantiate(); add_child(world); world.build()
 	camera = Camera3D.new(); camera.name = "Camera"; camera.fov = 55; camera.far = 1600; camera.near = 0.2; add_child(camera); camera.current = true
 	camera.position = Vector3(-410, 30, 425); camera.look_at(Vector3(-430, 7, 390))
+	combat_fx = load("res://scripts/combat_fx.gd").new(); add_child(combat_fx)
+	game_audio = load("res://scripts/game_audio.gd").new(); add_child(game_audio)
 	for n in GameData.world.npcs:
 		var actor = Actor.new(); actor.kind = "n"; actor.definition = n
 		add_child(actor); actor.setup("warrior" if n.role == "guard" else "npc", n.name, n)
@@ -202,50 +206,81 @@ func _look_of(p: Dictionary) -> Dictionary:
 
 func _event(e: Dictionary):
 	if profile.is_empty(): return
-	var source = players.get(int(e.get("by", -1)), hero)
-	var victim = mobs.get(int(e.get("m", -1))) if e.has("m") else players.get(int(e.get("p", -1)))
+	var source = hero if not e.has("by") or int(e.by) == own_id else players.get(int(e.by))
+	var victim = mobs.get(int(e.get("m", -1))) if e.has("m") else (hero if int(e.get("p", -1)) == own_id else players.get(int(e.get("p", -1))))
 	match e.k:
 		"msg": hud.log_line(e.text)
 		"cd": cooldowns[e.id] = Time.get_ticks_msec() + float(e.cd) * 1000
 		"hit", "miss":
-			if is_instance_valid(source): source.attack_time = 0.55
+			if is_instance_valid(source) and source.cast_remaining <= 0 and source.action_until <= 0:
+				source.play_action("attack", 0.65)
+				if source.base_model == "mage" and is_instance_valid(victim):
+					combat_fx.projectile(source, victim, Color("9fbdff")); game_audio.play_at("fire", source.position, -5)
+				else:
+					combat_fx.swing(source); game_audio.play_at("swing", source.position)
 			if source == hero and is_instance_valid(victim): hud.log_line("%s: %s" % [victim.display_name, "Промах" if e.k == "miss" else "Урон %s" % int(e.dmg)], "combat")
-			if is_instance_valid(victim):
-				_float(victim.position, "Промах" if e.k == "miss" else str(int(e.dmg)), Color("ffdd79") if e.get("crit", false) else Color.WHITE)
-				_effect(victim.position, Color("ffd284"), 0.8)
+			if is_instance_valid(victim) and victim != hero:
+				_float(victim.position, "Промах" if e.k == "miss" else (("КРИТ " if e.get("crit", false) else "") + str(int(e.dmg))), Color("ffdd79") if e.get("crit", false) else Color.WHITE)
+				if e.k == "hit":
+					var critical = bool(e.get("crit", false))
+					combat_fx.burst(victim.position, Color("ffd284"), "critical" if critical else "impact", 1.3 if critical else 0.65)
+					game_audio.play_at("critical" if critical else "impact", victim.position)
+					if victim.action_until <= 0 and not victim.casting: victim.play_action("hit", 0.22)
 		"hurt":
 			hud.log_line("Уклонение" if e.get("dodge", false) else "Получен урон: %s" % int(e.get("dmg", 0)), "combat")
 			_float(hero.position, "Уклонение" if e.get("dodge", false) else "−%s" % int(e.get("dmg", 0)), Color("ff7777"))
+			if not e.get("dodge", false):
+				combat_fx.burst(hero.position, Color("d59072"), "impact", 0.6); game_audio.play_at("impact", hero.position, -3)
+				if hero.action_until <= 0 and not hero.casting: hero.play_action("hit", 0.22)
 			if not is_instance_valid(target): set_target(mobs.get(int(e.get("from", -1)), players.get(int(e.get("fromP", -1)))))
 		"mdie":
-			if is_instance_valid(victim): victim.dead = true; victim.hp = 0
+			if is_instance_valid(victim): victim.dead = true; victim.hp = 0; game_audio.play_at("death", victim.position)
 			if target == victim: attacking = false; pending_skill = ""
 		"kill": hud.log_line("%s: +%s EXP, +%s SP. %s" % [e.name, int(e.xp), int(e.get("sp", 0)), "Добыча на земле · Z — подобрать." if e.get("ground", false) else "Автолут."], "rewards")
 		"pickup":
+			game_audio.play_at("loot", hero.position)
 			hud.log_line("Подобрано: %s ×%s" % ["Монеты" if e.item == "coins" else GameData.catalog.ITEMS[e.item].name, int(e.n)], "rewards")
 			_float(hero.position, "+%s монет" % int(e.n) if e.item == "coins" else GameData.catalog.ITEMS[e.item].name, Color("f5d885"))
 		"loot": hud.log_line("Получено: " + GameData.catalog.ITEMS.get(e.id, {}).get("name", e.id))
 		"lvl":
+			game_audio.play_at("level", hero.position)
 			hud.log_line("Новый уровень: %s!" % int(e.lvl)); _float(hero.position, "Уровень %s!" % int(e.lvl), Color("ffe090")); _effect(hero.position, Color("ffe090"), 4)
-		"heal": _float(hero.position, "+%s" % int(e.amount), Color("83ffb0")); _effect(hero.position, Color("70e7bb"), 2)
-		"cast":
-			cast_time = float(e.t); has_destination = false
-			hud.cast_duration = cast_time; hud.cast_name = GameData.catalog.SKILLS.get(e.get("id", ""), {}).get("name", "Заклинание")
+		"heal":
+			_float(hero.position, "+%s" % int(e.amount), Color("83ffb0"))
+			if not e.has("skill"): combat_fx.burst(hero.position, Color("70e7bb"), "heal", 2); game_audio.play_at("heal", hero.position)
+		"cast", "cast_start":
+			if is_instance_valid(source):
+				var sk = GameData.catalog.SKILLS.get(e.get("id", ""), {})
+				source.begin_cast(str(e.get("id", "")), float(e.t))
+				combat_fx.begin_cast(source, GameData.color(sk.get("color", 0xa4c6ff)), float(e.t)); game_audio.play_at("charge", source.position)
+				if source == hero:
+					cast_time = float(e.t); has_destination = false
+					hud.cast_duration = cast_time; hud.cast_name = sk.get("name", "Возвращение")
 		"buff":
 			var sk = GameData.catalog.SKILLS[e.id]
 			buffs = buffs.filter(func(b): return b.get("id") != e.id)
 			buffs.append({"id": e.id, "stat": e.get("stat", sk.stat), "mul": e.get("mul", sk.mul), "until": Time.get_ticks_msec() + e.dur * 1000})
-			hud.log_line(sk.name); _effect(hero.position, GameData.color(sk.color), 3)
+			hud.log_line(sk.name)
 		"cast_fx":
 			var sk = GameData.catalog.SKILLS[e.id]
 			if is_instance_valid(source):
+				combat_fx.stop_cast(source)
+				if sk.has("cast"): source.release_cast()
+				else: source.play_action("attack", 0.65)
+				if source == hero: cast_time = 0
 				var hit_target = null
 				if e.has("to"):
-					hit_target = mobs.get(int(e.to.get("m", -1))) if e.to.has("m") else players.get(int(e.to.get("p", -1)))
-				if sk.get("school") == "m" and is_instance_valid(hit_target): _projectile(source.position, hit_target.position, GameData.color(sk.color))
-				else: _effect(source.position, GameData.color(sk.color), float(sk.get("radius", 2)))
+					hit_target = mobs.get(int(e.to.get("m", -1))) if e.to.has("m") else (hero if int(e.to.get("p", -1)) == own_id else players.get(int(e.to.get("p", -1))))
+				var color = GameData.color(sk.color)
+				if sk.get("school") == "m" and is_instance_valid(hit_target): combat_fx.projectile(source, hit_target, color)
+				elif e.id == "heal": combat_fx.burst(source.position, color, "heal", 2)
+				elif e.id == "ice_nova": combat_fx.burst(source.position, color, "frost", float(sk.radius))
+				else:
+					combat_fx.swing(source, color); combat_fx.burst(source.position, color, "buff" if e.id == "battle_cry" else "impact", float(sk.get("radius", 2)))
+				game_audio.play_at({"fire_bolt": "fire", "heal": "heal", "ice_nova": "frost", "battle_cry": "buff"}.get(e.id, "swing"), source.position)
 		"ench": _effect(hero.position, Color("ffc96d") if e.ok else Color("787c89"), 2)
 		"dead":
+			combat_fx.stop_cast(hero); hero.cancel_presentation(); game_audio.play_at("death", hero.position)
 			hud.close_window()
 			pending_pickup = ""; pickup_sent_at = 0
 			profile.dead = true; hero.dead = true; attacking = false; cast_time = 0; has_destination = false
@@ -254,11 +289,13 @@ func _event(e: Dictionary):
 
 func _place(x: float, z: float):
 	if not is_instance_valid(hero): return
+	combat_fx.clear(); hero.cancel_presentation(); cast_time = 0
 	hero.position = GameData.position_at(x, z); has_destination = false; attacking = false; pending_skill = ""; talking_to = null; pending_pickup = ""
 	set_target(null); marker.hide(); initial_camera = true
 
 func _process(dt):
 	if profile.is_empty() or not is_instance_valid(hero):
+		if is_instance_valid(game_audio) and is_instance_valid(game_audio.ambience): game_audio.ambience.stop()
 		if not capture_path.is_empty() and not screenshot_done and Network.online and Time.get_ticks_msec() > 8000:
 			screenshot_done = true; _capture()
 		return
@@ -282,6 +319,7 @@ func _process(dt):
 	else: selection.hide(); target_arrow.hide()
 	hero.status = 2 if profile.get("karma", 0) > 0 else (1 if flag_until > Time.get_ticks_msec() else 0)
 	_update_camera(dt); world.set_region(hero.position)
+	game_audio.follow(hero, camera, dt)
 	state_timer += dt; ui_timer += dt
 	if state_timer >= 0.1:
 		state_timer = 0
@@ -375,6 +413,7 @@ func use_skill(id: String):
 		var distance = Vector2(target.position.x - hero.position.x, target.position.z - hero.position.z).length()
 		if distance > sk.get("range", stats.range) + target.radius:
 			pending_skill = id; attacking = true; has_destination = false; return
+		hero.rotation.y = atan2(target.position.x - hero.position.x, target.position.z - hero.position.z)
 	Network.send({"t": "skill", "id": id})
 
 func next_target():
@@ -469,6 +508,8 @@ func _return_to_login(forget: bool, reconnect = true):
 		if Network.socket: Network.socket.close()
 
 func _clear_entities():
+	if is_instance_valid(combat_fx): combat_fx.clear()
+	if is_instance_valid(game_audio): game_audio.clear()
 	target = null; attacking = false; talking_to = null; pending_pickup = ""; pickup_sent_at = 0
 	for drop in ground_loot.values(): drop.queue_free()
 	ground_loot.clear()

@@ -30,6 +30,12 @@ var shield_node: Node3D
 var helm_node: Node3D
 var bubble: Label3D
 var bubble_until = 0
+var action_clip = ""
+var action_until = 0.0
+var action_speed = 1.0
+var cast_remaining = 0.0
+var cast_skill = ""
+var previous_attack_flag = false
 
 func setup(model_id: String, title: String, def: Dictionary = {}):
 	definition = def; display_name = title; base_model = model_id
@@ -126,7 +132,9 @@ func snapshot(row: Array, timestamp: float):
 	snapshots.append({"t": timestamp, "p": pos, "r": row[4]})
 	if snapshots.size() > 30: snapshots.pop_front()
 	var flags = int(row[5]); moving = (flags & 1) != 0; casting = (flags & 4) != 0
-	if (flags & 2) != 0: attack_time = 0.3
+	var attack_flag = (flags & 2) != 0
+	if attack_flag and not previous_attack_flag and action_until <= 0: play_action("attack")
+	previous_attack_flag = attack_flag
 	dead = (flags & 8) != 0; hp = row[6]
 	status = int(row[7]) if row.size() > 7 else 0
 	seen = Time.get_ticks_msec(); visible = true
@@ -140,19 +148,48 @@ func interpolate(time: float):
 
 func _process(dt):
 	attack_time = maxf(0, attack_time - dt)
+	action_until = maxf(0, action_until - dt)
+	cast_remaining = maxf(0, cast_remaining - dt)
 	if is_instance_valid(bubble): bubble.visible = Time.get_ticks_msec() < bubble_until and not dead
 	if not model: return
 	death_elapsed = death_elapsed + dt if dead else 0.0
 	if kind == "m": model.position.y = model_rest_y - maxf(0, death_elapsed - 3.0) * 0.65
 	if not animator or not animator.has_animation("death"):
 		model.rotation.z = lerp_angle(model.rotation.z, PI / 2 if dead else 0, minf(1, dt * 10))
-	var clip = "attack" if attack_time > 0 else ("cast" if casting else ("walk" if moving else "idle"))
+	var clip = "cast" if casting or cast_remaining > 0 else ("walk" if moving else "idle")
+	if action_until > 0: clip = action_clip
+	elif attack_time > 0 and not casting: clip = "attack"
 	if dead: clip = "death" if animator and animator.has_animation("death") else "idle"
 	if animator and clip != last_clip and animator.has_animation(clip):
-		animator.play(clip, 0.15); last_clip = clip
+		animator.play(clip, 0.1, action_speed if action_until > 0 and not dead else 1.0); last_clip = clip
 	if label:
 		label.text = display_name + (" · повержен" if dead else "")
 		label.modulate = Color("ffe3a6") if selected else (Color("ff7373") if status == 2 else (Color("d49bff") if status == 1 else (Color("e7d8ab") if kind == "n" else Color.WHITE)))
+
+func play_action(clip: String, duration = 0.0):
+	if dead or not animator or not animator.has_animation(clip): return
+	var length = animator.get_animation(clip).length
+	action_until = duration if duration > 0 else length
+	action_speed = length / maxf(0.05, action_until)
+	action_clip = clip
+	animator.play(clip, 0.06, action_speed); animator.seek(0, true); last_clip = clip
+	if clip == "attack": attack_time = action_until
+
+func begin_cast(id: String, duration: float):
+	cast_skill = id; cast_remaining = duration
+	play_action("cast_enter", minf(0.25, duration * 0.4))
+
+func release_cast():
+	cast_remaining = 0; casting = false; cast_skill = ""
+	play_action("release", 0.42)
+
+func cancel_presentation():
+	cast_remaining = 0; cast_skill = ""; casting = false; action_until = 0; attack_time = 0
+
+func cast_origin() -> Vector3:
+	if is_instance_valid(weapon_node) and weapon_node.visible:
+		return weapon_node.global_position + Vector3.UP * 0.25
+	return global_position + Vector3.UP * 1.7
 
 func _attach_weapon(id: String):
 	var skeleton = model.find_child("Skeleton3D", true, false)
